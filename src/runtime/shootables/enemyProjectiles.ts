@@ -9,7 +9,7 @@ import { quakeAliasModelRenderYaw, normalizeQuakeRenderYaw } from "../aliasModel
 import { COLLISION_EPSILON, QUAKE_COLLISION_UNIT_SCALE } from "../constants";
 import { distanceSq3, dotVec3, normalizeVec3, subtractVec3 } from "../math";
 import type { QuakePlayerDamageContext } from "../player";
-import type { QuakePickupModel, QuakePickupModelLibrary } from "../pickups";
+import type { QuakeGlyphEntitySink, QuakePickupModel, QuakePickupModelLibrary } from "../pickups";
 import {
   inflateBounds,
   pointToAabbDistanceSq,
@@ -53,6 +53,8 @@ export interface QuakeEnemyProjectileWorldTrace {
 
 export interface QuakeEnemyProjectileRuntimeOptions {
   addMesh(entity: QuakeEntity, model?: QuakePickupModel, frameIndex?: number): PolyMeshHandle | null;
+  /** Glyph (ASCII) entity layer — present only when the glyph backend is active. */
+  glyphEntitySink?: QuakeGlyphEntitySink;
   boundsCenter(bounds: QuakeBounds): Vec3;
   consumePlayerPainRandom?(details: QuakeEnemyProjectilePlayerPainRandomDetails): number | null;
   currentModelLibrary(): QuakePickupModelLibrary | null;
@@ -568,6 +570,11 @@ export function createQuakeEnemyProjectileRuntime(
     return true;
   }
 
+  // Glyph (ASCII) mirror (Phase 4D). Projectiles are single-frame models that
+  // just fly: register on mount, transform-update each tick, remove on death.
+  let nextGlyphSeq = 0;
+  const glyphIdByProjectile = new Map<QuakeEnemyProjectile, string>();
+
   function consumePlayerPainRandom(
     projectile: QuakeEnemyProjectile,
     damage: number,
@@ -581,11 +588,38 @@ export function createQuakeEnemyProjectileRuntime(
     });
   }
 
-  function addMesh(projectile: QuakeEnemyProjectile): PolyMeshHandle | null {
-    const classname = projectile.profile.projectileClassname ?? "enemy_projectile_magic";
-    const model = projectile.profile.projectileModelPath
+  function projectileModel(projectile: QuakeEnemyProjectile): QuakePickupModel | undefined {
+    return projectile.profile.projectileModelPath
       ? options.currentModelLibrary()?.models[projectile.profile.projectileModelPath]
       : undefined;
+  }
+
+  function syncProjectileGlyph(projectile: QuakeEnemyProjectile, yaw: number, scale: number): void {
+    const sink = options.glyphEntitySink;
+    if (!sink) return;
+    const model = projectileModel(projectile);
+    if (!model?.glyphGeometry) return;
+    const transform = { position: projectile.origin, rotation: [0, 0, yaw] as [number, number, number], scale };
+    let id = glyphIdByProjectile.get(projectile);
+    if (id === undefined) {
+      id = `proj:${nextGlyphSeq++}`;
+      glyphIdByProjectile.set(projectile, id);
+      sink.setEntity(id, model.glyphGeometry, transform);
+    } else {
+      sink.setEntityTransform(id, transform);
+    }
+  }
+
+  function removeProjectileGlyph(projectile: QuakeEnemyProjectile): void {
+    const id = glyphIdByProjectile.get(projectile);
+    if (id === undefined) return;
+    options.glyphEntitySink?.removeEntity(id);
+    glyphIdByProjectile.delete(projectile);
+  }
+
+  function addMesh(projectile: QuakeEnemyProjectile): PolyMeshHandle | null {
+    const classname = projectile.profile.projectileClassname ?? "enemy_projectile_magic";
+    const model = projectileModel(projectile);
     const entity: QuakeEntity = {
       index: -100000 - projectiles.length,
       classname,
@@ -609,19 +643,21 @@ export function createQuakeEnemyProjectileRuntime(
   ): void {
     if (!handle) return;
     const yaw = (Math.atan2(projectile.velocity[1], projectile.velocity[0]) * 180) / Math.PI;
-    const model = projectile.profile.projectileModelPath
-      ? options.currentModelLibrary()?.models[projectile.profile.projectileModelPath]
-      : undefined;
+    const model = projectileModel(projectile);
+    const renderYaw = normalizeProjectileYaw(yaw, Boolean(model));
+    const scale = projectile.profile.projectileScale ?? (model?.renderScale ? 1 / model.renderScale : 1);
     handle.setTransform({
       position: projectile.origin,
-      rotation: [0, 0, normalizeProjectileYaw(yaw, Boolean(model))],
-      scale: projectile.profile.projectileScale ?? (model?.renderScale ? 1 / model.renderScale : 1),
+      rotation: [0, 0, renderYaw],
+      scale,
     });
+    syncProjectileGlyph(projectile, renderYaw, scale);
   }
 
   function remove(projectile: QuakeEnemyProjectile): void {
     projectile.handle?.remove();
     projectile.handle = null;
+    removeProjectileGlyph(projectile);
   }
 
   function playProjectileSound(soundPath: string | null, projectile: QuakeEnemyProjectile): void {

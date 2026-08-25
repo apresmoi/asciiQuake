@@ -1,7 +1,7 @@
 import type { PolyMeshHandle, Vec3 } from "@layoutit/polycss";
 
 import type { QuakeGameLogicFacts } from "../prepare/gameLogicFacts";
-import type { QuakeEntity, QuakePreparedModel, QuakeVertex } from "../types/quake";
+import type { QuakeEntity, QuakeGlyphGeometry, QuakePreparedModel, QuakeVertex } from "../types/quake";
 import {
   type QuakeMonsterDeathGibOutput,
   type QuakeMonsterScriptedLifecycle,
@@ -30,6 +30,7 @@ import { isQuakeDebugDomMetadataEnabled, markQuakeTrace } from "./debug/traceMar
 import { quakeEntityNumber } from "./entities";
 import { dotVec3, distanceSq3, normalizeVec3 } from "./math";
 import {
+  type QuakeGlyphEntitySink,
   type QuakePickupModel,
   type QuakePickupModelLibrary,
   type QuakeProgramMetadata,
@@ -291,6 +292,8 @@ export interface QuakeShootablesControllerOptions {
     frameIndex?: number,
     options?: QuakeShootableMeshMountOptions,
   ): PolyMeshHandle | null;
+  /** Glyph (ASCII) entity layer — present only when the glyph backend is active. */
+  glyphEntitySink?: QuakeGlyphEntitySink;
   ambientMonsterPathingEnabled?: () => boolean;
   bossLightningElectrodesReady?: (
     targetName: string,
@@ -477,6 +480,7 @@ function quakeMonsterInitialIdealYaw(
 
 export function createQuakeShootablesController({
   addMesh,
+  glyphEntitySink,
   ambientMonsterPathingEnabled: sourceAmbientMonsterPathingEnabled,
   bossLightningDischarge,
   bossLightningElectrodesReady,
@@ -606,6 +610,7 @@ export function createQuakeShootablesController({
 
   const enemyProjectiles = createQuakeEnemyProjectileRuntime({
     addMesh,
+    ...(glyphEntitySink ? { glyphEntitySink: glyphEntitySink } : {}),
     boundsCenter: quakecBoundsCenter,
     consumePlayerPainRandom,
     currentModelLibrary: () => currentModelLibrary,
@@ -2658,6 +2663,7 @@ export function createQuakeShootablesController({
     const removed = removeQuakeShootableHandles(shootable);
     visibilityChurn.totalMeshHandlesRemoved += removed.handles;
     visibilityChurn.totalFrameHandlesRemoved += removed.frameHandles;
+    removeShootableGlyph(shootable.entity.index);
   }
 
   function addShootableMesh(entity: QuakeEntity, model?: QuakePickupModel, frameIndex = 0): PolyMeshHandle | null {
@@ -3703,6 +3709,9 @@ export function createQuakeShootablesController({
     if (isQuakeRenderBundleFrameSetHandle(shootable.handle)) {
       if (setQuakeRenderBundleFrameSetHandleFrame(shootable.handle, frameIndex)) {
         syncShootableEnemyDatasets(shootable);
+        // Push the new frame's geometry to the glyph layer (no-op if not active);
+        // transform sync is epsilon-gated for the poly so this stays cheap.
+        if (glyphEntitySink) syncShootableTransform(shootable);
         markShootableTrace("enemy-animation-frame", shootable, {
           backend: "frameset",
           requestedFrame: frameIndex,
@@ -4094,6 +4103,49 @@ export function createQuakeShootablesController({
     forEachShootableHandle(shootable, (handle) => syncShootableTransformForHandle(shootable, handle, yaw));
   }
 
+  // --- Glyph (ASCII) enemy mirror (Phase 4D) ------------------------------
+  // Enemies move + animate every tick; mirror their main handle into the glyph
+  // entity layer. shootable.origin is poly coords = the glyph world frame (same
+  // as pickups), and we mirror the poly transform exactly (renderScale handled
+  // via scale, matching the poly handle). Track the last glyph frame per enemy
+  // so geometry is only re-pushed on a frame change (cheap moves use transform).
+  const glyphFrameByIndex = new Map<number, number>();
+
+  const shootableGlyphGeometry = (shootable: QuakeShootableState): QuakeGlyphGeometry | null => {
+    const model = shootable.model;
+    if (!model) return null;
+    const frameIndex = enemyAnimationFrameIndex(shootable);
+    return model.animationFrames?.[frameIndex]?.glyphGeometry ?? model.glyphGeometry ?? null;
+  };
+
+  const reconcileShootableGlyph = (shootable: QuakeShootableState, renderYaw: number, scale: number): void => {
+    const sink = glyphEntitySink;
+    if (!sink) return;
+    const id = `enemy:${shootable.entity.index}`;
+    const geometry = shootableGlyphGeometry(shootable);
+    if (!shootable.visible || !shootable.handle || !geometry) {
+      if (glyphFrameByIndex.has(shootable.entity.index)) {
+        sink.removeEntity(id);
+        glyphFrameByIndex.delete(shootable.entity.index);
+      }
+      return;
+    }
+    const transform = { position: shootable.origin, rotation: [0, 0, renderYaw] as [number, number, number], scale };
+    const frameIndex = enemyAnimationFrameIndex(shootable);
+    if (glyphFrameByIndex.get(shootable.entity.index) !== frameIndex) {
+      sink.setEntity(id, geometry, transform);
+      glyphFrameByIndex.set(shootable.entity.index, frameIndex);
+    } else {
+      sink.setEntityTransform(id, transform);
+    }
+  };
+
+  const removeShootableGlyph = (entityIndex: number): void => {
+    if (!glyphFrameByIndex.has(entityIndex)) return;
+    glyphEntitySink?.removeEntity(`enemy:${entityIndex}`);
+    glyphFrameByIndex.delete(entityIndex);
+  };
+
   function syncShootableTransformForHandle(
     shootable: QuakeShootableState,
     handle: PolyMeshHandle,
@@ -4102,6 +4154,7 @@ export function createQuakeShootablesController({
     const renderPosition = shootable.origin;
     const scale = shootable.model?.renderScale ? 1 / shootable.model.renderScale : 1;
     const renderYaw = normalizeShootableYaw(yaw, Boolean(shootable.model));
+    if (handle === shootable.handle) reconcileShootableGlyph(shootable, renderYaw, scale);
     if (isQuakeDebugDomMetadataEnabled() && shootable.enemy) {
       setElementDatasetValue(handle.element, "yaw", yaw.toFixed(3));
     }

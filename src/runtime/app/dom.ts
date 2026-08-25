@@ -26,6 +26,11 @@ export interface QuakeAppDomElements {
   alwaysRunOption: HTMLInputElement | null;
   showGunOption: HTMLInputElement | null;
   dynamicLightingOption: HTMLInputElement | null;
+  renderModeOption: HTMLInputElement | null;
+  glyphDetailOption: HTMLButtonElement | null;
+  glyphDetailOptionValue: HTMLElement | null;
+  glyphPaletteOption: HTMLButtonElement | null;
+  glyphPaletteOptionValue: HTMLElement | null;
   impactParticlesOption: HTMLInputElement | null;
   impactParticlesLayer: HTMLElement | null;
   crosshair: HTMLElement | null;
@@ -93,6 +98,11 @@ export function queryQuakeAppDom(): QuakeAppDomElements {
     alwaysRunOption: quakeElement("quake-option-always-run"),
     showGunOption: quakeElement("quake-option-show-gun"),
     dynamicLightingOption: quakeElement("quake-option-dynamic-lighting"),
+    renderModeOption: quakeElement("quake-option-render-mode"),
+    glyphDetailOption: quakeElement("quake-option-glyph-detail"),
+    glyphDetailOptionValue: quakeElement("quake-option-glyph-detail-value"),
+    glyphPaletteOption: quakeElement("quake-option-glyph-palette"),
+    glyphPaletteOptionValue: quakeElement("quake-option-glyph-palette-value"),
     impactParticlesOption: quakeElement("quake-option-impact-particles"),
     impactParticlesLayer: quakeElement("quake-impact-particles"),
     crosshair: quakeElement("quake-crosshair"),

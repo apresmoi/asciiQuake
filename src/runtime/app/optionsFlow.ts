@@ -24,12 +24,18 @@ export interface QuakeOptionsFlowOptions {
   disableEnemiesOption: HTMLInputElement | null;
   disableSoundOption: HTMLInputElement | null;
   dynamicLightingOption: HTMLInputElement | null;
+  renderModeOption: HTMLInputElement | null;
+  glyphDetailOption: HTMLElement | null;
+  glyphDetailOptionValue: HTMLElement | null;
+  glyphPaletteOption: HTMLElement | null;
+  glyphPaletteOptionValue: HTMLElement | null;
   impactParticlesOption: HTMLInputElement | null;
   invertMouseOption: HTMLInputElement | null;
   showGunOption: HTMLInputElement | null;
   audioMuted(): boolean;
   damageDisabled(): boolean;
   dynamicLightingEnabled(): boolean;
+  renderModeIsGlyph(): boolean;
   enemiesDisabled(): boolean;
   impactParticlesEnabled(): boolean;
   invertMouse(): boolean;
@@ -41,6 +47,15 @@ export interface QuakeOptionsFlowOptions {
   setAudioMuted(muted: boolean): void;
   setDamageDisabled(disabled: boolean): void;
   setDynamicLighting(enabled: boolean): void;
+  setRenderMode(glyph: boolean): void;
+  /** Current ASCII-detail level name for display (glyph backend). */
+  glyphDetailLabel(): string;
+  /** Cycle the ASCII detail level (reloads with the new cell size). */
+  cycleGlyphDetail(direction: number): void;
+  /** Current glyph-set name for display (glyph backend). */
+  glyphPaletteLabel(): string;
+  /** Cycle the glyph set — applies live, no reload. */
+  cycleGlyphPalette(direction: number): void;
   setEnemiesDisabled(disabled: boolean): void;
   setImpactParticles(enabled: boolean): void;
   setInvertMouse(invert: boolean): void;
@@ -58,6 +73,7 @@ export interface QuakeOptionsFlow {
   syncAudioToggle(): void;
   syncControls(): void;
   syncDynamicLightingOption(): void;
+  syncRenderModeOption(): void;
   syncImpactParticlesOption(): void;
 }
 
@@ -72,6 +88,38 @@ export function createQuakeOptionsFlow(options: QuakeOptionsFlowOptions): QuakeO
     const enabled = options.dynamicLightingEnabled();
     if (options.dynamicLightingOption) options.dynamicLightingOption.checked = enabled;
     options.setStaticLightingClass(!enabled);
+  }
+
+  function syncRenderModeOption(): void {
+    if (options.renderModeOption) options.renderModeOption.checked = options.renderModeIsGlyph();
+    syncGlyphDetailOption();
+    syncGlyphPaletteOption();
+  }
+
+  function syncGlyphDetailOption(): void {
+    if (options.glyphDetailOptionValue) {
+      options.glyphDetailOptionValue.textContent = options.glyphDetailLabel();
+    }
+  }
+
+  function syncGlyphPaletteOption(): void {
+    if (options.glyphPaletteOptionValue) {
+      options.glyphPaletteOptionValue.textContent = options.glyphPaletteLabel();
+    }
+  }
+
+  function handleGlyphPaletteCycle(event: Event): void {
+    const direction = (event as CustomEvent<{ direction?: number }>).detail?.direction ?? 1;
+    options.cycleGlyphPalette(direction);
+    // Live swap (no reload), so refresh the label in place.
+    syncGlyphPaletteOption();
+  }
+
+  function handleGlyphDetailCycle(event: Event): void {
+    const direction = event instanceof CustomEvent && typeof event.detail?.direction === "number"
+      ? event.detail.direction
+      : 1;
+    options.cycleGlyphDetail(direction);
   }
 
   function syncImpactParticlesOption(): void {
@@ -111,6 +159,7 @@ export function createQuakeOptionsFlow(options: QuakeOptionsFlowOptions): QuakeO
     options.syncDebugControls();
     options.syncDebugFlyMode();
     syncDynamicLightingOption();
+    syncRenderModeOption();
     syncImpactParticlesOption();
     if (options.invertMouseOption) options.invertMouseOption.checked = options.invertMouse();
     if (options.alwaysRunOption) options.alwaysRunOption.checked = options.alwaysRun();
@@ -133,6 +182,10 @@ export function createQuakeOptionsFlow(options: QuakeOptionsFlowOptions): QuakeO
 
   function handleDynamicLightingOptionChange(event: Event): void {
     options.setDynamicLighting((event.currentTarget as HTMLInputElement).checked);
+  }
+
+  function handleRenderModeOptionChange(event: Event): void {
+    options.setRenderMode((event.currentTarget as HTMLInputElement).checked);
   }
 
   function handleImpactParticlesOptionChange(event: Event): void {
@@ -167,11 +220,14 @@ export function createQuakeOptionsFlow(options: QuakeOptionsFlowOptions): QuakeO
     options.disableEnemiesOption?.addEventListener("change", handleDisableEnemiesOptionChange);
     options.disableDamageOption?.addEventListener("change", handleDisableDamageOptionChange);
     options.dynamicLightingOption?.addEventListener("change", handleDynamicLightingOptionChange);
+    options.renderModeOption?.addEventListener("change", handleRenderModeOptionChange);
     options.impactParticlesOption?.addEventListener("change", handleImpactParticlesOptionChange);
     options.alwaysRunOption?.addEventListener("change", handleAlwaysRunOptionChange);
     options.showGunOption?.addEventListener("change", handleShowGunOptionChange);
     options.crosshairOption?.addEventListener("click", handleCrosshairOptionClick);
     options.crosshairOption?.addEventListener("quake-option-cycle", handleCrosshairOptionCycle);
+    options.glyphDetailOption?.addEventListener("quake-option-cycle", handleGlyphDetailCycle);
+    options.glyphPaletteOption?.addEventListener("quake-option-cycle", handleGlyphPaletteCycle);
     options.invertMouseOption?.addEventListener("change", handleInvertMouseOptionChange);
   }
 
@@ -180,11 +236,14 @@ export function createQuakeOptionsFlow(options: QuakeOptionsFlowOptions): QuakeO
     options.disableEnemiesOption?.removeEventListener("change", handleDisableEnemiesOptionChange);
     options.disableDamageOption?.removeEventListener("change", handleDisableDamageOptionChange);
     options.dynamicLightingOption?.removeEventListener("change", handleDynamicLightingOptionChange);
+    options.renderModeOption?.removeEventListener("change", handleRenderModeOptionChange);
     options.impactParticlesOption?.removeEventListener("change", handleImpactParticlesOptionChange);
     options.alwaysRunOption?.removeEventListener("change", handleAlwaysRunOptionChange);
     options.showGunOption?.removeEventListener("change", handleShowGunOptionChange);
     options.crosshairOption?.removeEventListener("click", handleCrosshairOptionClick);
     options.crosshairOption?.removeEventListener("quake-option-cycle", handleCrosshairOptionCycle);
+    options.glyphDetailOption?.removeEventListener("quake-option-cycle", handleGlyphDetailCycle);
+    options.glyphPaletteOption?.removeEventListener("quake-option-cycle", handleGlyphPaletteCycle);
     options.invertMouseOption?.removeEventListener("change", handleInvertMouseOptionChange);
   }
 
@@ -196,6 +255,7 @@ export function createQuakeOptionsFlow(options: QuakeOptionsFlowOptions): QuakeO
     syncAudioToggle,
     syncControls,
     syncDynamicLightingOption,
+    syncRenderModeOption,
     syncImpactParticlesOption,
   };
 }

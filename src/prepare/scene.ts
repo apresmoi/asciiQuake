@@ -711,6 +711,12 @@ export interface QuakePreparedRuntimeCollisionBrush {
   targetname?: string;
 }
 
+export interface QuakeGlyphGeometry {
+  version: number;
+  polygonCount: number;
+  polygons: Array<{ v: number[][]; c: string }>;
+}
+
 export interface QuakePreparedScene {
   version: 2;
   polygons?: QuakeSerializedPolygon[];
@@ -718,6 +724,7 @@ export interface QuakePreparedScene {
   skyTexture?: number | string;
   renderBundle?: QuakePreparedRenderBundle;
   lightstyleRenderBundle?: QuakePreparedRenderBundle;
+  glyphGeometry?: QuakeGlyphGeometry;
   textureCount: number;
   faceCount: number;
   sourceFaceCount: number;
@@ -976,6 +983,8 @@ export function createQuakeSceneFromPreparedScene(prepared: QuakePreparedScene):
     ...(prepared.lightstyleRenderBundle
       ? { lightstyleRenderBundle: clonePreparedRenderBundle(prepared.lightstyleRenderBundle) }
       : {}),
+    ...(prepared.glyphGeometry ? { glyphGeometry: prepared.glyphGeometry } : {}),
+    ...(prepared.glyphMovers ? { glyphMovers: prepared.glyphMovers } : {}),
     textureCount: prepared.textureCount,
     faceCount: prepared.faceCount,
     sourceFaceCount: prepared.sourceFaceCount,
@@ -1408,7 +1417,21 @@ async function createQuakePreparedSceneFromBsp(
       encodeTextureUrl,
     ),
   );
-  const polygons = timer.sync("prepare-scene.polygons", () => renderCandidates.map((candidate) => candidate.polygon));
+  const polygons = timer.sync("prepare-scene.polygons", () => renderCandidates.map((candidate) => {
+    // Tag brush-model (mover) polygons with their model + owning entity so the
+    // glyph backend can split them out of the static world and animate them.
+    // The merge step drops candidate.modelIndex, so derive it from the source
+    // face. Survives serialize/hydrate via `...rest`; the poly path ignores them.
+    const sourceFace = candidate.sourceFaceIndices?.[0];
+    const modelIndex = sourceFace !== undefined ? (faceModels[sourceFace] ?? 0) : 0;
+    if (modelIndex) {
+      const tagged = candidate.polygon as { modelIndex?: number; entityIndex?: number };
+      tagged.modelIndex = modelIndex;
+      const entityIndex = entityByModel.get(modelIndex);
+      if (entityIndex !== undefined) tagged.entityIndex = entityIndex;
+    }
+    return candidate.polygon;
+  }));
   const serialized = timer.sync("prepare-scene.serialize-polygons", () => serializePreparedPolygons(polygons, textureUrls));
   const skyTexture = timer.sync("prepare-scene.sky-texture-index", () =>
     skyTextureUrl ? serialized.textures.indexOf(skyTextureUrl) : -1

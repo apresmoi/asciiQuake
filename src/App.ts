@@ -1,12 +1,23 @@
 import {
-  createPolyPerspectiveCamera,
-  createPolyFirstPersonControls,
-  createPolyScene,
   type ParseResult,
   type Polygon,
   type PolyMeshHandle,
   type Vec3,
+  worldPositionToPolyCss,
 } from "@layoutit/polycss";
+import {
+  createQuakeRenderEngine,
+  isQuakeRenderMode,
+  QUAKE_DEFAULT_RENDER_MODE,
+  type QuakeRenderMode,
+} from "./runtime/render/engine";
+import {
+  createQuakeGlyphWorldOverlay,
+  type QuakeGlyphCharMode,
+  type QuakeGlyphComposite,
+  type QuakeGlyphSceneMode,
+  type QuakeGlyphWorldOverlay,
+} from "./runtime/render/glyphWorldOverlay";
 import { QUAKE_RENDER_SUPERSAMPLE } from "./prepare/scene";
 import type {
   QuakeEntity,
@@ -299,6 +310,11 @@ const {
   alwaysRunOption,
   showGunOption,
   dynamicLightingOption,
+  renderModeOption,
+  glyphDetailOption,
+  glyphDetailOptionValue,
+  glyphPaletteOption,
+  glyphPaletteOptionValue,
   impactParticlesOption,
   impactParticlesLayer,
   crosshair,
@@ -399,6 +415,16 @@ function quakeUrlNumberParam(
   const value = Number(rawValue);
   if (!Number.isFinite(value)) return null;
   return Math.max(min, Math.min(max, value));
+}
+
+/** Parse `?glyphView=eyeX,eyeY,eyeZ,rotX,rotY` into a fixed glyph camera. */
+function quakeParseGlyphView(
+  raw: string | null,
+): readonly [number, number, number, number, number] | null {
+  if (!raw) return null;
+  const parts = raw.split(",").map((p) => Number(p.trim()));
+  if (parts.length !== 5 || parts.some((n) => !Number.isFinite(n))) return null;
+  return [parts[0]!, parts[1]!, parts[2]!, parts[3]!, parts[4]!];
 }
 
 function quakeDebugMonsterMotionMaterialPolicy(
@@ -697,6 +723,42 @@ function setQuakeStorageValue(key: string, value: string): void {
   }
 }
 
+const QUAKE_RENDER_MODE_STORAGE_KEY = "cssquake.renderMode";
+const QUAKE_GLYPH_PALETTE_STORAGE_KEY = "cssquake.glyphPalette";
+
+// Glyph sets (glyphcss ramp palettes) offered in the options menu, in cycle
+// order. Each is an intensity ramp, so swapping one is a live scene option —
+// no reload, unlike the render-mode/detail switches which rebuild the engine.
+const QUAKE_GLYPH_PALETTES = [
+  { name: "Solid", palette: "solid" },
+  { name: "ASCII", palette: "detail" },
+  { name: "Blocks", palette: "blocks" },
+  { name: "Dots", palette: "dots" },
+  { name: "Lines", palette: "lines" },
+  { name: "Binary", palette: "binary" },
+  { name: "Hex", palette: "hex" },
+  { name: "Braille", palette: "braille" },
+  { name: "Runes", palette: "runes" },
+  { name: "Stars", palette: "stars" },
+] as const;
+
+// `?glyphPalette=` wins (shareable/debug), then the persisted choice, then solid.
+function resolveQuakeGlyphPalette(): string {
+  const fromUrl = new URLSearchParams(window.location.search).get("glyphPalette");
+  if (fromUrl) return fromUrl;
+  return quakeStorageValue(QUAKE_GLYPH_PALETTE_STORAGE_KEY) ?? "solid";
+}
+
+// Render backend is picked once at startup: `?renderMode=` wins (shareable,
+// mirrors the debug params), then the persisted preference, then the default.
+function resolveQuakeRenderMode(): QuakeRenderMode {
+  const fromUrl = new URLSearchParams(window.location.search).get("renderMode");
+  if (isQuakeRenderMode(fromUrl)) return fromUrl;
+  const stored = quakeStorageValue(QUAKE_RENDER_MODE_STORAGE_KEY);
+  if (isQuakeRenderMode(stored)) return stored;
+  return QUAKE_DEFAULT_RENDER_MODE;
+}
+
 function sanitizeQuakeMultiplayerDisplayName(value: string | null | undefined): string {
   const name = (value ?? "").trim().replace(/\s+/g, " ").slice(0, 16);
   return name || "Player";
@@ -754,6 +816,7 @@ const QUAKE_MENU_ENABLED = true;
 const QUAKE_MONSTER_RUNTIME_ENABLED = true;
 const QUAKE_MONSTER_MOUNT_VIEW_DOT_MIN = -0.1;
 const quakeStartupUrlParams = new URLSearchParams(window.location.search);
+const quakeRenderMode = resolveQuakeRenderMode();
 const quakeDebugMonsterMotionMaterial = quakeDebugMonsterMotionMaterialPolicy(quakeStartupUrlParams);
 const quakeDebugMonsterPlayerClearance = quakeDebugMonsterPlayerClearancePolicy(quakeStartupUrlParams);
 const quakeDebugMonsterCameraStandoff = quakeDebugMonsterCameraStandoffPolicy(quakeStartupUrlParams);
@@ -1253,25 +1316,60 @@ function handleQuakeMultiplayerFormSubmit(event: SubmitEvent): void {
 injectQuakeWorldAnimations();
 quakeAssetCatalog.mountLevelSelector();
 
-const camera = createPolyPerspectiveCamera({
-  perspective: quakeCameraViewConfig.perspective,
-  zoom: quakeCameraViewConfig.zoom,
-  rotX: 88,
-  rotY: 270,
-  target: [0, 0, 1.72],
+const quakeRenderEngine = createQuakeRenderEngine(quakeRenderMode, quakeApp, {
+  camera: {
+    perspective: quakeCameraViewConfig.perspective,
+    zoom: quakeCameraViewConfig.zoom,
+    rotX: 88,
+    rotY: 270,
+    target: [0, 0, 1.72],
+  },
+  scene: {
+    ambientLight: { color: "#ffffff", intensity: Math.PI },
+    directionalLight: { direction: [-0.4, -0.55, -0.65], color: "#ffffff", intensity: 0 },
+    textureLighting: "baked",
+    textureQuality: 1,
+    textureLeafSizing: "raster",
+    textureBackend: "atlas",
+    textureProjection: "affine",
+    autoCenter: false,
+  },
 });
-const scene = createPolyScene(quakeApp, {
-  camera,
-  ambientLight: { color: "#ffffff", intensity: Math.PI },
-  directionalLight: { direction: [-0.4, -0.55, -0.65], color: "#ffffff", intensity: 0 },
-  textureLighting: "baked",
-  textureQuality: 1,
-  textureLeafSizing: "raster",
-  textureBackend: "atlas",
-  textureProjection: "affine",
-  autoCenter: false,
-});
-const host = scene.cameraEl as HTMLElement;
+const camera = quakeRenderEngine.camera;
+const scene = quakeRenderEngine.scene;
+const host = quakeRenderEngine.cameraEl;
+if (import.meta.env?.DEV) {
+  // Parity calibration probe: project a world point through polycss's real CSS
+  // transform pipeline (ground truth) by dropping a zero-size marker into the
+  // transformed scene root and reading its screen position. Compared against the
+  // glyph camera's projection to calibrate the overlay's perspective/zoom.
+  (window as unknown as { __quakePolyProjectScreen?: (p: Vec3) => [number, number] }).__quakePolyProjectScreen = (p) => {
+    const sceneEl = host.querySelector(".polycss-scene");
+    if (!sceneEl) return [Number.NaN, Number.NaN];
+    const d = document.createElement("div");
+    const [x, y, z] = worldPositionToPolyCss(p);
+    d.style.cssText = `position:absolute;left:0;top:0;width:0;height:0;transform:translate3d(${x}px,${y}px,${z}px);transform-style:preserve-3d`;
+    sceneEl.appendChild(d);
+    const r = d.getBoundingClientRect();
+    d.remove();
+    return [r.left, r.top];
+  };
+  // Poly camera params + world→polycss scale (K), so we can compute the glyph
+  // camera params that make the projections coincide (glyph_zoom = poly_zoom·K).
+  (window as unknown as { __quakeParityParams?: () => unknown }).__quakeParityParams = () => {
+    const a = worldPositionToPolyCss([0, 0, 0]);
+    const bx = worldPositionToPolyCss([1, 0, 0]);
+    const by = worldPositionToPolyCss([0, 1, 0]);
+    const bz = worldPositionToPolyCss([0, 0, 1]);
+    return {
+      perspective: quakeCameraViewConfig.perspective,
+      zoom: quakeCameraViewConfig.zoom,
+      kx: [bx[0] - a[0], bx[1] - a[1], bx[2] - a[2]],
+      ky: [by[0] - a[0], by[1] - a[1], by[2] - a[2]],
+      kz: [bz[0] - a[0], bz[1] - a[1], bz[2] - a[2]],
+    };
+  };
+}
 if (quakeSceneRoot) {
   quakeSceneRoot.appendChild(host);
 } else {
@@ -1281,8 +1379,169 @@ host.tabIndex = 0;
 installInspectableQuakePolycssCamera(scene, host);
 // PolyCSS controls read scene.host when they are created; keep that target on the inspectable camera node.
 (scene as unknown as { host: HTMLElement }).host = host;
-const sceneElement = scene.sceneElement;
+const sceneElement = quakeRenderEngine.sceneElement;
 sceneElement.removeAttribute("data-polycss-lighting");
+
+// glyphcss world overlay (Phase 3 milestone): when the ASCII backend is
+// selected, polycss still drives all game logic/camera/controls while this
+// overlay mirrors the world geometry as ASCII driven by the live camera.
+const quakeGlyphOverlay: QuakeGlyphWorldOverlay | null =
+  quakeRenderMode === "glyphcss"
+    ? createQuakeGlyphWorldOverlay({
+        host: quakeApp,
+        insertBefore: weapon ?? quakeMenu,
+        // Skip the (fully hidden) polycss world render while the opaque ASCII is
+        // up — polycss was still rasterizing every textured DOM polygon behind it.
+        // Toggling composite to poly/both brings the layer straight back.
+        polyWorldLayer: sceneElement,
+        // Live-tunable, e.g. ?glyphCell=18&glyphTaa=0.6&ssaa=2&glyphBright=4
+        supersample: quakeUrlNumberParam(quakeStartupUrlParams, "ssaa", 1, 4) ?? undefined,
+        temporalBlend: quakeUrlNumberParam(quakeStartupUrlParams, "glyphTaa", 0, 0.9) ?? undefined,
+        cellPx: quakeUrlNumberParam(quakeStartupUrlParams, "glyphCell", 6, 40) ?? undefined,
+        lineHeight: quakeUrlNumberParam(quakeStartupUrlParams, "glyphLine", 4, 40) ?? undefined,
+        // PARITY, out of the box: glyphcss's camera is now polycss-native (zoom =
+        // CSS px/unit, perspective = CSS px) and projects with measured cell metrics,
+        // so we just hand it polycss's OWN camera params and the two projections are
+        // pixel-identical — no FOV magic. `?glyphPersp=`/`?glyphZoom=`/`?glyphFovScale=`
+        // remain only for experiments.
+        perspective: quakeUrlNumberParam(quakeStartupUrlParams, "glyphPersp", 100, 40000) ?? quakeCameraViewConfig.perspective,
+        zoom: quakeUrlNumberParam(quakeStartupUrlParams, "glyphZoom", 0.01, 500) ?? quakeCameraViewConfig.zoom,
+        fovScale: quakeUrlNumberParam(quakeStartupUrlParams, "glyphFovScale", 0.1, 10) ?? undefined,
+        flat: quakeUrlNumberParam(quakeStartupUrlParams, "glyphFlat", 0, 1) ?? undefined,
+        brighten: quakeUrlNumberParam(quakeStartupUrlParams, "glyphBright", 1, 12) ?? undefined,
+        ambientLight: quakeUrlNumberParam(quakeStartupUrlParams, "glyphAmbient", 0, 1) ?? undefined,
+        directionalLight: quakeUrlNumberParam(quakeStartupUrlParams, "glyphDir", 0, 1) ?? undefined,
+        depthEpsilon: quakeUrlNumberParam(quakeStartupUrlParams, "glyphEps", 0, 0.1) ?? undefined,
+        // Glyph ramp palette (intensity → char). Defaults to "blocks" (solid
+        // block elements → walls read as surfaces, not letters).
+        // ?glyphPalette=detail|default|ascii to compare.
+        glyphPalette: resolveQuakeGlyphPalette(),
+        // Entity detail multiplier (default 2): pickups/weapon/enemies/projectiles
+        // render at 2× the world's glyph density in their own depth-occluded layer,
+        // for crisp entities over a cheap coarse world. Detail-layer alignment under
+        // the perspective camera is fixed (glyphcss b1e2bb6). 1 = off; movers stay
+        // at world density. `?glyphEntityDensity=`.
+        entityDensity: quakeUrlNumberParam(quakeStartupUrlParams, "glyphEntityDensity", 1, 4) ?? undefined,
+        // DEBUG: ?glyphEntityTransparent=1 drops entity occlusion (isolate placement
+        // vs occlusion); ?glyphEntityOutline=1 boxes each detail layer.
+        entityTransparent: quakeStartupUrlParams.get("glyphEntityTransparent") === "1",
+        entityOutline: quakeStartupUrlParams.get("glyphEntityOutline") === "1",
+        // BSP PVS cull: the glyph backend re-projects the whole map every frame,
+        // so cull world polygons not in the player's potentially-visible set. The
+        // eye is the same poly-frame origin the visibility expects (controls.getOrigin).
+        // `?glyphPvs=0` disables. Polycss is unaffected (it composites DOM, no cull).
+        pvsVisibleLeavesAt: quakeStartupUrlParams.get("glyphPvs") === "0"
+          ? undefined
+          : (eye) => currentResult?.visibility?.visibleLeavesAt(eye) ?? null,
+        // Diagnostics: ?glyphDebug=1 shows a live eye/orientation readout;
+        // ?glyphView=eyeX,eyeY,eyeZ,rotX,rotY freezes the camera there for an
+        // exact, reproducible view (to pin a flicker spot to coordinates).
+        debug: quakeStartupUrlParams.get("glyphDebug") === "1",
+        fixedView: quakeParseGlyphView(quakeStartupUrlParams.get("glyphView")),
+        // Cell character encoding: `?glyphCharMode=braille` renders the world as
+        // Unicode Braille dot patterns (2x4 subcell mask per cell). Braille only
+        // applies to glyphcss's WIREFRAME output, so the overlay flips the scene
+        // mode along with it unless `?glyphSceneMode=` says otherwise.
+        // `halfblock`/`quadrant` are the solid-mode subcell encodings.
+        charMode: ((m): QuakeGlyphCharMode | undefined =>
+          m === "braille" || m === "halfblock" || m === "quadrant" || m === "ascii" ? m : undefined)(
+          quakeStartupUrlParams.get("glyphCharMode"),
+        ),
+        // Scene render mode: `?glyphSceneMode=wireframe|voxel|ink|solid`.
+        sceneMode: ((m): QuakeGlyphSceneMode | undefined =>
+          m === "wireframe" || m === "voxel" || m === "ink" || m === "solid" ? m : undefined)(
+          quakeStartupUrlParams.get("glyphSceneMode"),
+        ),
+        // Colour-run merge tolerance (redmean 0..765, 0 = off): fewer <span>s per
+        // row at the cost of colour fidelity. `?glyphColorTolerance=24`.
+        colorTolerance: quakeUrlNumberParam(quakeStartupUrlParams, "glyphColorTolerance", 0, 765) ?? undefined,
+        // Hidden-line removal for wireframe/braille: `?glyphHiddenLines=show|hide`.
+        hiddenLines: ((m): "show" | "hide" | undefined => (m === "show" || m === "hide" ? m : undefined))(
+          quakeStartupUrlParams.get("glyphHiddenLines"),
+        ),
+        // Initial backend composite (cycle live with `V`): glyph | poly | both
+        // (50% ASCII over the polycss world for parity). `?glyphComposite=both`.
+        composite: ((c): QuakeGlyphComposite | undefined =>
+          c === "poly" || c === "both" || c === "glyph" ? c : undefined)(
+          quakeStartupUrlParams.get("glyphComposite"),
+        ),
+      })
+    : null;
+if (quakeGlyphOverlay) {
+  // polycss keeps driving camera/controls/collision underneath; the opaque
+  // ASCII overlay (z-index 1, after the camera) paints over its world.
+  setQuakeBodyClass("quake-glyph-render", true);
+
+  // Live parity tool: press `V` to cycle the backend composite WITHOUT reloading
+  // — glyph (ASCII) → both (ASCII at 50% over the polycss world, to check they
+  // line up) → poly (overlay hidden, raw polycss). Possible because polycss is
+  // always the engine and glyphcss is just an overlay on top of its render.
+  const quakeGlyphCompositeCycle: QuakeGlyphComposite[] = ["glyph", "both", "poly"];
+  let quakeGlyphCompositeToast: HTMLDivElement | null = null;
+  let quakeGlyphCompositeToastTimer = 0;
+  const showQuakeGlyphCompositeToast = (mode: QuakeGlyphComposite): void => {
+    if (!quakeGlyphCompositeToast) {
+      quakeGlyphCompositeToast = document.createElement("div");
+      quakeGlyphCompositeToast.style.cssText =
+        "position:fixed;top:8px;left:50%;transform:translateX(-50%);z-index:99999;" +
+        "font:600 13px monospace;color:#0f0;background:rgba(0,0,0,0.8);padding:4px 10px;" +
+        "border-radius:4px;pointer-events:none;transition:opacity .2s";
+      document.body.appendChild(quakeGlyphCompositeToast);
+    }
+    const label =
+      mode === "glyph" ? "glyphcss (ASCII)" : mode === "poly" ? "polycss" : "BOTH — glyph 50% over poly";
+    quakeGlyphCompositeToast.textContent = `render: ${label}   [V]`;
+    quakeGlyphCompositeToast.style.opacity = "1";
+    window.clearTimeout(quakeGlyphCompositeToastTimer);
+    quakeGlyphCompositeToastTimer = window.setTimeout(() => {
+      if (quakeGlyphCompositeToast) quakeGlyphCompositeToast.style.opacity = "0";
+    }, 1400);
+  };
+  window.addEventListener("keydown", (event) => {
+    if (event.code !== "KeyV" || event.repeat || event.metaKey || event.ctrlKey || event.altKey) return;
+    const current = quakeGlyphOverlay!.getComposite();
+    const next = quakeGlyphCompositeCycle[
+      (quakeGlyphCompositeCycle.indexOf(current) + 1) % quakeGlyphCompositeCycle.length
+    ]!;
+    quakeGlyphOverlay!.setComposite(next);
+    showQuakeGlyphCompositeToast(next);
+  });
+}
+
+// Track which mover glyph entities are registered so we can clear stale ones on
+// a scene change (entity id = `mover:<entityIndex>`).
+let quakeGlyphMoverIds: string[] = [];
+function syncQuakeGlyphOverlayGeometry(): void {
+  if (!quakeGlyphOverlay) return;
+  quakeGlyphOverlay.setGeometry(currentResult?.glyphGeometry ?? null);
+  // Phase 4F: register each mover (door/plat/button) as a glyph entity at its
+  // base (closed) position; applyState then drives its open/close offset.
+  for (const id of quakeGlyphMoverIds) quakeGlyphOverlay.removeEntity(id);
+  quakeGlyphMoverIds = [];
+  for (const mover of currentResult?.glyphMovers?.movers ?? []) {
+    const id = `mover:${mover.entityIndex}`;
+    // Use the mover's CURRENT offset, not [0,0,0]: a mover can start displaced
+    // (initialOffset — e.g. a plat/bridge that begins at the top), and this is
+    // order-independent vs the mover controller's own init pass.
+    const offset = movers?.get(mover.entityIndex)?.offset;
+    const position: [number, number, number] = offset ? [offset[0], offset[1], offset[2]] : [0, 0, 0];
+    quakeGlyphOverlay.setEntity(id, { polygons: mover.polygons }, { position, scale: 1, depthBias: QUAKE_MOVER_GLYPH_DEPTH_BIAS });
+    quakeGlyphMoverIds.push(id);
+  }
+}
+// Movers (doors/plats) sit flush in walls/floors, so they're coplanar with the
+// static world. Polycss composites DOM by stacking order; the glyph backend
+// paints a projection with a depth buffer, so coplanar surfaces z-fight and the
+// mover drops in patches. A tiny depth bias toward the camera makes the mover —
+// the active surface — win those cells cleanly.
+const QUAKE_MOVER_GLYPH_DEPTH_BIAS = 0.004;
+function syncQuakeGlyphMoverOffset(entityIndex: number, offset: Vec3): void {
+  quakeGlyphOverlay?.setEntityTransform(`mover:${entityIndex}`, {
+    position: [offset[0], offset[1], offset[2]],
+    scale: 1,
+    depthBias: QUAKE_MOVER_GLYPH_DEPTH_BIAS,
+  });
+}
 let quakeCameraFeedback!: QuakeCameraFeedbackFlow;
 const quakeCameraView = createQuakeCameraViewFlow({
   cameraFeedback: () => quakeCameraFeedback,
@@ -1364,7 +1623,7 @@ const disposeQuakeMultiplayerMessages = quakeMultiplayerSession.subscribe((messa
   handleQuakeMultiplayerRoomMessage(message);
 });
 quakeCameraView.syncViewportProjection();
-const controls = createPolyFirstPersonControls(scene, {
+const controls = quakeRenderEngine.createControls({
   eyeHeight: 1.72,
   groundZ: 0,
   moveSpeed: QUAKE_MOBILE_MOVE_SPEED,
@@ -1384,6 +1643,52 @@ controls.update = (partial) => {
   quakeCameraView.compactCameraInlineStyle();
 };
 quakeCameraView.compactCameraInlineStyle();
+
+// Mirror the camera to the glyph overlay at the single chokepoint every camera
+// update funnels through. The polycss first-person controls call applyCamera()
+// directly on locked mouse-look (bypassing the app's camera flow), so wrapping
+// applyCamera is the only hook that catches both look and movement.
+// The glyph weapon is a world-space entity at eye+offset, so it must re-sync on
+// EVERY camera update — including the direct mouse-look applyCamera calls below.
+// `viewmodel` is created later, so route through a mutable hook set after it
+// exists; without this the gun is only re-synced by the game-loop syncTransform,
+// so it visibly lags behind / "detaches" during pure mouse-look and snaps back.
+let quakeGlyphSyncWeapon: (() => void) | null = null;
+if (quakeGlyphOverlay) {
+  const applyPolyCamera = scene.applyCamera.bind(scene);
+  const cameraState = scene.camera.state as { rotX?: number; rotY?: number; target?: Vec3 };
+  scene.applyCamera = () => {
+    applyPolyCamera();
+    quakeGlyphOverlay.syncCamera(
+      controls.getOrigin(),
+      cameraState.rotX ?? 90,
+      cameraState.rotY ?? 270,
+      cameraState.target,
+    );
+    quakeGlyphSyncWeapon?.();
+  };
+  // Dev: dump the exact glyph state (camera + every mover's live offset) so a
+  // bug can be replayed precisely. Call window.__quakeDumpGlyphState() in the
+  // console while the bug is on screen; paste the result.
+  if (import.meta.env?.DEV) {
+    // Dev: hand the live overlay to the console/benchmarks so glyph render cost
+    // can be timed against the REAL level geometry and PVS at any view.
+    (window as unknown as { __quakeGlyphOverlay?: QuakeGlyphWorldOverlay }).__quakeGlyphOverlay = quakeGlyphOverlay;
+    (window as unknown as { __quakeDumpGlyphState?: () => unknown }).__quakeDumpGlyphState = () => {
+      const o = controls.getOrigin();
+      const f = (n: number) => Math.round(n * 100) / 100;
+      const moverOffsets: Record<number, [number, number, number]> = {};
+      for (const m of currentResult?.glyphMovers?.movers ?? []) {
+        const off = movers?.get(m.entityIndex)?.offset;
+        if (off && (off[0] || off[1] || off[2])) moverOffsets[m.entityIndex] = [f(off[0]), f(off[1]), f(off[2])];
+      }
+      const dump = { view: `${f(o[0])},${f(o[1])},${f(o[2])},${f(cameraState.rotX ?? 90)},${f(cameraState.rotY ?? 270)}`, moverOffsets };
+      // eslint-disable-next-line no-console
+      console.log("GLYPH STATE:", JSON.stringify(dump));
+      return dump;
+    };
+  }
+}
 let quakePlayerDead = false;
 
 type QuakePickupControllerHandle = ReturnType<typeof createQuakePickupController>;
@@ -1726,7 +2031,16 @@ viewmodel = createQuakeViewmodelController({
   getRenderOrigin: quakeCameraView.currentRenderOrigin,
   host,
   layer: weapon,
+  // In glyphcss mode the weapon renders as ASCII in the world overlay's entity
+  // layer instead of the polycss carrier.
+  glyphEntitySink: quakeGlyphOverlay ?? undefined,
+  renderModeIsGlyph: () => quakeRenderMode === "glyphcss",
+  glyphWeaponScale: quakeUrlNumberParam(quakeStartupUrlParams, "glyphWeaponScale", 0.01, 2) ?? undefined,
+  glyphWeaponReach: quakeUrlNumberParam(quakeStartupUrlParams, "glyphWeaponReach", 0.02, 1) ?? undefined,
 });
+// Now that the viewmodel exists, let the camera chokepoint re-sync the glyph
+// weapon on every camera update (incl. direct mouse-look) so it tracks the view.
+if (quakeGlyphOverlay) quakeGlyphSyncWeapon = () => viewmodel.syncTransform();
 const quakeViewmodelAssets = createQuakeViewmodelAssetFlow({
   activeWeapon: () => player?.inventory().activeWeapon ?? null,
   assetManifest: quakeAssetCatalog.manifest,
@@ -1775,6 +2089,16 @@ const quakeOptions = createQuakeOptionsFlow({
   disableSoundOption,
   dynamicLightingEnabled: () => quakeDynamicLighting,
   dynamicLightingOption,
+  renderModeIsGlyph: () => quakeRenderMode === "glyphcss",
+  renderModeOption,
+  glyphDetailOption,
+  glyphDetailOptionValue,
+  glyphDetailLabel: quakeGlyphDetailLabel,
+  cycleGlyphDetail: cycleQuakeGlyphDetail,
+  glyphPaletteOption,
+  glyphPaletteOptionValue,
+  glyphPaletteLabel: quakeGlyphPaletteLabel,
+  cycleGlyphPalette: cycleQuakeGlyphPalette,
   enemiesDisabled: () => quakeEnemiesDisabled,
   impactParticlesEnabled: () => quakeImpactParticles,
   impactParticlesOption,
@@ -1785,6 +2109,7 @@ const quakeOptions = createQuakeOptionsFlow({
   setAudioMuted: setQuakeAudioMuted,
   setDamageDisabled: setQuakeDamageDisabled,
   setDynamicLighting: setQuakeDynamicLighting,
+  setRenderMode: setQuakeRenderMode,
   setEnemiesDisabled: setQuakeEnemiesDisabled,
   setImpactParticles: setQuakeImpactParticles,
   setInvertMouse: setQuakeInvertMouse,
@@ -1820,6 +2145,8 @@ const quakePowerups = createQuakePowerupFlow({
 const shootables = createQuakeShootablesController({
   addMesh: (entity, model, frameIndex, options) =>
     quakeEntityMeshes.addShootableMesh(entity, model, frameIndex, options),
+  // Phase 4D: mirror enemies into the glyph (ASCII) entity layer when active.
+  ...(quakeGlyphOverlay ? { glyphEntitySink: quakeGlyphOverlay } : {}),
   bossLightningDischarge: quakeBossLightningDischarge,
   bossLightningElectrodesReady: quakeBossLightningElectrodesReady,
   createMonsterStateRunner: (classname) => createQuakeMonsterStateRunner(classname, { enabled: true }),
@@ -1940,6 +2267,8 @@ const triggerSystem = createQuakeTriggersController({
 });
 pickups = createQuakePickupController({
   addMesh: (entity, model, frameIndex) => quakeEntityMeshes.addPickupMesh(entity, model, frameIndex),
+  // Phase 4C: mirror pickups into the glyph (ASCII) entity layer when active.
+  ...(quakeGlyphOverlay ? { glyphEntitySink: quakeGlyphOverlay } : {}),
   applyEffect: (effect, entity, feedback) => {
     applyQuakeInventoryDelta(getPlayer().inventory(), effect);
     syncQuakeHud();
@@ -2262,6 +2591,7 @@ quakeTextPresentation = createQuakeTextPresentationFlow({
 quakeMoverInteractions = createQuakeMoverInteractionFlow({
   audio,
   applyButtonLeafVisual: applyQuakeButtonLeafVisual,
+  ...(quakeGlyphOverlay ? { syncGlyphMoverOffset: syncQuakeGlyphMoverOffset } : {}),
   compactInlineStyle: quakeCameraView.compactInlineStyle,
   currentCollisionWorld: () => currentCollisionWorld,
   currentGroundEntity: () => getPlayer().currentGroundEntity(),
@@ -2369,7 +2699,7 @@ const quakeSceneMount = createQuakeSceneMountFlow({
   shootables,
   state: {
     setCollisionWorld: (world) => { currentCollisionWorld = world; },
-    setCurrentScene: (nextScene) => { currentResult = nextScene; },
+    setCurrentScene: (nextScene) => { currentResult = nextScene; syncQuakeGlyphOverlayGeometry(); },
     setEntityIndex: (index) => { entityByIndex = index; },
     setModelPivot: (pivot) => {
       quakeModelPivot = pivot;
@@ -2705,6 +3035,78 @@ function syncQuakeDebugDisableAttacksOption(): void {
 function setQuakeDynamicLighting(enabled: boolean): void {
   quakeDynamicLighting = enabled;
   quakeOptions.syncDynamicLightingOption();
+}
+
+// ASCII (glyph) detail presets — cell size in px (smaller = finer + slower).
+// Cell = font-size in px; the overlay derives a ~square line-height from it, so a
+// smaller cell packs both more columns AND more rows (≈square cells = far more
+// vertical detail than the old tall cells). Finer + an Ultra tier for max detail.
+const QUAKE_GLYPH_DETAIL_LEVELS = [
+  { name: "Coarse", cell: 18 },
+  { name: "Normal", cell: 12 },
+  { name: "Fine", cell: 9 },
+  { name: "Ultra", cell: 6 },
+] as const;
+
+function quakeCurrentGlyphCell(): number {
+  return quakeUrlNumberParam(quakeStartupUrlParams, "glyphCell", 6, 40) ?? 20;
+}
+
+function quakeNearestGlyphDetailIndex(): number {
+  const cell = quakeCurrentGlyphCell();
+  let bestIndex = 1;
+  let bestDistance = Infinity;
+  QUAKE_GLYPH_DETAIL_LEVELS.forEach((level, index) => {
+    const distance = Math.abs(level.cell - cell);
+    if (distance < bestDistance) { bestDistance = distance; bestIndex = index; }
+  });
+  return bestIndex;
+}
+
+function quakeGlyphDetailLabel(): string {
+  return QUAKE_GLYPH_DETAIL_LEVELS[quakeNearestGlyphDetailIndex()]!.name;
+}
+
+function cycleQuakeGlyphDetail(direction: number): void {
+  const step = direction < 0 ? -1 : 1;
+  const length = QUAKE_GLYPH_DETAIL_LEVELS.length;
+  const next = QUAKE_GLYPH_DETAIL_LEVELS[(quakeNearestGlyphDetailIndex() + step + length) % length]!;
+  // Carried in the URL + a reload, mirroring the render-mode switch.
+  const url = new URL(window.location.href);
+  url.searchParams.set("glyphCell", String(next.cell));
+  if (quakeRenderMode !== "glyphcss") url.searchParams.set("renderMode", "glyphcss");
+  window.location.assign(url.toString());
+}
+
+function quakeGlyphPaletteIndex(): number {
+  const current = quakeGlyphOverlay?.getGlyphPalette() ?? resolveQuakeGlyphPalette();
+  const index = QUAKE_GLYPH_PALETTES.findIndex((entry) => entry.palette === current);
+  return index < 0 ? 0 : index;
+}
+
+function quakeGlyphPaletteLabel(): string {
+  return QUAKE_GLYPH_PALETTES[quakeGlyphPaletteIndex()]!.name;
+}
+
+function cycleQuakeGlyphPalette(direction: number): void {
+  const step = direction < 0 ? -1 : 1;
+  const length = QUAKE_GLYPH_PALETTES.length;
+  const next = QUAKE_GLYPH_PALETTES[(quakeGlyphPaletteIndex() + step + length) % length]!;
+  setQuakeStorageValue(QUAKE_GLYPH_PALETTE_STORAGE_KEY, next.palette);
+  // Live swap — the ramp is a scene option, so no reload (unlike ASCII detail,
+  // which changes the cell size and rebuilds the grid).
+  quakeGlyphOverlay?.setGlyphPalette(next.palette);
+}
+
+function setQuakeRenderMode(glyph: boolean): void {
+  const nextMode: QuakeRenderMode = glyph ? "glyphcss" : "polycss";
+  if (nextMode === quakeRenderMode) return;
+  setQuakeStorageValue(QUAKE_RENDER_MODE_STORAGE_KEY, nextMode);
+  // Switching the render backend swaps the entire engine/DOM graph, so reload
+  // with the choice carried in the URL instead of reconstructing it live.
+  const url = new URL(window.location.href);
+  url.searchParams.set("renderMode", nextMode);
+  window.location.assign(url.toString());
 }
 
 function setQuakeImpactParticles(enabled: boolean): void {

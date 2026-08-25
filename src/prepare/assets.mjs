@@ -17,6 +17,7 @@ import {
   deterministicAtlasDebugSourceImagesSymbol,
   replaceQuakeRenderBundleWorldAtlas,
 } from "./deterministicAtlas.mjs";
+import { buildQuakeGlyphGeometry, buildQuakeGlyphMovers, buildQuakeGlyphFaceLeaves } from "./glyphGeometry.mjs";
 import { prepareQuakeEffectSprites } from "./effectSprites.mjs";
 import {
   QUAKE_PREPARED_SCENE_MODES,
@@ -151,6 +152,10 @@ const quakePrepareCi = normalizedEnvFlag(process.env.CI);
 const quakePreparePriorityScheduling = process.env.QUAKE_PREPARE_PRIORITY_SCHEDULING === "1" ||
   (quakePrepareCi && process.env.QUAKE_PREPARE_PRIORITY_SCHEDULING !== "0");
 const quakePrepareZeroRenderAliasSkip = process.env.QUAKE_PREPARE_ZERO_RENDER_ALIAS_SKIP !== "0";
+// Emit renderer-neutral world geometry so the glyphcss (ASCII) backend can
+// rasterize maps. On by default; set QUAKE_GLYPH_GEOMETRY=0 for polycss-only
+// builds that want leaner bundles.
+const quakeEmitGlyphGeometry = process.env.QUAKE_GLYPH_GEOMETRY !== "0";
 const quakePrepareTiming = process.env.QUAKE_PREPARE_TIMING === "1";
 const quakePrepareDetailedTiming = process.env.QUAKE_PREPARE_DETAILED_TIMING === "1";
 const quakeRenderBundleEngine = normalizeQuakeRenderBundleEngine(process.env.QUAKE_RENDER_BUNDLE_ENGINE ?? "happy-dom");
@@ -758,6 +763,15 @@ try {
           if (shouldBuildRenderBundleForMap(mapName)) {
             const scene = await runPrepareDetailStep(`map ${mapName} scene hydrate`, () =>
               createQuakeSceneFromPreparedScene(prepared));
+            if (quakeEmitGlyphGeometry) {
+              // Face → BSP leaf map so each glyph polygon can be tagged with its
+              // leaves for the runtime potentially-visible-set (PVS) cull.
+              const glyphFaceLeaves = buildQuakeGlyphFaceLeaves(prepared.visibility);
+              prepared.glyphGeometry = await runPrepareDetailStep(`map ${mapName} glyph geometry`, () =>
+                buildQuakeGlyphGeometry(scene.polygons, glyphFaceLeaves));
+              prepared.glyphMovers = await runPrepareDetailStep(`map ${mapName} glyph movers`, () =>
+                buildQuakeGlyphMovers(scene.polygons));
+            }
             const lightstyleOverlayPolygons = await runPrepareDetailStep(`map ${mapName} lightstyle overlay`, () =>
               buildQuakeLightstyleOverlayPolygons(scene.polygons));
             const tightenWorldDom = quakeDomTighteningEnabled("world", false);
@@ -3712,7 +3726,38 @@ async function buildQuakeWeaponModel(
       optimizeAtlasLeafHomography: false,
       textureAtlasScale: quakeWeaponAtlasScale,
     }),
+    // Glyph (ASCII) per-frame geometry for the glyphcss render backend — built
+    // from the same first-2-frame slice + pivot, palette-sampled per-triangle
+    // colour mirroring the pickup/enemy path (buildQuakeAliasModelGlyphFrames).
+    ...(quakeEmitGlyphGeometry ? { glyphFrames: buildQuakeWeaponGlyphFrames(assets, model) } : {}),
   };
+}
+
+function buildQuakeWeaponGlyphFrames(assets, model) {
+  const brightness = 1.22; // matches the model texture encode brightness (pickup parity)
+  const [px, py, pz] = QUAKE_WEAPON_MODEL_PIVOT;
+  // Sample the PADDED skin (the same one the render bundle uses): the raw skin's
+  // unused regions hold filler pixels (including the palette's blue ramp), and
+  // triangle-edge UV rounding can land on them — dilation replaces the filler
+  // so colours stay within the real skin.
+  const skin = quakeAliasPaddedSkin(model);
+  return model.frames.slice(0, 2).map((frame) => {
+    const vertices = frame.vertices.map((vertex) => {
+      const [x, y, z] = quakeWeaponVertex(vertex);
+      return [x - px, y - py, z - pz];
+    });
+    const polygons = model.triangles.map((triangle) => {
+      const uvs = triangle.indices.map((index) => quakeAliasUv(model, triangle, index));
+      return {
+        vertices: triangle.indices.map((index) => vertices[index]),
+        uvs,
+        color: quakeAliasModelPolygonGlyphColor(
+          uvs, skin, model.skinWidth, model.skinHeight, assets.palette, brightness,
+        ),
+      };
+    });
+    return buildQuakeGlyphGeometry(polygons);
+  });
 }
 
 function quakeWeaponRenderBundleName(modelPath) {
@@ -3814,10 +3859,18 @@ async function buildQuakePickupModels(assets, buildBspModel, programMetadata, re
           ...frame,
           polygons: scaleQuakeModelPolygons(frame.polygons, renderScale),
         }));
+    // Glyph (ASCII) per-frame geometry — captured here while vertices + UVs still
+    // exist (stripQuakePickupModelFallbackGeometry deletes `polygons` after the
+    // polycss bundle is baked). Attached per frame + a base copy on the model.
+    if (quakeEmitGlyphGeometry) {
+      const glyphFrames = buildQuakeAliasModelGlyphFrames(renderAnimationFrames, model, assets.palette);
+      renderAnimationFrames.forEach((frame, index) => { frame.glyphGeometry = glyphFrames[index]; });
+    }
     const prepared = {
       source,
       texture,
       polygons: renderAnimationFrames[0].polygons,
+      ...(quakeEmitGlyphGeometry ? { glyphGeometry: renderAnimationFrames[0].glyphGeometry } : {}),
       ...(
         source === QUAKE_BOSS_MODEL_PATH ||
         source === QUAKE_SHAMBLER_MODEL_PATH
@@ -4842,6 +4895,46 @@ function quakeAliasPolygonFromPlan(model, frame, entry, options = {}) {
     } : {}),
     ...(entry.data ? { data: { ...entry.data } } : {}),
   };
+}
+
+// Representative glyph colour for an alias-model polygon: average the model skin
+// (palette-indexed) over the polygon's UV samples. Mirrors litTextureFallbackColor
+// but per-polygon via UVs (the skin is one texture; different polygons map to
+// different regions). Fullbright palette indices (>=224) ignore brightness.
+function quakeAliasModelPolygonGlyphColor(uvs, skin, skinWidth, skinHeight, palette, brightness) {
+  if (!Array.isArray(uvs) || !uvs.length || !skin || !skinWidth || !skinHeight) return "#808080";
+  let r = 0, g = 0, b = 0, n = 0;
+  for (const uv of uvs) {
+    // UVs are normalized (quakeAliasUv): u = (s+0.5)/w, v = 1 - (t+0.5)/h.
+    // Convert back to skin pixel coords (v is flipped).
+    let s = Math.round(uv[0] * skinWidth);
+    let t = Math.round((1 - uv[1]) * skinHeight);
+    s = ((s % skinWidth) + skinWidth) % skinWidth;
+    t = ((t % skinHeight) + skinHeight) % skinHeight;
+    const paletteIndex = skin[t * skinWidth + s] ?? 0;
+    const rgb = paletteRgbAt(palette, paletteIndex);
+    const light = paletteIndex >= 224 ? 1 : brightness;
+    r += rgb[0] * light; g += rgb[1] * light; b += rgb[2] * light; n++;
+  }
+  if (!n) return "#808080";
+  const hex = (value) => clampByte(value / n).toString(16).padStart(2, "0");
+  return `#${hex(r)}${hex(g)}${hex(b)}`;
+}
+
+// Per-frame glyph geometry for an alias model: vertices from each (renderScale-
+// applied) frame, colour sampled from the skin via UVs. Reuses the world
+// buildQuakeGlyphGeometry for the compact {v,c} encoding + coordinate rounding.
+function buildQuakeAliasModelGlyphFrames(renderAnimationFrames, model, palette) {
+  const brightness = 1.22; // matches the model texture encode brightness
+  return renderAnimationFrames.map((frame) =>
+    buildQuakeGlyphGeometry(
+      frame.polygons.map((polygon) => ({
+        ...polygon,
+        color: quakeAliasModelPolygonGlyphColor(
+          polygon.uvs, model.skin, model.skinWidth, model.skinHeight, palette, brightness,
+        ),
+      })),
+    ));
 }
 
 function quakeAliasRenderBundleWindingOrder(values) {
