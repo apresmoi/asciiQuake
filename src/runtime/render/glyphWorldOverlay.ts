@@ -319,12 +319,14 @@ export function createQuakeGlyphWorldOverlay(
   // glyph ramp. So at coarse cells SS2 cleans up sub-cell coverage cheaply, but at
   // fine cells (which already resolve sub-cell features) it just halves the fps;
   // drop it there. Explicit `?ssaa=` always wins.
-  // "solid" ramp by default: EVERY covered cell is a full block, so surfaces read
-  // as flat filled colour (shading carried by the baked-lit colour) — no dithered
-  // shade glyphs or black gaps within a wall, which is the "rugged blocks" look.
-  // `?glyphPalette=blocks` for the dithered block ramp, `detail` for ASCII letters,
-  // `default|ascii` for others. NOTE: scene-level, so entities use it too.
-  let glyphPalette = options.glyphPalette ?? "solid";
+  // "detail" ramp by default: a ~70-level ASCII ramp (space → `.:-=+*#%@` → dense
+  // letters), so the world reads as actual characters. This is the whole point of
+  // the ASCII backend — "solid" (every covered cell a full `█`) renders as flat
+  // colour blocks with no glyph texture at all, which is a block renderer wearing
+  // a <pre>. Colour is unaffected: runs coalesce by colour, not by glyph, and the
+  // atlas encodes the full ASCII range. `?glyphPalette=solid` restores the blocks,
+  // `blocks` is the dithered block ramp. NOTE: scene-level, so entities use it too.
+  let glyphPalette = options.glyphPalette ?? "detail";
   // Scene mode + character encoding. Braille (U+2800..U+28FF, a 2x4 dot mask per
   // cell) only applies to WIREFRAME output in glyphcss, so asking for braille
   // without a mode implies wireframe — otherwise it silently renders as plain

@@ -744,11 +744,12 @@ const QUAKE_GLYPH_PALETTES = [
   { name: "Stars", palette: "stars" },
 ] as const;
 
-// `?glyphPalette=` wins (shareable/debug), then the persisted choice, then solid.
+// `?glyphPalette=` wins (shareable/debug), then the persisted choice, then the
+// ASCII ramp — this is asciiQuake, so the default has to render as characters.
 function resolveQuakeGlyphPalette(): string {
   const fromUrl = new URLSearchParams(window.location.search).get("glyphPalette");
   if (fromUrl) return fromUrl;
-  return quakeStorageValue(QUAKE_GLYPH_PALETTE_STORAGE_KEY) ?? "solid";
+  return quakeStorageValue(QUAKE_GLYPH_PALETTE_STORAGE_KEY) ?? "detail";
 }
 
 // Render backend is picked once at startup: `?renderMode=` wins (shareable,

@@ -46,8 +46,31 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
+      - name: Restore prepared Quake assets
+        # Preparing the assets is ~10.5 of a ~12 minute deploy; everything else
+        # (build, artifact upload, publish) is well under a minute. The output is a
+        # pure function of the checksum-pinned shareware archive and the inputs in
+        # the key below, so an unchanged key means byte-identical assets.
+        id: quake-assets
+        uses: actions/cache@v4
+        with:
+          path: build/generated
+          # Every repo input prepare actually reads: the generators (which pin the
+          # shareware archive's SHA-256), the source images it derives HUD/menu/
+          # social art from, robots.txt + sitemap.xml (copied into the asset tree),
+          # the QuakeC program facts, and the lockfile (polycss's version changes
+          # the render bundles). NO restore-keys on purpose — a near-miss would
+          # restore assets built by different generators and ship them silently.
+          key: quake-assets-v1-${{ hashFiles('src/prepare/**', 'src/assets/**', 'src/site/**', 'src/generated/quakeProgramFacts.json', 'pnpm-lock.yaml') }}
+
       - name: Generate Quake assets
+        if: steps.quake-assets.outputs.cache-hit != 'true'
         run: pnpm prepare:quake
+
+      - name: Verify prepared assets
+        # Runs on both paths, so a truncated or partial cache restore fails here
+        # instead of publishing a site with missing maps.
+        run: pnpm test:asset-state
 
       - name: Build site
         run: pnpm build
