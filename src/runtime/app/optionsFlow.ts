@@ -120,6 +120,9 @@ export function createQuakeOptionsFlow(options: QuakeOptionsFlowOptions): QuakeO
       ? event.detail.direction
       : 1;
     options.cycleGlyphDetail(direction);
+    // Live resize when the ASCII overlay is up (no reload), so refresh the label
+    // in place. When it isn't, the cycle navigates and this never runs.
+    syncGlyphDetailOption();
   }
 
   function syncImpactParticlesOption(): void {

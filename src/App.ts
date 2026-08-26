@@ -13,7 +13,9 @@ import {
 } from "./runtime/render/engine";
 import {
   createQuakeGlyphWorldOverlay,
+  QUAKE_GLYPH_OVERLAY_CELL_PX,
   type QuakeGlyphCharMode,
+  type QuakeGlyphColorEncoding,
   type QuakeGlyphComposite,
   type QuakeGlyphSceneMode,
   type QuakeGlyphWorldOverlay,
@@ -278,7 +280,7 @@ import {
   type QuakeRenderBundleFrameSet,
 } from "./runtime/renderBundleMesh";
 
-declare const __CSSQUAKE_VERSION__: string;
+declare const __ASCIIQUAKE_VERSION__: string;
 
 const QUAKE_DEBUG_PANEL_STATS_MS = 250;
 const QUAKE_DOOR_MESSAGE_COOLDOWN_MS = 2000;
@@ -799,10 +801,10 @@ function defaultQuakeMultiplayerPartyHost(): string {
     window.location.host;
 }
 
-const cssQuakeVersionLabel = `v${__CSSQUAKE_VERSION__}`;
-const QUAKE_LOADING_CONSOLE_INITIALIZED_LINE = `=== cssQuake ${cssQuakeVersionLabel} initialized ===`;
+const asciiQuakeVersionLabel = `v${__ASCIIQUAKE_VERSION__}`;
+const QUAKE_LOADING_CONSOLE_INITIALIZED_LINE = `=== asciiQuake ${asciiQuakeVersionLabel} initialized ===`;
 
-if (versionLabel) versionLabel.textContent = cssQuakeVersionLabel;
+if (versionLabel) versionLabel.textContent = asciiQuakeVersionLabel;
 
 const QUAKE_JUMP_VELOCITY = 270 * QUAKE_COLLISION_UNIT_SCALE;
 const QUAKE_GRAVITY = 800 * QUAKE_COLLISION_UNIT_SCALE;
@@ -1455,6 +1457,14 @@ const quakeGlyphOverlay: QuakeGlyphWorldOverlay | null =
         // Colour-run merge tolerance (redmean 0..765, 0 = off): fewer <span>s per
         // row at the cost of colour fidelity. `?glyphColorTolerance=24`.
         colorTolerance: quakeUrlNumberParam(quakeStartupUrlParams, "glyphColorTolerance", 0, 765) ?? undefined,
+        // Final-string encode strategy (glyphcss 0.1.4+). Default "atlas": a frame
+        // is one text node of PUA code points painted by glyphcss's COLR/CPAL
+        // colour font, instead of a <span> per colour run. `?glyphColorEncoding=spans`
+        // restores the legacy span path for comparison.
+        colorEncoding: ((e): QuakeGlyphColorEncoding | undefined =>
+          e === "atlas" || e === "spans" ? e : undefined)(
+          quakeStartupUrlParams.get("glyphColorEncoding"),
+        ),
         // Hidden-line removal for wireframe/braille: `?glyphHiddenLines=show|hide`.
         hiddenLines: ((m): "show" | "hide" | undefined => (m === "show" || m === "hide" ? m : undefined))(
           quakeStartupUrlParams.get("glyphHiddenLines"),
@@ -1981,7 +1991,7 @@ const quakeDebugRecordingSnapshot = createQuakeDebugRecordingSnapshotFlow({
   worldStats: () => world.debugStats(),
 });
 const quakeDebugRecorder = createQuakeDebugRecorder({
-  appVersion: __CSSQUAKE_VERSION__,
+  appVersion: __ASCIIQUAKE_VERSION__,
   currentMapName: () => currentMapName,
   entityManifest: () => currentResult?.entityManifest ?? null,
   onStateChange: quakeDebugRecordingPanelEnabled ? syncQuakeDebugRecordingButton : undefined,
@@ -3049,7 +3059,11 @@ const QUAKE_GLYPH_DETAIL_LEVELS = [
 ] as const;
 
 function quakeCurrentGlyphCell(): number {
-  return quakeUrlNumberParam(quakeStartupUrlParams, "glyphCell", 6, 40) ?? 20;
+  // The live overlay owns the cell once it exists (detail cycles resize it in
+  // place); the URL is only the startup seed and the shareable record.
+  return quakeGlyphOverlay?.getCellPx()
+    ?? quakeUrlNumberParam(quakeStartupUrlParams, "glyphCell", 6, 40)
+    ?? QUAKE_GLYPH_OVERLAY_CELL_PX;
 }
 
 function quakeNearestGlyphDetailIndex(): number {
@@ -3071,11 +3085,20 @@ function cycleQuakeGlyphDetail(direction: number): void {
   const step = direction < 0 ? -1 : 1;
   const length = QUAKE_GLYPH_DETAIL_LEVELS.length;
   const next = QUAKE_GLYPH_DETAIL_LEVELS[(quakeNearestGlyphDetailIndex() + step + length) % length]!;
-  // Carried in the URL + a reload, mirroring the render-mode switch.
   const url = new URL(window.location.href);
   url.searchParams.set("glyphCell", String(next.cell));
-  if (quakeRenderMode !== "glyphcss") url.searchParams.set("renderMode", "glyphcss");
-  window.location.assign(url.toString());
+  if (!quakeGlyphOverlay) {
+    // No ASCII overlay yet (we're in polycss): switching detail implies switching
+    // backend, which swaps the whole engine/DOM graph — that still needs a reload.
+    url.searchParams.set("renderMode", "glyphcss");
+    window.location.assign(url.toString());
+    return;
+  }
+  // Live resize — the cell is a font metric, so the grid re-fits in place. Record
+  // the choice in the URL (still shareable, still the reload seed) WITHOUT
+  // navigating, mirroring how the glyph set swaps without a reload.
+  quakeGlyphOverlay.setCellPx(next.cell);
+  window.history.replaceState(window.history.state, "", url);
 }
 
 function quakeGlyphPaletteIndex(): number {

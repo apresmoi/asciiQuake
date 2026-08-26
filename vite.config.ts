@@ -7,7 +7,7 @@ import { localDebugSitePlugin } from "./src/site/localDebugSitePlugin";
 
 const CONFIG_DIR = path.dirname(fileURLToPath(import.meta.url));
 
-function cssQuakeVersion(): string {
+function asciiQuakeVersion(): string {
   try {
     const commitCount = execSync("git rev-list --count HEAD", {
       encoding: "utf8",
@@ -37,7 +37,7 @@ function localDebugSiteEnabled(): boolean {
 export default defineConfig({
   plugins: localDebugSiteEnabled() ? [localDebugSitePlugin()] : [],
   define: {
-    __CSSQUAKE_VERSION__: JSON.stringify(cssQuakeVersion()),
+    __ASCIIQUAKE_VERSION__: JSON.stringify(asciiQuakeVersion()),
     __POLYCSS_VERSION__: JSON.stringify(polyCssVersion()),
   },
   publicDir: "build/generated/public",

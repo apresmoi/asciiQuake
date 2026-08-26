@@ -349,7 +349,7 @@ body.quake-dead #quake-damage-overlay {
 body.quake-menu-open.quake-dead #quake-damage-overlay {
   opacity: 0;
 }
-.cssquake-logo {
+.asciiquake-logo {
   position: absolute;
   top: 8px;
   left: 8px;
@@ -363,17 +363,17 @@ body.quake-menu-open.quake-dead #quake-damage-overlay {
   shape-rendering: crispEdges;
   user-select: none;
 }
-body.quake-loading .cssquake-logo {
+body.quake-loading .asciiquake-logo {
   display: block;
 }
-body.quake-loading .cssquake-version {
+body.quake-loading .asciiquake-version {
   display: block;
 }
 body.quake-loading #quake-crosshair,
 body.quake-loading #quake-classic-hud {
   display: none;
 }
-.cssquake-version {
+.asciiquake-version {
   position: absolute;
   top: 30px;
   left: calc(16px + min(231px, calc((100vw - 92px) * 0.9)));
@@ -2456,8 +2456,8 @@ body.quake-level-complete #quake-classic-hud,
 body.quake-level-complete #quake-weapon {
   display: none;
 }
-body.quake-level-complete .cssquake-logo,
-body.quake-level-complete .cssquake-version,
+body.quake-level-complete .asciiquake-logo,
+body.quake-level-complete .asciiquake-version,
 body.quake-level-complete .quake-id-software-link,
 body.quake-level-complete .dn-stats-overlay,
 body.quake-level-complete #quake-debug-stack {

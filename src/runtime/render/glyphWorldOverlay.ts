@@ -53,6 +53,17 @@ export interface QuakeGlyphWorldOverlayOptions {
    *  output, and Quake's per-face flat colour is the case glyphcss measures the
    *  biggest win on. `?glyphColorTolerance=`. */
   readonly colorTolerance?: number;
+  /** Final-string encode strategy. DEFAULT "atlas": glyphcss encodes each
+   *  `(glyph, colour)` pair as a Private Use Area code point against its bundled
+   *  COLR/CPAL colour font, so a frame is ONE text node with zero `<span>`s — the
+   *  span count is what gates framerate for coloured ASCII, and Quake's per-face
+   *  flat colour makes this the best case for it. The scene derives and pools its
+   *  own 30-slot palette (median-cut quantization), so shading survives. glyphcss
+   *  silently falls back to "spans" per frame when a cell can't be atlas-encoded
+   *  (out-of-atlas ramp char, missing/non-hex colour) and for the documented
+   *  no-op configs: `halfblock`/`quadrant` charMode (two colours per cell) and
+   *  `useColors: false`. `?glyphColorEncoding=spans` opts back out. */
+  readonly colorEncoding?: QuakeGlyphColorEncoding;
   /** Hidden-line removal for the wireframe/braille path — "hide" depth-tests each
    *  stroke against a solid prepass so far edges stop painting over near ones.
    *  No-op in solid mode. `?glyphHiddenLines=hide`. */
@@ -161,6 +172,11 @@ export type QuakeGlyphSceneMode = "solid" | "wireframe" | "voxel" | "ink";
  *  and `quadrant` are solid-only (see glyphcss docs). */
 export type QuakeGlyphCharMode = "ascii" | "braille" | "halfblock" | "quadrant";
 
+/** Final-string encode strategy (glyphcss 0.1.4+). `atlas` emits ONE text node of
+ *  PUA code points against glyphcss's COLR/CPAL colour font instead of a `<span>`
+ *  per colour run; `spans` is the legacy run-coalescing path. */
+export type QuakeGlyphColorEncoding = "atlas" | "spans";
+
 export interface QuakeGlyphWorldOverlay {
   readonly element: HTMLElement;
   setGeometry(geometry: QuakeGlyphWorldGeometry | null): void;
@@ -199,6 +215,14 @@ export interface QuakeGlyphWorldOverlay {
   getSceneMode(): QuakeGlyphSceneMode;
   /** Current glyph set name. */
   getGlyphPalette(): string;
+  /** Resize the character cell live — no reload. The grid is a function of the
+   *  `<pre>`'s font metrics, so changing the font size and re-fitting is the whole
+   *  operation: glyphcss re-measures the cell, recomputes cols/rows under
+   *  `autoSize`, and the next render fills the new grid. The derived ~square line
+   *  height follows unless `?glyphLine=` pinned one. */
+  setCellPx(cellPx: number): void;
+  /** Current character cell size in px (= the `<pre>` font size). */
+  getCellPx(): number;
   dispose(): void;
 }
 
@@ -220,6 +244,12 @@ const QUAKE_GLYPH_OVERLAY_BRIGHTEN = 3.6;
 // correct depth ties; a small value (~0.01) then lets the last-drawn face win,
 // mirroring a CSS/DOM renderer's stacking order.
 const QUAKE_GLYPH_OVERLAY_DEPTH_EPSILON = 0;
+
+/** Default character cell in px = the "Normal" detail preset in the options menu
+ *  (see `QUAKE_GLYPH_DETAIL_LEVELS` in App.ts). Keep the two in step: the menu
+ *  labels the current cell by nearest preset, so a default that isn't one of them
+ *  makes the menu open on a level the game isn't actually rendering at. */
+export const QUAKE_GLYPH_OVERLAY_CELL_PX = 12;
 
 // Matches src/runtime/app/cameraFeedbackFlow.ts quakeCameraForwardDirection.
 function forwardDirection(rotX: number, rotY: number): Vec3 {
@@ -257,7 +287,7 @@ export function createQuakeGlyphWorldOverlay(
 ): QuakeGlyphWorldOverlay {
   const perspective = options.perspective ?? QUAKE_GLYPH_OVERLAY_PERSPECTIVE;
   // Character cell size in px. Bigger = fewer cells = much faster. `?glyphCell=`.
-  const cellPx = Math.max(6, Math.min(40, options.cellPx ?? 20));
+  let cellPx = Math.max(6, Math.min(40, options.cellPx ?? QUAKE_GLYPH_OVERLAY_CELL_PX));
   // Vertical cell pitch (line height). A monospace glyph cell is ~0.6× as wide
   // as the font size, so `line-height = font-size` makes the CELL ~1.67× taller
   // than wide — which throws away over half the vertical resolution and is what
@@ -265,7 +295,11 @@ export function createQuakeGlyphWorldOverlay(
   // roughly SQUARE: ~1.6× more rows = much finer vertical detail at the same
   // font size. (`fovScale = cellPx/lineHeightPx` keeps the framing fixed.)
   // `?glyphLine=` still overrides for manual tuning.
-  const lineHeightPx = Math.max(4, Math.min(40, options.lineHeight ?? Math.round(cellPx * 0.6)));
+  // A pinned `?glyphLine=` stays pinned across a live cell resize; the default
+  // tracks the font size so cells stay ~square at every detail level.
+  const pinnedLineHeight = options.lineHeight !== undefined;
+  const clampLineHeight = (px: number) => Math.max(4, Math.min(40, px));
+  let lineHeightPx = clampLineHeight(options.lineHeight ?? Math.round(cellPx * 0.6));
   const zoom = options.zoom ?? QUAKE_GLYPH_OVERLAY_ZOOM;
   // No FOV magic: glyphcss now projects with polycss-native camera units + measured
   // cell metrics, so passing polycss's own `zoom` + `perspective` (see App) makes
@@ -304,6 +338,11 @@ export function createQuakeGlyphWorldOverlay(
   // Colour quantization: merge adjacent cells into one span while their colours
   // stay within this redmean distance. Cheap fidelity-for-spans trade; 0 = off.
   const colorTolerance = Math.max(0, Math.min(765, options.colorTolerance ?? 0));
+  // Atlas encoding by default: one text node per frame instead of a <span> per
+  // colour run. Left set even for the subcell char modes (two colours per cell,
+  // which the atlas can't express) — glyphcss documents those as a no-op and
+  // keeps emitting spans, so the live `setCharMode` toggle needs no special case.
+  const colorEncoding: QuakeGlyphColorEncoding = options.colorEncoding ?? "atlas";
   const hiddenLines: "show" | "hide" =
     options.hiddenLines ?? (sceneMode === "wireframe" || sceneMode === "ink" ? "hide" : "show");
   // Per-mesh detail multiplier for entities: render them at this × the world's
@@ -377,6 +416,7 @@ export function createQuakeGlyphWorldOverlay(
     charMode,
     hiddenLines,
     colorTolerance,
+    colorEncoding,
     useColors: true,
     autoSize: true,
     // Dense intensity ramp (≈70 levels vs the 10-char default) for smooth tonal
@@ -411,7 +451,7 @@ export function createQuakeGlyphWorldOverlay(
   // The scene's autoSize measures the cell box from its <pre> (scene.output), so
   // set the line-height there (not just the container) and re-fit so the row
   // count + projection aspect follow `?glyphLine=`.
-  if (options.lineHeight !== undefined) {
+  if (pinnedLineHeight) {
     scene.output.style.lineHeight = `${lineHeightPx}px`;
     scene.fit();
   }
@@ -716,6 +756,33 @@ export function createQuakeGlyphWorldOverlay(
     return glyphPalette;
   }
 
+  // Detail = cell size, and the cell is measured off the <pre>'s font metrics, so
+  // a live resize is a style write plus `scene.fit()` — glyphcss re-measures the
+  // cell box, recomputes cols/rows under `autoSize`, and the projection follows
+  // the new metrics (it maps polycss CSS px → cells through the MEASURED cell, so
+  // the FOV stays put instead of scaling with the grid). No engine rebuild, no
+  // geometry re-upload: the world mesh and every entity mesh keep their handles.
+  function setCellPx(next: number): void {
+    const clamped = Math.max(6, Math.min(40, Math.round(next)));
+    if (clamped === cellPx) return;
+    cellPx = clamped;
+    if (!pinnedLineHeight) lineHeightPx = clampLineHeight(Math.round(cellPx * 0.6));
+    element.style.fontSize = `${cellPx}px`;
+    element.style.lineHeight = `${lineHeightPx}px`;
+    // Only style the <pre> when `?glyphLine=` pinned a height — EXACTLY what the
+    // construction path does, so a live resize lands on the same grid a reload at
+    // this cell size would. (Unpinned, glyphcss's own `.glyph-output{font:13px/1}`
+    // wins over the container's inherited line-height, so the derived ~square cell
+    // never reaches the <pre>. Pre-existing; deliberately not changed here, since
+    // fixing it would alter the look of every existing detail level.)
+    if (pinnedLineHeight) scene.output.style.lineHeight = `${lineHeightPx}px`;
+    scene.fit();
+    scheduleRender();
+  }
+  function getCellPx(): number {
+    return cellPx;
+  }
+
   // Mode/encoding are scene options too, so braille can be toggled live from the
   // console: `__quakeGlyph.setCharMode("braille")`.
   function setCharMode(next: QuakeGlyphCharMode): void {
@@ -764,7 +831,7 @@ export function createQuakeGlyphWorldOverlay(
   const overlay: QuakeGlyphWorldOverlay = {
     element, setGeometry, syncCamera, setEntity, setEntityTransform, removeEntity, setFixedView,
     setVisible, setComposite, getComposite, setGlyphPalette, getGlyphPalette,
-    setCharMode, getCharMode, setSceneMode, getSceneMode, dispose,
+    setCharMode, getCharMode, setSceneMode, getSceneMode, setCellPx, getCellPx, dispose,
   };
   // Dev-only: expose for the flicker probes / coordinate / entity debugging.
   if (import.meta.env?.DEV) {

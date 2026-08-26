@@ -77,7 +77,7 @@ export function queryQuakeAppDom(): QuakeAppDomElements {
     weapon: quakeElement("quake-weapon"),
     mainMenu: quakeElement("quake-main-menu"),
     mainMenuArt: quakeElement("quake-main-menu-art"),
-    versionLabel: quakeElement("cssquake-version"),
+    versionLabel: quakeElement("asciiquake-version"),
     singlePlayerPanel: quakeElement("quake-single-player-panel"),
     multiplayerPanel: quakeElement("quake-multiplayer-panel"),
     multiplayerForm: quakeElement("quake-multiplayer-form"),
