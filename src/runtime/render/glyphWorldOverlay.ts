@@ -232,9 +232,15 @@ export interface QuakeGlyphWorldOverlay {
 const QUAKE_GLYPH_OVERLAY_PERSPECTIVE = 1400;
 const QUAKE_GLYPH_OVERLAY_ZOOM = 50;
 // Quake's baked texture colours are very dark; lift them so the ASCII reads.
-// (Kept modest: supersampling now fills coverage fully, so over-bright colours
-// no longer hide behind sparse sampling — they wash the whole frame out.)
-const QUAKE_GLYPH_OVERLAY_BRIGHTEN = 3.6;
+// Raised from 3.6 when the default glyph set moved from "solid" to the ASCII
+// ramp: a `█` painted the WHOLE cell, so the cell's full area carried the
+// colour, while a letter inks a fraction of it and the black background shows
+// through the rest. Same colours, much lower apparent luminance — so the ramp
+// change has to be paid for here. 6.5 is the measured ceiling before the linear
+// multiply starts clamping bright surfaces to a flat yellow and collapsing the
+// ceiling's tonal separation (a gamma curve would hold highlights better; this
+// stays a straight multiply). `?glyphBright=` overrides.
+const QUAKE_GLYPH_OVERLAY_BRIGHTEN = 6.5;
 // Depth-test deadband for near-coplanar world surfaces (see scene `depthEpsilon`).
 // Default OFF: the real grazing-angle z-fighting came from glyphcss dropping the
 // perspective-correct zbuf under supersampling (cssQuake runs SS=2), which is now

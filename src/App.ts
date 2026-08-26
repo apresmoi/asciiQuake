@@ -725,6 +725,42 @@ function setQuakeStorageValue(key: string, value: string): void {
   }
 }
 
+/** Default ASCII cell budget — the cap "Normal" holds to on ANY window size.
+ *  20k keeps p95 inside the 16.7ms frame budget at 2560x1440 (measured: 42k
+ *  cells there pushed p95 to 33ms). Fine/Ultra deliberately exceed it; they are
+ *  an explicit "I want more detail and will pay for it" choice. */
+const QUAKE_GLYPH_CELL_BUDGET = 20_000;
+
+/** Measured cell width as a fraction of the `<pre>` font size: glyphcss's own
+ *  `.glyph-output{font:13px/1}` makes the cell HEIGHT equal the font size, and a
+ *  monospace advance is ~0.6x that. Verified against the live grid — cell 12 at
+ *  1280x720 measures 176x60, i.e. 7.27px x 12px. */
+const QUAKE_GLYPH_CELL_ASPECT = 0.606;
+
+/** The budget the player is currently on. A resize re-derives the px from THIS,
+ *  which is the whole point of budgeting: the frame cost stays put when the
+ *  window changes instead of quietly scaling with its area. */
+let quakeGlyphDetailBudget: number = QUAKE_GLYPH_CELL_BUDGET;
+
+/** `?glyphCell=` pins a literal px and opts out of budgeting (and of the resize
+ *  re-fit) — it exists so a bug report can pin an exact grid. A function, not a
+ *  const: this block sits above `quakeStartupUrlParams` so the overlay can be
+ *  constructed with a budgeted cell, and reading it eagerly here is a TDZ error. */
+function quakeGlyphCellIsPinned(): boolean {
+  return quakeUrlNumberParam(quakeStartupUrlParams, "glyphCell", 6, 40) !== null;
+}
+
+/** Cell size in px that lands closest to `cells` total cells in the current
+ *  viewport. From `cells = (W*H) / (aspect * px^2)`, solved for px. */
+function quakeGlyphCellForBudget(cells: number): number {
+  const host = quakeApp?.getBoundingClientRect();
+  const width = host?.width || window.innerWidth || 1280;
+  const height = host?.height || window.innerHeight || 720;
+  const px = Math.sqrt((width * height) / (QUAKE_GLYPH_CELL_ASPECT * Math.max(1, cells)));
+  return Math.max(6, Math.min(40, Math.round(px)));
+}
+
+
 const QUAKE_RENDER_MODE_STORAGE_KEY = "cssquake.renderMode";
 const QUAKE_GLYPH_PALETTE_STORAGE_KEY = "cssquake.glyphPalette";
 
@@ -1400,7 +1436,10 @@ const quakeGlyphOverlay: QuakeGlyphWorldOverlay | null =
         // Live-tunable, e.g. ?glyphCell=18&glyphTaa=0.6&ssaa=2&glyphBright=4
         supersample: quakeUrlNumberParam(quakeStartupUrlParams, "ssaa", 1, 4) ?? undefined,
         temporalBlend: quakeUrlNumberParam(quakeStartupUrlParams, "glyphTaa", 0, 0.9) ?? undefined,
-        cellPx: quakeUrlNumberParam(quakeStartupUrlParams, "glyphCell", 6, 40) ?? undefined,
+        // Budgeted, not fixed: the cell is derived from the viewport so "Normal"
+        // costs the same on a laptop and a 4K window. `?glyphCell=` pins the px.
+        cellPx: quakeUrlNumberParam(quakeStartupUrlParams, "glyphCell", 6, 40)
+          ?? quakeGlyphCellForBudget(quakeGlyphDetailBudget),
         lineHeight: quakeUrlNumberParam(quakeStartupUrlParams, "glyphLine", 4, 40) ?? undefined,
         // PARITY, out of the box: glyphcss's camera is now polycss-native (zoom =
         // CSS px/unit, perspective = CSS px) and projects with measured cell metrics,
@@ -3052,11 +3091,19 @@ function setQuakeDynamicLighting(enabled: boolean): void {
 // Cell = font-size in px; the overlay derives a ~square line-height from it, so a
 // smaller cell packs both more columns AND more rows (≈square cells = far more
 // vertical detail than the old tall cells). Finer + an Ultra tier for max detail.
+// ASCII (glyph) detail presets, expressed as a TOTAL CELL BUDGET rather than a
+// cell size in px. Render cost tracks cols x rows, and cols x rows scales with
+// viewport AREA — so a fixed cell size silently means wildly different work on
+// different monitors. Measured on the recorded e1m1 play path: cell 12 is ~10.6k
+// cells at 1280x720 (a clean 60fps, p95 17.5ms) and ~42k cells at 2560x1440,
+// where p95 doubles to 33ms — the same "Normal" setting stuttering purely
+// because the window got bigger. Budgeting the cells instead keeps a preset
+// meaning the same frame cost everywhere, and picks the px for you.
 const QUAKE_GLYPH_DETAIL_LEVELS = [
-  { name: "Coarse", cell: 18 },
-  { name: "Normal", cell: 12 },
-  { name: "Fine", cell: 9 },
-  { name: "Ultra", cell: 6 },
+  { name: "Coarse", cells: 10_000 },
+  { name: "Normal", cells: QUAKE_GLYPH_CELL_BUDGET },
+  { name: "Fine", cells: 32_000 },
+  { name: "Ultra", cells: 48_000 },
 ] as const;
 
 function quakeCurrentGlyphCell(): number {
@@ -3064,7 +3111,7 @@ function quakeCurrentGlyphCell(): number {
   // place); the URL is only the startup seed and the shareable record.
   return quakeGlyphOverlay?.getCellPx()
     ?? quakeUrlNumberParam(quakeStartupUrlParams, "glyphCell", 6, 40)
-    ?? QUAKE_GLYPH_OVERLAY_CELL_PX;
+    ?? quakeGlyphCellForBudget(QUAKE_GLYPH_CELL_BUDGET);
 }
 
 function quakeNearestGlyphDetailIndex(): number {
@@ -3072,7 +3119,9 @@ function quakeNearestGlyphDetailIndex(): number {
   let bestIndex = 1;
   let bestDistance = Infinity;
   QUAKE_GLYPH_DETAIL_LEVELS.forEach((level, index) => {
-    const distance = Math.abs(level.cell - cell);
+    // Compare against what each budget resolves to in the CURRENT viewport, so
+    // the label still matches the render after a resize moved every preset's px.
+    const distance = Math.abs(quakeGlyphCellForBudget(level.cells) - cell);
     if (distance < bestDistance) { bestDistance = distance; bestIndex = index; }
   });
   return bestIndex;
@@ -3086,8 +3135,10 @@ function cycleQuakeGlyphDetail(direction: number): void {
   const step = direction < 0 ? -1 : 1;
   const length = QUAKE_GLYPH_DETAIL_LEVELS.length;
   const next = QUAKE_GLYPH_DETAIL_LEVELS[(quakeNearestGlyphDetailIndex() + step + length) % length]!;
+  const nextCell = quakeGlyphCellForBudget(next.cells);
+  quakeGlyphDetailBudget = next.cells;
   const url = new URL(window.location.href);
-  url.searchParams.set("glyphCell", String(next.cell));
+  url.searchParams.set("glyphCell", String(nextCell));
   if (!quakeGlyphOverlay) {
     // No ASCII overlay yet (we're in polycss): switching detail implies switching
     // backend, which swaps the whole engine/DOM graph — that still needs a reload.
@@ -3098,7 +3149,7 @@ function cycleQuakeGlyphDetail(direction: number): void {
   // Live resize — the cell is a font metric, so the grid re-fits in place. Record
   // the choice in the URL (still shareable, still the reload seed) WITHOUT
   // navigating, mirroring how the glyph set swaps without a reload.
-  quakeGlyphOverlay.setCellPx(next.cell);
+  quakeGlyphOverlay.setCellPx(nextCell);
   window.history.replaceState(window.history.state, "", url);
 }
 
@@ -5840,6 +5891,13 @@ function handleQuakePopState(): void {
 function handleViewportResize(): void {
   quakeCameraView.syncViewportProjection();
   viewmodel.queueViewportSync();
+  // Hold the cell budget across a resize. Without this, growing the window grows
+  // cols x rows with its AREA and the frame cost climbs quadratically behind an
+  // unchanged "Normal" label — the exact stutter this budget exists to stop.
+  // A pinned `?glyphCell=` opts out and keeps its literal px.
+  if (quakeGlyphOverlay && !quakeGlyphCellIsPinned()) {
+    quakeGlyphOverlay.setCellPx(quakeGlyphCellForBudget(quakeGlyphDetailBudget));
+  }
 }
 
 function syncPlayerCollision(): void {
