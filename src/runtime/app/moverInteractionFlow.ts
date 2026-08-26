@@ -38,6 +38,8 @@ export interface QuakeMoverInteractionFlowOptions {
   showCenterPrint(text: string): void;
   syncShootablesVisibility(origin: [number, number, number], force?: boolean): void;
   syncCrosshairTarget(): void;
+  /** Glyph (ASCII) backend: push a mover's live world-space offset (Phase 4F). */
+  syncGlyphMoverOffset?(entityIndex: number, offset: Vec3): void;
 }
 
 export interface QuakeMoverInteractionFlow {
@@ -202,6 +204,7 @@ export function createQuakeMoverInteractionFlow(options: QuakeMoverInteractionFl
       if (state.kind === "button") options.applyButtonLeafVisual(leaf, quakeButtonIsPressed(state));
     }
     if (carryPlayer) carryPlayerWithMover(state, delta);
+    options.syncGlyphMoverOffset?.(state.entity.index, state.offset);
     if (shouldSyncShootablesAfterMoverApply(state, delta)) {
       options.syncShootablesVisibility(options.playerOrigin(), true);
     }

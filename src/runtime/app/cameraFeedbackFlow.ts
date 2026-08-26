@@ -95,6 +95,13 @@ export function createQuakeCameraFeedbackFlow(
     if (!active && mode !== "smooth-step") {
       cameraRenderOrigin = [origin[0], origin[1], origin[2]];
       cameraStepSmoothAt = 0;
+      // This fast path skips applyAt() (the polycss controls already moved the
+      // camera), but currentRenderOrigin() consumers — the viewmodel anchors the
+      // world-space glyph weapon on it — still need the applied origin to track
+      // the player. Leaving it stale here froze the weapon at the last applyAt()
+      // origin during flat-ground walking, so the gun fell behind the camera and
+      // out of the frustum ("the gun drops while walking").
+      syncAppliedRenderOrigin(origin);
       return;
     }
 
@@ -171,6 +178,15 @@ export function createQuakeCameraFeedbackFlow(
     cameraStepSmoothAt = 0;
     cameraRenderOrigin = [origin[0], origin[1], origin[2]];
     cameraAppliedRenderOrigin = [origin[0], origin[1], origin[2]];
+  }
+
+  function syncAppliedRenderOrigin(origin: Vec3): void {
+    const renderOrigin = options.renderOriginPolicy?.(
+      origin,
+      options.scene.camera.state.rotX ?? 88,
+      options.scene.camera.state.rotY ?? 270,
+    ) ?? origin;
+    cameraAppliedRenderOrigin = [renderOrigin[0], renderOrigin[1], renderOrigin[2]];
   }
 
   function applyAt(origin: Vec3, rotX: number, rotY: number): void {

@@ -1,0 +1,75 @@
+name: Deploy to GitHub Pages
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      # Quake data is not in the repo; prepare downloads and verifies the
+      # shareware archive. Same secret the Netlify/R2 deploy uses.
+      QUAKE_SHAREWARE_URL: ${{ secrets.QUAKE_SHAREWARE_URL }}
+      QUAKE_RENDER_BUNDLE_AVIF_EFFORT: "0"
+      # Unset on purpose: assets ship INSIDE the Pages artifact, so the runtime
+      # default of /q is correct. (The R2 deploy overrides this with a versioned
+      # bucket path; Pages has no equivalent, see the cache note in the README.)
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # vite derives the version label from the commit count.
+          fetch-depth: 0
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Check build inputs
+        run: test -n "$QUAKE_SHAREWARE_URL"
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Generate Quake assets
+        run: pnpm prepare:quake
+
+      - name: Build site
+        run: pnpm build
+
+      - name: Pin the custom domain
+        # Keeps asciiquake.wtf attached across deploys; the artifact replaces the
+        # published tree wholesale, so a CNAME written only in repo settings can
+        # otherwise be dropped.
+        run: echo "asciiquake.wtf" > dist/CNAME
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

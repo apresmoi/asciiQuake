@@ -2,7 +2,19 @@ import type { Polygon, PolyMeshHandle, Vec3 } from "@layoutit/polycss";
 
 import type { QuakeGameLogicFacts } from "../prepare/gameLogicFacts";
 import { quakeGameLogicResolvedPickupFact } from "../prepare/gameLogicFacts";
-import type { QuakeEntity, QuakePreparedRenderBundle } from "../types/quake";
+import type { QuakeEntity, QuakeGlyphGeometry, QuakePreparedRenderBundle } from "../types/quake";
+import type { QuakeGlyphEntityGeometry, QuakeGlyphEntityTransform } from "./render/glyphWorldOverlay";
+
+/**
+ * Narrow view of the glyph overlay's entity layer (Phase 4). When the ASCII
+ * backend is active, pickups mirror their mesh here so they render as ASCII
+ * alongside the world. Structurally satisfied by QuakeGlyphWorldOverlay.
+ */
+export interface QuakeGlyphEntitySink {
+  setEntity(id: string, geometry: QuakeGlyphEntityGeometry | null, transform: QuakeGlyphEntityTransform): void;
+  setEntityTransform(id: string, transform: QuakeGlyphEntityTransform): boolean;
+  removeEntity(id: string): void;
+}
 import {
   QUAKE_WEAPON_ITEM_FLAG_EXPRESSIONS,
   QUAKE_WEAPON_ITEM_FLAGS,
@@ -44,6 +56,8 @@ export interface QuakePickupModel {
   animationFrames?: QuakePickupModelAnimationFrame[];
   animationFrameSet?: QuakePickupModelAnimationFrameSet;
   renderScale?: number;
+  /** Base-frame ASCII geometry for the glyph backend (Phase 4). */
+  glyphGeometry?: QuakeGlyphGeometry;
   bounds: {
     min: Vec3;
     max: Vec3;
@@ -53,6 +67,8 @@ export interface QuakePickupModel {
 export interface QuakePickupModelAnimationFrame {
   name: string;
   renderBundle: QuakePreparedRenderBundle;
+  /** Per-frame ASCII geometry for the glyph backend (Phase 4). */
+  glyphGeometry?: QuakeGlyphGeometry;
 }
 
 export interface QuakePickupModelAnimationFrameSet {
@@ -149,6 +165,8 @@ interface QuakePickupAnimationState {
 
 export interface QuakePickupControllerOptions {
   addMesh: (entity: QuakeEntity, model?: QuakePickupModel, frameIndex?: number) => PolyMeshHandle | null;
+  /** Glyph (ASCII) entity layer — present only when the glyph backend is active. */
+  glyphEntitySink?: QuakeGlyphEntitySink;
   applyEffect: (effect: QuakePickupEffect, entity: QuakeEntity, feedback?: QuakeRuntimePickupFeedback) => void;
   canPickup?: (effect: QuakePickupEffect, entity: QuakeEntity) => boolean;
   gameMode?: () => QuakePickupGameMode;
@@ -367,6 +385,7 @@ export function createQuakePickupController(options: QuakePickupControllerOption
           handles = handles.filter((handle) => handle !== pickup.handle);
           pickup.handle = null;
         }
+        removePickupGlyphEntity(pickup);
         continue;
       }
       if (pickup.picked) {
@@ -508,17 +527,75 @@ export function createQuakePickupController(options: QuakePickupControllerOption
     pickup.visible = visible;
     if (pickup.handle) pickup.handle.element.hidden = !visible;
     if (visible && pickup.animation) startAnimationLoop();
+    syncPickupGlyphEntity(pickup);
+  };
+
+  // --- Glyph (ASCII) entity mirror (Phase 4C) -----------------------------
+  // When the glyph backend is active, mirror each pickup's mesh into the overlay
+  // entity layer: world-space transform (raw entity.origin — glyph renders in
+  // world coords, unlike the poly path's pointToPoly), current frame geometry.
+  const pickupGlyphId = (pickup: QuakePickupState): string => `pickup:${pickup.entity.index}`;
+
+  const pickupGlyphGeometry = (pickup: QuakePickupState): QuakeGlyphEntityGeometry | null => {
+    const model = pickup.model;
+    if (!model) return null;
+    const frameIndex = pickup.animation?.frameIndex ?? 0;
+    return model.animationFrames?.[frameIndex]?.glyphGeometry ?? model.glyphGeometry ?? null;
+  };
+
+  // The glyph world frame == the poly transform frame (both (raw-pivot)*scale,
+  // BASE_TILE parity), so the glyph transform mirrors the poly one exactly:
+  // pickup.origin (+ bob) for position, the same yaw, scale 1 (renderScale is
+  // already baked into the glyph vertices).
+  const pickupGlyphTransform = (
+    position: Vec3,
+    yaw: number,
+  ): QuakeGlyphEntityTransform => ({
+    position: [position[0], position[1], position[2]],
+    rotation: [0, 0, yaw],
+    scale: 1,
+  });
+
+  const pickupBaseYaw = (pickup: QuakePickupState): number => {
+    const angle = pickup.animation?.baseAngle ?? pickup.entity.angle ?? quakeEntityNumber(pickup.entity, "angle", 0);
+    return pickup.model ? quakeAliasModelRenderYaw(angle) : normalizeQuakeRenderYaw(angle);
+  };
+
+  const syncPickupGlyphEntity = (pickup: QuakePickupState): void => {
+    const sink = options.glyphEntitySink;
+    if (!sink) return;
+    const id = pickupGlyphId(pickup);
+    const geometry = pickupGlyphGeometry(pickup);
+    if (pickup.picked || !pickup.visible || !pickup.handle || !geometry) {
+      sink.removeEntity(id);
+      return;
+    }
+    sink.setEntity(id, geometry, pickupGlyphTransform(pickup.origin, pickupBaseYaw(pickup)));
+  };
+
+  // Cheap transform-only update mirroring the exact position/yaw the poly mesh
+  // was just given (bob + spin already applied by the caller).
+  const syncPickupGlyphTransform = (pickup: QuakePickupState, position: Vec3, yaw: number): void => {
+    const sink = options.glyphEntitySink;
+    if (!sink || pickup.picked || !pickup.visible || !pickup.handle || !pickupGlyphGeometry(pickup)) return;
+    sink.setEntityTransform(pickupGlyphId(pickup), pickupGlyphTransform(position, yaw));
+  };
+
+  const removePickupGlyphEntity = (pickup: QuakePickupState): void => {
+    options.glyphEntitySink?.removeEntity(pickupGlyphId(pickup));
   };
 
   const syncPickupBaseTransform = (pickup: QuakePickupState): void => {
     if (!pickup.handle) return;
     const animation = pickup.animation;
     const angle = animation?.baseAngle ?? pickup.entity.angle ?? quakeEntityNumber(pickup.entity, "angle", 0);
+    const yaw = pickup.model ? quakeAliasModelRenderYaw(angle) : normalizeQuakeRenderYaw(angle);
     pickup.handle.setTransform({
       position: pickup.origin,
-      rotation: [0, 0, pickup.model ? quakeAliasModelRenderYaw(angle) : normalizeQuakeRenderYaw(angle)],
+      rotation: [0, 0, yaw],
       scale: 1,
     });
+    syncPickupGlyphTransform(pickup, pickup.origin, yaw);
   };
 
   const hasActivePickupAnimation = (): boolean =>
@@ -571,6 +648,8 @@ export function createQuakePickupController(options: QuakePickupControllerOption
             pickup.handle = nextHandle;
           }
         }
+        // Glyph frame advanced → push the new frame's geometry.
+        syncPickupGlyphEntity(pickup);
       }
       if (animation.spin) {
         syncPickupAnimationTransform(pickup, seconds);
@@ -584,21 +663,16 @@ export function createQuakePickupController(options: QuakePickupControllerOption
   const syncPickupAnimationTransform = (pickup: QuakePickupState, seconds: number): void => {
     const animation = pickup.animation;
     if (!animation || !pickup.handle) return;
-    pickup.handle.setTransform({
-      position: [
-        pickup.origin[0],
-        pickup.origin[1],
-        pickup.origin[2] +
-          Math.sin(seconds * QUAKE_PICKUP_ALIAS_BOB_RADIANS_PER_SECOND + animation.phase) *
-            QUAKE_PICKUP_ALIAS_BOB_AMPLITUDE,
-      ],
-      rotation: [
-        0,
-        0,
-        quakeAliasModelRenderYaw(animation.baseAngle + seconds * QUAKE_PICKUP_ALIAS_SPIN_DEGREES_PER_SECOND),
-      ],
-      scale: 1,
-    });
+    const position: Vec3 = [
+      pickup.origin[0],
+      pickup.origin[1],
+      pickup.origin[2] +
+        Math.sin(seconds * QUAKE_PICKUP_ALIAS_BOB_RADIANS_PER_SECOND + animation.phase) *
+          QUAKE_PICKUP_ALIAS_BOB_AMPLITUDE,
+    ];
+    const yaw = quakeAliasModelRenderYaw(animation.baseAngle + seconds * QUAKE_PICKUP_ALIAS_SPIN_DEGREES_PER_SECOND);
+    pickup.handle.setTransform({ position, rotation: [0, 0, yaw], scale: 1 });
+    syncPickupGlyphTransform(pickup, position, yaw);
   };
 
   const pickUp = (pickup: QuakePickupState): void => {
@@ -625,6 +699,9 @@ export function createQuakePickupController(options: QuakePickupControllerOption
     pickup.handle?.remove();
     handles = handles.filter((handle) => handle !== pickup.handle);
     pickup.handle = null;
+    // The poly mesh is only half the item in glyphcss mode — drop the ASCII
+    // entity too, or the collected pickup stays sitting on the floor.
+    removePickupGlyphEntity(pickup);
   };
 
   const applyPickupEffectAndSideEffects = (
@@ -658,6 +735,7 @@ export function createQuakePickupController(options: QuakePickupControllerOption
       handles = handles.filter((handle) => handle !== pickup.handle);
       pickup.handle = null;
     }
+    removePickupGlyphEntity(pickup);
     pickups = pickups.filter((entry) => entry !== pickup);
   };
 

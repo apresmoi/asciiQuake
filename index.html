@@ -16,7 +16,7 @@
     <script>
       (function () {
         var GA_ID = "G-XV72TXWTM5";
-        var productionHosts = ["cssquake.com", "www.cssquake.com", "cssquake.wtf", "www.cssquake.wtf"];
+        var productionHosts = ["asciiquake.wtf", "www.asciiquake.wtf"];
         var isProductionHost = productionHosts.indexOf(window.location.hostname) >= 0;
 
         if (!isProductionHost) {
@@ -35,54 +35,54 @@
         document.head.appendChild(tag);
       })();
     </script>
-    <title>cssQuake - Powered by PolyCSS</title>
+    <title>asciiQuake - Powered by GlyphCSS</title>
     <meta
       name="description"
       content="Play a browser Quake port rendered as inspectable HTML and CSS 3D geometry through PolyCSS, with no WebGL or canvas renderer."
     />
     <meta name="robots" content="index, follow" />
-    <link rel="canonical" href="https://cssquake.com/" />
-    <meta property="og:site_name" content="cssQuake" />
+    <link rel="canonical" href="https://asciiquake.wtf/" />
+    <meta property="og:site_name" content="asciiQuake" />
     <meta property="og:type" content="website" />
-    <meta property="og:url" content="https://cssquake.com/" />
-    <meta property="og:title" content="cssQuake - Powered by PolyCSS" />
+    <meta property="og:url" content="https://asciiquake.wtf/" />
+    <meta property="og:title" content="asciiQuake - Powered by GlyphCSS" />
     <meta
       property="og:description"
       content="Play a browser Quake port rendered as inspectable HTML and CSS 3D geometry through PolyCSS, with no WebGL or canvas renderer."
     />
-    <meta property="og:image" content="https://cssquake.com/assets/cssquake-social-20260701.png" />
+    <meta property="og:image" content="https://asciiquake.wtf/assets/cssquake-social-20260701.png" />
     <meta property="og:image:type" content="image/png" />
     <meta property="og:image:width" content="1200" />
     <meta property="og:image:height" content="630" />
-    <meta property="og:image:alt" content="cssQuake gameplay running in the browser with inspectable HTML and CSS geometry." />
-    <meta property="og:image" content="https://cssquake.com/assets/cssquake-social-20260701.webp" />
+    <meta property="og:image:alt" content="asciiQuake gameplay running in the browser with inspectable HTML and CSS geometry." />
+    <meta property="og:image" content="https://asciiquake.wtf/assets/cssquake-social-20260701.webp" />
     <meta property="og:image:type" content="image/webp" />
     <meta property="og:image:width" content="1200" />
     <meta property="og:image:height" content="630" />
-    <meta property="og:image:alt" content="cssQuake gameplay running in the browser with inspectable HTML and CSS geometry." />
+    <meta property="og:image:alt" content="asciiQuake gameplay running in the browser with inspectable HTML and CSS geometry." />
     <meta name="twitter:card" content="summary_large_image" />
-    <meta name="twitter:title" content="cssQuake - Powered by PolyCSS" />
+    <meta name="twitter:title" content="asciiQuake - Powered by GlyphCSS" />
     <meta
       name="twitter:description"
       content="Play a browser Quake port rendered as inspectable HTML and CSS 3D geometry through PolyCSS, with no WebGL or canvas renderer."
     />
-    <meta name="twitter:image" content="https://cssquake.com/assets/cssquake-social-20260701.png" />
+    <meta name="twitter:image" content="https://asciiquake.wtf/assets/cssquake-social-20260701.png" />
     <script type="application/ld+json">
       {
         "@context": "https://schema.org",
         "@type": ["VideoGame", "WebApplication"],
-        "name": "cssQuake",
-        "url": "https://cssquake.com/",
+        "name": "asciiQuake",
+        "url": "https://asciiquake.wtf/",
         "description": "Play a browser Quake port rendered as inspectable HTML and CSS 3D geometry through PolyCSS, with no WebGL or canvas renderer.",
         "applicationCategory": "GameApplication",
         "gamePlatform": "Web browser",
         "playMode": ["SinglePlayer", "MultiPlayer"],
         "operatingSystem": "Any",
         "image": [
-          "https://cssquake.com/assets/cssquake-social-20260701.png",
-          "https://cssquake.com/assets/cssquake-social-20260701.webp"
+          "https://asciiquake.wtf/assets/cssquake-social-20260701.png",
+          "https://asciiquake.wtf/assets/cssquake-social-20260701.webp"
         ],
-        "codeRepository": "https://github.com/LayoutitStudio/cssQuake"
+        "codeRepository": "https://github.com/apresmoi/asciiQuake"
       }
     </script>
     <link rel="icon" href="/src/assets/favicon.ico" type="image/x-icon" />
@@ -138,7 +138,7 @@
         z-index: 4;
       }
 
-      .cssquake-logo {
+      .asciiquake-logo {
         position: absolute;
         top: 8px;
         left: 8px;
@@ -154,11 +154,11 @@
         user-select: none;
       }
 
-      body.quake-loading .cssquake-logo {
+      body.quake-loading .asciiquake-logo {
         display: block;
       }
 
-      body.quake-loading .cssquake-version {
+      body.quake-loading .asciiquake-version {
         display: block;
       }
 
@@ -167,7 +167,7 @@
         display: none;
       }
 
-      .cssquake-version {
+      .asciiquake-version {
         position: absolute;
         top: 30px;
         left: calc(16px + min(231px, calc((100vw - 92px) * 0.9)));
@@ -614,8 +614,8 @@
       <div id="quake-impact-particles" aria-hidden="true"></div>
       <!-- menu -->
       <div id="quake-menu">
-        <img class="cssquake-logo" src="/src/assets/cssquake-logo.png" width="1343" height="262" alt="cssQuake" fetchpriority="high" loading="eager" decoding="sync" draggable="false" />
-        <span id="cssquake-version" class="cssquake-version" aria-hidden="true"></span>
+        <img class="asciiquake-logo" src="/src/assets/cssquake-logo.png" width="1343" height="262" alt="asciiQuake" fetchpriority="high" loading="eager" decoding="sync" draggable="false" />
+        <span id="asciiquake-version" class="asciiquake-version" aria-hidden="true"></span>
         <!-- hud -->
         <div id="quake-hud">
         <!-- screen effects -->
@@ -626,7 +626,7 @@
         <div id="quake-centerprint" role="status" aria-live="polite" hidden></div>
         <div id="quake-intermission" role="status" aria-live="polite" hidden></div>
         <!-- main menu -->
-        <div id="quake-main-menu" role="button" tabindex="-1" aria-label="cssQuake menu">
+        <div id="quake-main-menu" role="button" tabindex="-1" aria-label="asciiQuake menu">
           <span id="quake-main-menu-art">
             <img id="quake-main-menu-plaque" src="/src/assets/main-menu-plaque-baked.png" width="32" height="144" alt="" />
             <img id="quake-main-menu-title" src="/src/assets/main-menu-title-baked.png" width="96" height="24" alt="" />
@@ -931,6 +931,21 @@
                   <span class="quake-option-value quake-option-value-on quake-bm-label quake-bm-alt">on</span>
                 </label>
                 <label class="quake-option-toggle" tabindex="0">
+                  <input id="quake-option-render-mode" type="checkbox" />
+                  <span class="quake-option-checkbox" aria-hidden="true"></span>
+                  <span class="quake-option-text quake-bm-label">ASCII render</span>
+                  <span class="quake-option-value quake-option-value-off quake-bm-label quake-bm-alt">off</span>
+                  <span class="quake-option-value quake-option-value-on quake-bm-label quake-bm-alt">on</span>
+                </label>
+                <button id="quake-option-glyph-detail" class="quake-option-toggle quake-option-cycle" type="button" aria-label="ASCII detail +">
+                  <span class="quake-option-text quake-bm-label">ASCII detail</span>
+                  <span id="quake-option-glyph-detail-value" class="quake-option-value quake-bm-label quake-bm-alt">Normal</span>
+                </button>
+                <button id="quake-option-glyph-palette" class="quake-option-toggle quake-option-cycle" type="button" aria-label="ASCII glyphs +">
+                  <span class="quake-option-text quake-bm-label">ASCII glyphs</span>
+                  <span id="quake-option-glyph-palette-value" class="quake-option-value quake-bm-label quake-bm-alt">Solid</span>
+                </button>
+                <label class="quake-option-toggle" tabindex="0">
                   <input id="quake-option-disable-sound" type="checkbox" checked />
                   <span class="quake-option-checkbox" aria-hidden="true"></span>
                   <span class="quake-option-text quake-bm-label">Mute sounds</span>
@@ -1045,7 +1060,7 @@
         rel="noopener noreferrer"
         target="_blank"
         aria-label="View source on GitHub"
-        href="https://github.com/LayoutitStudio/cssQuake"
+        href="https://github.com/apresmoi/asciiQuake"
       >
         <svg
           xmlns="http://www.w3.org/2000/svg"
@@ -1084,8 +1099,8 @@
         class="quake-css-logo"
         rel="noopener noreferrer"
         target="_blank"
-        aria-label="Visit Layoutit"
-        href="https://layoutit.com/"
+        aria-label="Visit glyphcss"
+        href="https://glyphcss.com/"
       >
         <img
           class="quake-css-logo-mark"

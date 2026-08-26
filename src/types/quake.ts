@@ -438,6 +438,8 @@ export interface QuakePreparedScene {
   skyTexture?: number | string;
   renderBundle?: QuakePreparedRenderBundle;
   lightstyleRenderBundle?: QuakePreparedRenderBundle;
+  glyphGeometry?: QuakeGlyphGeometry;
+  glyphMovers?: QuakeGlyphMovers;
   textureCount: number;
   faceCount: number;
   sourceFaceCount: number;
@@ -458,11 +460,31 @@ export interface QuakePreparedScene {
   collision?: QuakePreparedCollision;
 }
 
+export interface QuakeGlyphGeometry {
+  version: number;
+  polygonCount: number;
+  polygons: Array<{ v: number[][]; c: string }>;
+}
+
+/** One animatable brush-model mover (door/plat/button) for the glyph backend. */
+export interface QuakeGlyphMover {
+  entityIndex: number;
+  modelIndex: number;
+  polygons: Array<{ v: number[][]; c: string }>;
+}
+
+export interface QuakeGlyphMovers {
+  version: number;
+  movers: QuakeGlyphMover[];
+}
+
 export interface QuakeScene {
   polygons: Polygon[];
   skyTextureUrl?: string;
   renderBundle?: QuakePreparedRenderBundle;
   lightstyleRenderBundle?: QuakePreparedRenderBundle;
+  glyphGeometry?: QuakeGlyphGeometry;
+  glyphMovers?: QuakeGlyphMovers;
   textureCount: number;
   faceCount: number;
   sourceFaceCount: number;
