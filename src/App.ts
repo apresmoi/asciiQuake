@@ -11,6 +11,7 @@ import {
   QUAKE_DEFAULT_RENDER_MODE,
   type QuakeRenderMode,
 } from "./runtime/render/engine";
+import { createQuakeGlyphUiOverlay } from "./runtime/render/glyphUiOverlay";
 import {
   createQuakeGlyphWorldOverlay,
   QUAKE_GLYPH_OVERLAY_CELL_PX,
@@ -1517,6 +1518,43 @@ const quakeGlyphOverlay: QuakeGlyphWorldOverlay | null =
         ),
       })
     : null;
+// The menu's sprite art rendered as ONE ASCII image: every sprite is a textured
+// quad in a single glyphcss scene, layered along Z and composited by the
+// rasterizer's depth test. One `<pre>`, one character grid, one render — so the
+// backdrop and the art on top of it share cells instead of being separate ASCII
+// patches at different scales. `?glyphImage=0` opts out.
+if (quakeRenderMode === "glyphcss" && quakeStartupUrlParams.get("glyphImage") !== "0") {
+  const uiHost = document.getElementById("quake-loading-overlay");
+  if (uiHost) {
+    const sprite = (selector: string, layer: number, fit?: "cover" | "contain" | "css") => {
+      const el = document.querySelector(selector);
+      return el instanceof HTMLElement ? [{ element: el, layer, fit }] : [];
+    };
+    const sprites = (selector: string, layer: number, fit?: "cover" | "contain" | "css") =>
+      [...document.querySelectorAll(selector)]
+        .filter((el): el is HTMLElement => el instanceof HTMLElement)
+        .map((element) => ({ element, layer, fit }));
+    createQuakeGlyphUiOverlay({
+      host: uiHost,
+      maxCells: quakeUrlNumberParam(quakeStartupUrlParams, "glyphImageCells", 2000, 120_000) ?? undefined,
+      minCellPx: quakeUrlNumberParam(quakeStartupUrlParams, "glyphImageCell", 2, 24) ?? undefined,
+      glyphPalette: quakeStartupUrlParams.get("glyphImagePalette") ?? undefined,
+      sprites: [
+        // Layer 0 is the backdrop; everything else composites in front of it.
+        ...sprite("#quake-loading-overlay", 0, "cover"),
+        ...sprite("#quake-main-menu-plaque", 1),
+        ...sprite("#quake-main-menu-title", 1),
+        ...sprite("#quake-classic-hud-image", 2),
+        // Menu labels are two-frame sprite sheets whose visible frame is chosen
+        // by `background-position`, so they need the CSS-accurate UV mapping.
+        ...sprites(".quake-main-menu-label", 2, "css"),
+        ...sprites(".quake-main-menu-item-cursor", 3, "css"),
+        ...sprites(".quake-menu-panel-title img", 2),
+      ],
+    });
+  }
+}
+
 if (quakeGlyphOverlay) {
   // polycss keeps driving camera/controls/collision underneath; the opaque
   // ASCII overlay (z-index 1, after the camera) paints over its world.
