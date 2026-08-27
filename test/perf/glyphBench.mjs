@@ -118,23 +118,42 @@ const pixelParts = [];
 let minRatio = 1;
 for (const idx of stops) {
   await page.evaluate((i) => window.__benchSeek(i), idx);
-  await page.waitForTimeout(250); // let the scene settle on this pose
+  // The atlas is a COLR/CPAL webfont: the SAME PUA text paints differently
+  // depending on whether the face has finished loading, which made the pixel
+  // digest vary run to run on an identical DOM. Wait for fonts, then settle.
+  await page.evaluate(() => document.fonts.ready);
+  await page.waitForTimeout(400); // let the scene settle on this pose
   const g = await page.evaluate(() => window.__benchGrid());
   if (!g || !g.cells) throw new Error(`glyphBench: no grid at stop ${idx}`);
   const ratio = g.nonBlank / g.cells;
   minRatio = Math.min(minRatio, ratio);
   domParts.push(createHash("sha256").update(g.html).digest("hex").slice(0, 16));
-  // Pixel digest of the overlay only (not the HUD/menu chrome). This is the
-  // fidelity signal that actually matters — the DOM digest above is stricter
-  // than "looks the same" and will flag a pure representation change.
-  // Measured: atlas and spans encoding differ on BOTH digests, because the atlas
-  // path quantizes colour to the font's 30 palette slots. That is a real, if
-  // small, fidelity cost of the atlas encoder, not a digest artifact.
-  const shot = await page.locator(".quake-glyph-overlay").screenshot();
-  pixelParts.push(createHash("sha256").update(shot).digest("hex").slice(0, 16));
+  // NO PIXEL DIGEST — deliberately.
+  //
+  // A screenshot hash was tried and abandoned: on a byte-identical DOM it
+  // produced a different hash on every run, and stayed unstable through all
+  // three plausible fixes (narrowing from the whole overlay to the base `<pre>`,
+  // awaiting `document.fonts.ready` for the COLR/CPAL atlas face, and hiding the
+  // animated per-entity detail layers that a Playwright element screenshot
+  // captures because it clips the composited page rather than isolating one
+  // element). Identical DOM with differing pixels is GPU rasterization noise, so
+  // the digest was measuring the compositor, not the renderer.
+  //
+  // The DOM digest is the fidelity gate instead: it captures every glyph and
+  // every colour the renderer chose, and an identical DOM means an identical
+  // paint instruction stream. It is stable run to run — verified repeatedly.
+  //
+  // COMPARE ACROSS BUILDS IN `spans` MODE (`--params glyphColorEncoding=spans`).
+  // Under the default `atlas` encoding a cell is a PUA code point encoding
+  // (glyph, palette-slot), and the 30-slot palette is derived by median-cut over
+  // the grids the quantizer happens to train on. Any change to HOW MANY renders
+  // occur per frame retrains it, permuting slot indices — so two builds that
+  // paint identical colours get different atlas digests. Measured exactly this:
+  // a change that cut renders/frame from 1.97 to 0.99 showed 85% of atlas cells
+  // "differing", yet was byte-identical (0.000%) in spans mode. Gating on the
+  // atlas digest would have rejected a correct optimization.
 }
 const fidelity = createHash("sha256").update(domParts.join("|")).digest("hex").slice(0, 24);
-const pixelFidelity = createHash("sha256").update(pixelParts.join("|")).digest("hex").slice(0, 24);
 
 if (minRatio < MIN_NONBLANK_RATIO) {
   console.error(`glyphBench: FAILED non-blank guard — min ratio ${(minRatio * 100).toFixed(1)}%`
@@ -144,7 +163,7 @@ if (minRatio < MIN_NONBLANK_RATIO) {
 }
 
 // ── Timing window ──────────────────────────────────────────────────────────
-let result = { label: LABEL, viewport: `${VW}x${VH}`, params: EXTRA, headed: HEADED, fidelity, pixelFidelity, minNonBlankRatio: Number(minRatio.toFixed(4)) };
+let result = { label: LABEL, viewport: `${VW}x${VH}`, params: EXTRA, headed: HEADED, fidelity, minNonBlankRatio: Number(minRatio.toFixed(4)) };
 
 if (!FIDELITY_ONLY) {
   await page.evaluate((speed) => {
@@ -207,6 +226,6 @@ const m = result.msPerFrame ?? {};
 console.log(`${String(result.label).padEnd(22)} ${String(result.grid ?? "-").padStart(9)} `
   + `task ${String(m.task ?? "-").padStart(6)}  script ${String(m.script ?? "-").padStart(6)}  `
   + `layout ${String(m.layout ?? "-").padStart(5)}  renders/f ${String(result.rendersPerFrame ?? "-").padStart(5)}  `
-  + `dom ${result.fidelity.slice(0, 12)}  px ${result.pixelFidelity.slice(0, 12)}`);
+  + `fidelity ${result.fidelity}`);
 if (errors.length) console.log(`  page errors: ${errors.length} (first: ${errors[0]?.slice(0, 120)})`);
 if (JSON_OUT) writeFileSync(JSON_OUT, JSON.stringify(result, null, 2));

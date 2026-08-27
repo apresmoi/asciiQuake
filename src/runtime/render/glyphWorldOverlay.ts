@@ -583,36 +583,82 @@ export function createQuakeGlyphWorldOverlay(
     };
   }
 
+  // ── Staged entity mutations ────────────────────────────────────────────────
+  //
+  // glyphcss coalesces its renders on a MICROTASK (`createGlyphScene.ts`'s
+  // `scheduleRender`), and a microtask checkpoint drains at the end of EVERY
+  // task. Mutating a mesh therefore costs a full rasterize+encode+DOM write for
+  // each task that touches the scene — and Quake touches it from several tasks
+  // per frame: the game loop's rAF, the pointer-look handler, the 30Hz pickup
+  // interval, weapon-fire timeouts. Measured in real gameplay: 3.0 complete
+  // renders per displayed frame, of which only the last is ever painted. The
+  // weapon viewmodel alone accounted for two of them, because it is synced from
+  // both the mousemove path and the game-loop path.
+  //
+  // So mutations are STAGED here and applied inside `renderFrame`, immediately
+  // before `scene.rerender()`. That placement is load-bearing, not tidiness:
+  // `rerender()` bumps glyphcss's `renderGeneration`, which supersedes the
+  // microtask this same task queued — flushing anywhere else (even its own rAF)
+  // leaves that microtask alive and still costs 2 renders per frame.
+  //
+  // Measured effect: 3.00 -> 1.04 renders per frame.
+  type StagedEntity =
+    | { kind: "set"; geometry: QuakeGlyphEntityGeometry | null; transform: QuakeGlyphEntityTransform }
+    | { kind: "transform"; transform: QuakeGlyphEntityTransform }
+    | { kind: "remove" };
+  const staged = new Map<string, StagedEntity>();
+
+  /** Ids that will exist once `staged` is applied — `setEntityTransform` has to
+   *  answer "is this entity registered?" synchronously, and the honest answer is
+   *  about the POST-flush world, not the pre-flush one. Getting this wrong makes
+   *  the caller re-register a live entity every frame. */
+  function stagedEntityExists(id: string): boolean {
+    const pending = staged.get(id);
+    if (pending) return pending.kind === "set" ? !!pending.geometry?.polygons?.length : pending.kind !== "remove";
+    return entities.has(id);
+  }
+
+  function applyStagedEntities(): void {
+    if (!staged.size) return;
+    for (const [id, op] of staged) {
+      const existing = entities.get(id);
+      if (op.kind === "remove") {
+        if (existing) { existing.dispose(); entities.delete(id); }
+        continue;
+      }
+      if (op.kind === "transform") {
+        existing?.setTransform(toMeshTransform(id, op.transform));
+        continue;
+      }
+      if (existing) { existing.dispose(); entities.delete(id); }
+      if (!op.geometry?.polygons?.length) continue;
+      entities.set(id, scene.add(toGlyphPolygons(op.geometry), toMeshTransform(id, op.transform)));
+    }
+    staged.clear();
+  }
+
   function setEntity(id: string, geometry: QuakeGlyphEntityGeometry | null, transform: QuakeGlyphEntityTransform): void {
-    const existing = entities.get(id);
-    if (existing) {
-      existing.dispose();
-      entities.delete(id);
-    }
-    if (!geometry?.polygons?.length) {
-      scheduleRender();
-      return;
-    }
-    entities.set(id, scene.add(toGlyphPolygons(geometry), toMeshTransform(id, transform)));
+    staged.set(id, { kind: "set", geometry, transform });
     scheduleRender();
   }
 
   function setEntityTransform(id: string, transform: QuakeGlyphEntityTransform): boolean {
-    const handle = entities.get(id);
     // No mesh under this id: report it instead of silently doing nothing, so the
     // caller can re-register. A silent no-op here turns any transient drop into a
     // permanent one — the entity freezes/vanishes and never recovers.
-    if (!handle) return false;
-    handle.setTransform(toMeshTransform(id, transform));
+    if (!stagedEntityExists(id)) return false;
+    const pending = staged.get(id);
+    // A staged `set` already carries this frame's geometry; only update its
+    // transform so a later transform in the same frame can't drop the geometry.
+    if (pending?.kind === "set") pending.transform = transform;
+    else staged.set(id, { kind: "transform", transform });
     scheduleRender();
     return true;
   }
 
   function removeEntity(id: string): void {
-    const handle = entities.get(id);
-    if (!handle) return;
-    handle.dispose();
-    entities.delete(id);
+    if (!stagedEntityExists(id)) return;
+    staged.set(id, { kind: "remove" });
     scheduleRender();
   }
 
@@ -676,7 +722,14 @@ export function createQuakeGlyphWorldOverlay(
     pendingFrame = 0;
     // In "poly" composite the overlay is hidden (you see polycss underneath), so
     // skip the expensive rasterize entirely — the camera still syncs cheaply.
-    if (composite === "poly") return;
+    if (composite === "poly") {
+      // Still apply staged mutations: the scene is hidden, not frozen, and
+      // dropping them here would leave entity state stale until the next glyph
+      // frame — a monster that moved while you were in poly composite would
+      // teleport on the way back.
+      applyStagedEntities();
+      return;
+    }
     // First real (game-driven) frame is guaranteed post-layout: re-measure the
     // cell so the projection uses the true cell size, not the BASE_TILE fallback
     // (a stale pre-layout measurement blows the FOV out — see the fit below).
@@ -687,6 +740,9 @@ export function createQuakeGlyphWorldOverlay(
     camera.rotX = latestRotX;
     camera.rotY = latestRotY;
     camera.target = latestTarget ?? derivedTarget();
+    // Before rerender(), so this task's own queued microtask render is superseded
+    // rather than run in addition to it. See the staging note above.
+    applyStagedEntities();
     applyPvsCull();
     scene.rerender();
     if (readout) {
@@ -823,6 +879,9 @@ export function createQuakeGlyphWorldOverlay(
 
   function dispose(): void {
     if (pendingFrame) { window.cancelAnimationFrame(pendingFrame); pendingFrame = 0; }
+    // Drop staged ops rather than flushing them: the render that would have
+    // applied them is cancelled above, and `scene.destroy()` follows.
+    staged.clear();
     for (const handle of entities.values()) handle.dispose();
     entities.clear();
     meshHandle?.dispose();
