@@ -12,8 +12,8 @@ importers:
         specifier: ^0.2.6
         version: 0.2.6
       glyphcss:
-        specifier: ^0.1.4
-        version: 0.1.4
+        specifier: ^0.1.5
+        version: 0.1.5
       partysocket:
         specifier: 1.1.19
         version: 1.1.19
@@ -545,8 +545,8 @@ packages:
     resolution: {integrity: sha512-vBZP4NlzfOlerQTnba4aqZoMhE/a9HY7HRqoOPaETQcSQuWEIyZMHGfVu6w9wGtGK5fED5qRs2DteVCjOH60sA==}
     engines: {node: '>=14'}
 
-  '@glyphcss/core@0.1.4':
-    resolution: {integrity: sha512-P8Xd0M29hkCtLBuYhWoNJRFJ9M5cLS6SA8jTq+dtJTzT3OFOLKVwd5ZbfbykbBO7sNu7sYmpPUmwjKSln64Plg==}
+  '@glyphcss/core@0.1.5':
+    resolution: {integrity: sha512-6dqbFa+kWlAcww/tt5YqqzcCa6hvCt3t4rKo5NpEPbh44UJm5Xe/yF8KAIwbKZlqfQpbj1ua91TJOcQmK6O+OA==}
 
   '@img/colour@1.1.0':
     resolution: {integrity: sha512-Td76q7j57o/tLVdgS746cYARfSyxk8iEfRxewL9h4OMzYhbW4TAcppl0mT4eyqXddh6L/jwoM75mo7ixa/pCeQ==}
@@ -1060,8 +1060,8 @@ packages:
   glob-to-regexp@0.4.1:
     resolution: {integrity: sha512-lkX1HJXwyMcprw/5YUZc2s7DrpAiHB21/V+E1rHUrVNokkvB6bqMzT0VfV6/86ZNabt1k14YOIaT7nDvOX3Iiw==}
 
-  glyphcss@0.1.4:
-    resolution: {integrity: sha512-qchzroWhQV+gSUVQcCaqhHInuLQ6WYWrcwH6bXe7g90T3kqyS430FP4L1ijIrK3KyZa1Mj7OW3fKqsjsx0G+NQ==}
+  glyphcss@0.1.5:
+    resolution: {integrity: sha512-hbqVTa+D+yWwL1ETAtoznAkN154Zv+oQ/PUwr41Ri3MzoZGaudmwaFuKKI64r9mQwX/JjdYI7BDf2FNMUYKJXw==}
 
   happy-dom@20.10.3:
     resolution: {integrity: sha512-Hjdiy8RziuCcn5z04QI/rlsNuQoG8P0xxjgvsSMpi89cvIXIOcucQtiHS1yHSShxoBcSCeYqAskINmTiy/mlfw==}
@@ -1602,7 +1602,7 @@ snapshots:
 
   '@fastify/busboy@2.1.1': {}
 
-  '@glyphcss/core@0.1.4':
+  '@glyphcss/core@0.1.5':
     dependencies:
       buffer: 6.0.3
       jpeg-js: 0.4.4
@@ -2028,9 +2028,9 @@ snapshots:
 
   glob-to-regexp@0.4.1: {}
 
-  glyphcss@0.1.4:
+  glyphcss@0.1.5:
     dependencies:
-      '@glyphcss/core': 0.1.4
+      '@glyphcss/core': 0.1.5
 
   happy-dom@20.10.3:
     dependencies:
