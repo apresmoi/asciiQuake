@@ -1555,6 +1555,7 @@ if (quakeRenderMode === "glyphcss" && quakeStartupUrlParams.get("glyphImage") !=
         "#quake-multiplayer-create": "/q/main-menu-cursor.png",
         "#quake-multiplayer-back": "/q/main-menu-cursor.png",
       },
+      svgSelectors: [".quake-single-player-label"],
       pseudoSelectors: [
         ".quake-menu-card", "#quake-debug-card", ".quake-single-player-button",
         ".quake-option-toggle", ".quake-option-crosshair", ".quake-option-glyph-detail",
@@ -1583,6 +1584,7 @@ if (quakeRenderMode === "glyphcss" && quakeStartupUrlParams.get("glyphImage") !=
         // be selected or measured, so it stays CSS — only real elements convert.
         { selector: ".quake-menu-panel-header img", layer: 2 },
         { selector: ".quake-intermission-value-glyph", layer: 2, fit: "css" },
+        { selector: ".quake-single-player-label", layer: 2, density: quakeUrlNumberParam(quakeStartupUrlParams, "glyphImageDensity", 1, 8) ?? 4 },
         { selector: ".quake-glyph-pseudo", layer: 2, fit: "css", density: quakeUrlNumberParam(quakeStartupUrlParams, "glyphImageDensity", 1, 8) ?? 4 },
         { selector: "img.asciiquake-logo", layer: 3, density: quakeUrlNumberParam(quakeStartupUrlParams, "glyphImageDensity", 1, 8) ?? 4 },
       ],

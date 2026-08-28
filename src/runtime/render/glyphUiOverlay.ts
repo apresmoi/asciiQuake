@@ -292,10 +292,40 @@ export function createQuakeGlyphUiOverlay(
       },
       isImg, url, natural: null, regions: null,
     });
-    if (isImg) el.style.visibility = "hidden";
+    if (el.dataset.glyphTexture) { /* data anchor: nothing of its own to hide */ }
+    else if (isImg) el.style.visibility = "hidden";
     else el.style.backgroundImage = "none";
     adoptedSinceDraw = true;
     resolveNatural(states.get(el)!);
+  }
+
+  /**
+   * Build a texture from vector art referenced by a plain element.
+   *
+   * Some menu labels were authored as rendered `<svg>` that `<use>`d a shared
+   * pixel-art group — art no `<img>`/`background-image` detector can see, which
+   * is exactly why they kept painting as HTML after everything else converted.
+   * The markup now carries only a REFERENCE (`data-glyph-svg-art` plus the
+   * `viewBox` that crops it), so nothing vector is rendered: the art group is
+   * serialized under that viewBox into a data URI and sampled like any texture.
+   */
+  function materializeSvg(): void {
+    for (const selector of options.svgSelectors ?? []) {
+      let nodes: NodeListOf<Element>;
+      try { nodes = document.querySelectorAll(selector); } catch { continue; }
+      for (const node of nodes) {
+        if (!(node instanceof HTMLElement) || node.dataset.glyphTexture) continue;
+        const artId = node.dataset.glyphSvgArt;
+        const viewBox = node.dataset.glyphSvgViewbox;
+        const size = node.dataset.glyphSvgSize?.split(" ");
+        if (!artId || !viewBox || !size || size.length !== 2) continue;
+        const art = document.getElementById(artId);
+        if (!art) continue;
+        const doc = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${viewBox}" `
+          + `width="${size[0]}" height="${size[1]}">${art.outerHTML}</svg>`;
+        node.dataset.glyphTexture = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(doc)}`;
+      }
+    }
   }
 
   /** Copy `::before` art onto a real child so a sprite rule can pick it up. */
@@ -337,6 +367,7 @@ export function createQuakeGlyphUiOverlay(
   }
 
   function rescan(): void {
+    materializeSvg();
     materializePseudo();
     for (const rule of options.sprites) {
       let nodes: NodeListOf<Element>;
