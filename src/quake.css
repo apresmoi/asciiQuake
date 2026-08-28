@@ -2864,7 +2864,6 @@ body.quake-menu-open .dn-stats-overlay {
    it here removed the art entirely and the landing menu rendered nothing. */
 .quake-glyph-render .quake-main-menu-label,
 .quake-glyph-render .quake-single-player-label,
-.quake-glyph-render .quake-intermission-label-art,
-.quake-glyph-render .quake-multiplayer-field-label {
+.quake-glyph-render .quake-intermission-label-art {
   visibility: hidden;
 }

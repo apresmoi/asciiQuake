@@ -45,8 +45,24 @@ export function mountQuakeBitmapText(root: ParentNode = document): void {
   }
 }
 
+/**
+ * The text this element should render, safe to re-read after conversion.
+ *
+ * Converting is not a one-shot: the overlay re-runs it when the menu rebuilds.
+ * After the first pass the element holds a `.quake-bitmap-source` span AND the
+ * per-character bitmap, so `element.textContent` returns the text TWICE, and
+ * each extra pass doubled it again — measured on the multiplayer panel as
+ * "Name" -> "NameNameNameNa" with 8 character spans, and "GO BACK" rendering
+ * twice on the button. Reading the source span back makes re-conversion a
+ * no-op instead.
+ */
+function readBitmapSourceText(element: HTMLElement): string {
+  const source = element.querySelector(":scope > .quake-bitmap-source");
+  return normalizeBitmapText((source ?? element).textContent ?? "");
+}
+
 function renderQuakeBitmapTextElement(element: HTMLElement): void {
-  const text = normalizeBitmapText(element.textContent ?? "");
+  const text = readBitmapSourceText(element);
   const options = quakeBitmapTextOptionsByElement.get(element) ?? parseBitmapTextOptions(element);
   quakeBitmapTextOptionsByElement.set(element, options);
   stripBitmapTextMetadata(element);
