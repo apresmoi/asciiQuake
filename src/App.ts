@@ -1580,26 +1580,32 @@ if (quakeRenderMode === "glyphcss" && quakeStartupUrlParams.get("glyphImage") !=
         // Layer 0 is the backdrop; everything else composites in front of it.
         { selector: "#quake-loading-overlay", layer: 0, fit: "cover", texture: "/q/menu-background.png", brightness: quakeUrlNumberParam(quakeStartupUrlParams, "glyphImageBackdrop", 0, 1) ?? 0.6 },
         // `?glyphImageDensity=` puts small art in its own higher-density detail
-        // layer. OFF by default (1): a detail layer blanks every base cell under
-        // its box (glyphcss's occlusion id-map, see its AGENTS.md), so a sprite
-        // with a transparent margin punches an opaque hole in the backdrop
-        // instead of compositing over it. Sharper art, wrong transparency —
-        // until that occlusion is made coverage-aware upstream.
-        { selector: "#quake-main-menu-plaque", layer: 1, density: quakeUrlNumberParam(quakeStartupUrlParams, "glyphImageDensity", 1, 8) ?? 4 },
-        { selector: "#quake-main-menu-title", layer: 1, density: quakeUrlNumberParam(quakeStartupUrlParams, "glyphImageDensity", 1, 8) ?? 4 },
-        { selector: "#quake-classic-hud-image", layer: 2, density: quakeUrlNumberParam(quakeStartupUrlParams, "glyphImageDensity", 1, 8) ?? 4 },
-        { selector: ".quake-menu-panel-title img", layer: 2, density: quakeUrlNumberParam(quakeStartupUrlParams, "glyphImageDensity", 1, 8) ?? 4 },
+        // layer, and `segment: true` makes that layer OCCLUDE correctly: the
+        // sprite is split into one tight quad per connected opaque region, so
+        // glyphcss's occlusion id-map blanks the base grid only under the
+        // artwork itself (the art sits on clean black, like a world entity)
+        // while the backdrop keeps painting between the letterforms. Without
+        // segment the quad is the sprite's whole rectangle — occluding punches
+        // a black box around the art, so the overlay renders an unsegmented
+        // density sprite `transparent` instead, and the bright backdrop then
+        // leaks straight through the art's transparent texels.
+        { selector: "#quake-main-menu-plaque", layer: 1, density: quakeUrlNumberParam(quakeStartupUrlParams, "glyphImageDensity", 1, 8) ?? 4, segment: true },
+        { selector: "#quake-main-menu-title", layer: 1, density: quakeUrlNumberParam(quakeStartupUrlParams, "glyphImageDensity", 1, 8) ?? 4, segment: true },
+        { selector: "#quake-classic-hud-image", layer: 2, density: quakeUrlNumberParam(quakeStartupUrlParams, "glyphImageDensity", 1, 8) ?? 4, segment: true },
+        { selector: ".quake-menu-panel-title img", layer: 2, density: quakeUrlNumberParam(quakeStartupUrlParams, "glyphImageDensity", 1, 8) ?? 4, segment: true },
         // Sprite SHEETS — the visible frame is chosen by `background-position`,
         // so these need the CSS-accurate UV mapping rather than a plain fit.
-        { selector: ".quake-main-menu-label", layer: 2, fit: "css", density: quakeUrlNumberParam(quakeStartupUrlParams, "glyphImageDensity", 1, 8) ?? 4 },
-        { selector: ".quake-main-menu-item-cursor", layer: 3, fit: "css", density: quakeUrlNumberParam(quakeStartupUrlParams, "glyphImageDensity", 1, 8) ?? 4 },
+        // (Segmented regions are clipped to that visible window, so the hidden
+        // frame's regions never draw.)
+        { selector: ".quake-main-menu-label", layer: 2, fit: "css", density: quakeUrlNumberParam(quakeStartupUrlParams, "glyphImageDensity", 1, 8) ?? 4, segment: true },
+        { selector: ".quake-main-menu-item-cursor", layer: 3, fit: "css", density: quakeUrlNumberParam(quakeStartupUrlParams, "glyphImageDensity", 1, 8) ?? 4, segment: true },
         // Remaining menu screens. Pseudo-element art (`::before` plaques) cannot
         // be selected or measured, so it stays CSS — only real elements convert.
         { selector: ".quake-menu-panel-header img", layer: 2 },
         { selector: ".quake-intermission-value-glyph", layer: 2, fit: "css" },
-        { selector: ".quake-single-player-label", layer: 2, density: quakeUrlNumberParam(quakeStartupUrlParams, "glyphImageDensity", 1, 8) ?? 4 },
-        { selector: ".quake-glyph-pseudo", layer: 2, fit: "css", density: quakeUrlNumberParam(quakeStartupUrlParams, "glyphImageDensity", 1, 8) ?? 4 },
-        { selector: "img.asciiquake-logo", layer: 3, density: quakeUrlNumberParam(quakeStartupUrlParams, "glyphImageDensity", 1, 8) ?? 4 },
+        { selector: ".quake-single-player-label", layer: 2, density: quakeUrlNumberParam(quakeStartupUrlParams, "glyphImageDensity", 1, 8) ?? 4, segment: true },
+        { selector: ".quake-glyph-pseudo", layer: 2, fit: "css", density: quakeUrlNumberParam(quakeStartupUrlParams, "glyphImageDensity", 1, 8) ?? 4, segment: true },
+        { selector: "img.asciiquake-logo", layer: 3, density: quakeUrlNumberParam(quakeStartupUrlParams, "glyphImageDensity", 1, 8) ?? 4, segment: true },
       ],
     });
   }

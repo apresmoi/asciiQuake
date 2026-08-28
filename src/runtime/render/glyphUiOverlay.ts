@@ -557,7 +557,7 @@ export function createQuakeGlyphUiOverlay(
   });
   sceneApi = scene;
 
-  const meshes = new Map<number, { setPolygons(p: Polygon[]): void; dispose(): void }>();
+  const meshes = new Map<string, { setPolygons(p: Polygon[]): void; dispose(): void }>();
   let lastKey = "";
 
   /**
@@ -604,9 +604,21 @@ export function createQuakeGlyphUiOverlay(
     }
   }
 
-  /** Polygons grouped by detail density — one glyphcss mesh per group. */
-  function buildPolygons(hostBox: DOMRect): Map<number, Polygon[]> {
-    const groups = new Map<number, Polygon[]>();
+  /**
+   * Polygons grouped into one glyphcss mesh per (density, occluding) pair.
+   *
+   * Segmented density sprites go in an OPAQUE mesh: their quads hug the art's
+   * opaque regions, so glyphcss's occlusion id-map blanks the backdrop only
+   * under the artwork itself — the art sits on black exactly like a world
+   * entity, and the bright backdrop cannot leak through the letterforms.
+   * UNSEGMENTED density sprites stay in a `transparent` mesh (no occlusion):
+   * for a full-rectangle quad, occluding would punch the rectangular black
+   * box around the art that transparency was added to fix. So a sprite whose
+   * segmentation fails degrades to the leak, never to the box.
+   */
+  interface PolyGroup { density: number; transparent: boolean; polys: Polygon[] }
+  function buildPolygons(hostBox: DOMRect): Map<string, PolyGroup> {
+    const groups = new Map<string, PolyGroup>();
     // World units are CSS px (zoom is pinned to 1 below), with the origin at the
     // host's centre — so a sprite's screen box maps straight into world space.
     const cx = hostBox.width / 2;
@@ -675,31 +687,42 @@ export function createQuakeGlyphUiOverlay(
       const level = Math.max(0, Math.min(1, s.sprite.brightness ?? 1));
       const channel = Math.round(255 * level).toString(16).padStart(2, "0");
       const tint = `#${channel}${channel}${channel}`;
-      const bucket = Math.max(1, Math.round(s.sprite.density ?? 1));
-      const target = groups.get(bucket) ?? groups.set(bucket, []).get(bucket)!;
+      const density = Math.max(1, Math.round(s.sprite.density ?? 1));
+      const spanU = u1 - u0, spanV = v1 - v0;
+      const segmented = !!s.regions && density > 1 && spanU > 0 && spanV > 0;
+      const key = `d${density}${density > 1 && !segmented ? "t" : ""}`;
+      const target = (groups.get(key)
+        ?? groups.set(key, { density, transparent: density > 1 && !segmented, polys: [] }).get(key)!)
+        .polys;
 
       // Segmented art emits a tight quad per connected opaque region instead of
       // one rectangle, so the transparent gaps between letters belong to no quad
-      // and a detail layer cannot blank the backdrop through them.
-      if (s.regions) {
-        const spanU = u1 - u0, spanV = v1 - v0;
-        for (const r of s.regions) {
-          // Region UVs are in SOURCE space; fold them through this sprite's own
-          // visible window so a sheet-cropped sprite still lands correctly.
-          const ru0 = u0 + r.u0 * spanU, ru1 = u0 + r.u1 * spanU;
+      // and the occlusion id-map cannot blank the backdrop through them.
+      if (segmented) {
+        for (const r of s.regions!) {
+          // Region UVs are ABSOLUTE source coordinates, but only the part inside
+          // this sprite's visible window exists on screen — a sprite SHEET's
+          // hidden frame contributes regions too, and drawing those would stamp
+          // both frames into the box. Clip to the window, then work in
+          // window-relative fractions.
+          const cu0 = Math.max(r.u0, u0), cu1 = Math.min(r.u1, u1);
+          const cv0 = Math.max(r.v0, v0), cv1 = Math.min(r.v1, v1);
+          if (cu0 >= cu1 || cv0 >= cv1) continue;
+          const fu0 = (cu0 - u0) / spanU, fu1 = (cu1 - u0) / spanU;
+          const fv0 = (cv0 - v0) / spanV, fv1 = (cv1 - v0) / spanV;
           // The quad's V axis is INVERTED relative to image space: the base
           // mapping puts `v1` on the TOP edge. For a full-size quad that cancels
           // out, but a sub-region has to flip explicitly or every letter comes
           // out mirrored vertically.
-          const rvTop = v1 - r.v0 * spanV;
-          const rvBot = v1 - r.v1 * spanV;
+          const rvTop = v1 - fv0 * spanV;
+          const rvBot = v1 - fv1 * spanV;
           // And place it proportionally inside the element's box.
-          const rx0 = x0 + (x1 - x0) * r.v0, rx1 = x0 + (x1 - x0) * r.v1;
-          const ry0 = y0 + (y1 - y0) * r.u0, ry1 = y0 + (y1 - y0) * r.u1;
+          const rx0 = x0 + (x1 - x0) * fv0, rx1 = x0 + (x1 - x0) * fv1;
+          const ry0 = y0 + (y1 - y0) * fu0, ry1 = y0 + (y1 - y0) * fu1;
           target.push({
             vertices: [[rx0, ry0, z], [rx0, ry1, z], [rx1, ry1, z], [rx1, ry0, z]],
             texture: s.url,
-            uvs: [[ru0, rvTop], [ru1, rvTop], [ru1, rvBot], [ru0, rvBot]],
+            uvs: [[cu0, rvTop], [cu1, rvTop], [cu1, rvBot], [cu0, rvBot]],
             color: tint,
           } as unknown as Polygon);
         }
@@ -767,9 +790,9 @@ export function createQuakeGlyphUiOverlay(
     // Cheap change key: only the numbers that can move. Hashing whole polygon
     // arrays with JSON.stringify was itself slow enough to stall startup.
     let key = "";
-    for (const [density, polys] of groups) {
-      key += "d" + density + ":";
-      for (const poly of polys) {
+    for (const [groupKey, group] of groups) {
+      key += groupKey + ":";
+      for (const poly of group.polys) {
         const v = poly as unknown as { vertices: number[][]; uvs: number[][] };
         key += v.vertices[0]![0]!.toFixed(1) + "," + v.vertices[0]![1]!.toFixed(1) + ","
           + v.vertices[2]![0]!.toFixed(1) + "," + v.vertices[2]![1]!.toFixed(1) + ","
@@ -784,22 +807,24 @@ export function createQuakeGlyphUiOverlay(
     // texture load, so every rebuild renders untextured until the images return —
     // seen as the UI blinking on menu selection, and as a grid of `$` in
     // `#ffffff` when rebuilds outpace the loads.
-    for (const [density, polys] of groups) {
-      const existing = meshes.get(density);
-      if (existing) existing.setPolygons(polys);
-      else meshes.set(density, scene.add(polys, density > 1
-        // `transparent: true` is what makes density usable here. An OPAQUE detail
-        // layer blanks every base cell under its box via glyphcss's shared
-        // occlusion id-map, so a sprite with a transparent margin punches a hole
-        // through the backdrop. A transparent one does not occlude at all, so the
-        // art composites over the base grid exactly as it does at density 1 —
-        // just sampled finer. (The world overlay uses the same flag for entities.)
-        ? { density, transparent: true }
+    for (const [groupKey, group] of groups) {
+      const existing = meshes.get(groupKey);
+      if (existing) existing.setPolygons(group.polys);
+      // SEGMENTED density art is OPAQUE: its tight per-region quads feed the
+      // shared occlusion id-map, so the base grid draws nothing under the
+      // artwork itself (the world-entity "black hole") while the backdrop keeps
+      // painting between the regions. UNSEGMENTED density art must stay
+      // `transparent` — its quad is the sprite's whole rectangle, and occluding
+      // with that punches a rectangular black box around the art. Density 1
+      // shares the base grid, where the rasterizer composites texture alpha
+      // per cell and no cross-layer occlusion exists.
+      else meshes.set(groupKey, scene.add(group.polys, group.density > 1
+        ? (group.transparent ? { density: group.density, transparent: true } : { density: group.density })
         : undefined));
     }
-    // A density group can empty out (its sprites' panel closed).
-    for (const [density, mesh] of meshes) {
-      if (!groups.has(density)) { mesh.dispose(); meshes.delete(density); }
+    // A group can empty out (its sprites' panel closed).
+    for (const [groupKey, mesh] of meshes) {
+      if (!groups.has(groupKey)) { mesh.dispose(); meshes.delete(groupKey); }
     }
     scene.rerender();
   }
