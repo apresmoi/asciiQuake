@@ -1539,17 +1539,21 @@ if (quakeRenderMode === "glyphcss" && quakeStartupUrlParams.get("glyphImage") !=
       sprites: [
         // Layer 0 is the backdrop; everything else composites in front of it.
         { selector: "#quake-loading-overlay", layer: 0, fit: "cover" },
-        // Small art gets its own higher-density detail layer rather than paying
-        // for a finer SHARED grid, which would mostly buy backdrop cells.
-        { selector: "#quake-main-menu-plaque", layer: 1, density: 4 },
-        { selector: "#quake-main-menu-title", layer: 1, density: 4 },
-        { selector: "#quake-classic-hud-image", layer: 2, density: 4 },
-        { selector: ".quake-menu-panel-title img", layer: 2, density: 4 },
+        // `?glyphImageDensity=` puts small art in its own higher-density detail
+        // layer. OFF by default (1): a detail layer blanks every base cell under
+        // its box (glyphcss's occlusion id-map, see its AGENTS.md), so a sprite
+        // with a transparent margin punches an opaque hole in the backdrop
+        // instead of compositing over it. Sharper art, wrong transparency —
+        // until that occlusion is made coverage-aware upstream.
+        { selector: "#quake-main-menu-plaque", layer: 1, density: quakeUrlNumberParam(quakeStartupUrlParams, "glyphImageDensity", 1, 8) ?? 1 },
+        { selector: "#quake-main-menu-title", layer: 1, density: quakeUrlNumberParam(quakeStartupUrlParams, "glyphImageDensity", 1, 8) ?? 1 },
+        { selector: "#quake-classic-hud-image", layer: 2, density: quakeUrlNumberParam(quakeStartupUrlParams, "glyphImageDensity", 1, 8) ?? 1 },
+        { selector: ".quake-menu-panel-title img", layer: 2, density: quakeUrlNumberParam(quakeStartupUrlParams, "glyphImageDensity", 1, 8) ?? 1 },
         // Sprite SHEETS — the visible frame is chosen by `background-position`,
         // so these need the CSS-accurate UV mapping rather than a plain fit.
-        { selector: ".quake-main-menu-label", layer: 2, fit: "css", density: 4 },
-        { selector: ".quake-main-menu-item-cursor", layer: 3, fit: "css", density: 4 },
-        { selector: "img.asciiquake-logo", layer: 3, density: 3 },
+        { selector: ".quake-main-menu-label", layer: 2, fit: "css", density: quakeUrlNumberParam(quakeStartupUrlParams, "glyphImageDensity", 1, 8) ?? 1 },
+        { selector: ".quake-main-menu-item-cursor", layer: 3, fit: "css", density: quakeUrlNumberParam(quakeStartupUrlParams, "glyphImageDensity", 1, 8) ?? 1 },
+        { selector: "img.asciiquake-logo", layer: 3, density: quakeUrlNumberParam(quakeStartupUrlParams, "glyphImageDensity", 1, 8) ?? 1 },
       ],
     });
   }
