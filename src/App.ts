@@ -1544,6 +1544,12 @@ if (quakeRenderMode === "glyphcss" && quakeStartupUrlParams.get("glyphImage") !=
       // past ~2.4 clips the art's bright channels and washes the bronze grey,
       // while the curve spends its lift on the dark backdrop and midtones.
       gamma: quakeUrlNumberParam(quakeStartupUrlParams, "glyphImageGamma", 0.2, 1) ?? 0.55,
+      // The backdrop's own, MILDER curve. One shared curve lifted the dark
+      // backdrop proportionally more than the art (measured: art:backdrop
+      // luminance ratio 2.5 -> 1.6), which read as the background sitting in
+      // front of the menu. 0.8 keeps the backdrop well above the old murk
+      // while the art's 0.55 stays clearly ahead. `?glyphImageBackdropGamma=`.
+      backdropGamma: quakeUrlNumberParam(quakeStartupUrlParams, "glyphImageBackdropGamma", 0.2, 1) ?? 0.8,
       colorEncoding: quakeStartupUrlParams.get("glyphImageEncoding") === "spans" ? "spans" : "atlas",
       // Art authored as `::before` — the panel plaque (on every page) and each
       // button's selection cursor. Materialized into real elements to convert.

@@ -120,8 +120,22 @@ export interface QuakeGlyphUiOverlayOptions {
    * the plaque reads as monochrome). A curve spends its lift where the source
    * is dark and tapers to nothing at the top, so highlights keep their hue.
    * Default 1 = off.
+   *
+   * Applies to the ART (detail) layers only — the backdrop has its own curve,
+   * {@link backdropGamma}. One shared curve was tried first and broke the
+   * depth cue: `transformCells` runs once per glyphcss layer, and a sub-1
+   * exponent lifts dark cells proportionally MORE than bright ones, so the
+   * deliberately-dim backdrop gained more than the art and read as sitting in
+   * front of the menu (measured: art:backdrop luminance ratio 2.5 -> 1.6).
    */
   readonly gamma?: number;
+  /**
+   * Tone-curve exponent for the BACKDROP (the base, density-1 layer) —
+   * same curve as {@link gamma}, separate strength. Keeping this milder than
+   * `gamma` preserves the front/back separation while still lifting the
+   * backdrop out of the murk. Defaults to `gamma` (uniform lift).
+   */
+  readonly backdropGamma?: number;
   readonly glyphPalette?: string;
   /** Final-string encode strategy. Defaults to `atlas`, as the world does. */
   readonly colorEncoding?: "atlas" | "spans";
@@ -457,9 +471,15 @@ export function createQuakeGlyphUiOverlay(
    * thousands of cells but only a few hundred distinct colours (the sources
    * are palettized Quake art), and the map is stable across frames.
    */
-  const gamma = Math.min(1, Math.max(0.2, options.gamma ?? 1));
-  const liftCache = new Map<string, string>();
-  function liftCellColors(grid: { char: string[]; color: (string | null)[] }): void {
+  const artGamma = Math.min(1, Math.max(0.2, options.gamma ?? 1));
+  const backdropGamma = Math.min(1, Math.max(0.2, options.backdropGamma ?? artGamma));
+  const artLiftCache = new Map<string, string>();
+  const backdropLiftCache = new Map<string, string>();
+  function liftCellColors(
+    grid: { char: string[]; color: (string | null)[] },
+    gamma: number,
+    liftCache: Map<string, string>,
+  ): void {
     if (gamma >= 1) return;
     const colors = grid.color;
     for (let i = 0; i < colors.length; i++) {
@@ -489,6 +509,25 @@ export function createQuakeGlyphUiOverlay(
     }
   }
 
+  /**
+   * Whether a `transformCells` grid is the BASE layer's.
+   *
+   * glyphcss invokes the hook once per layer: the base render (the full-host
+   * grid — here, the backdrop) and each detail layer (a bbox-clipped grid at
+   * `base cell / density` — here, all the art, density > 1). The hook receives
+   * no layer id, but the base grid's dimensions are exactly the scene's
+   * live `cols`/`rows`, while a detail grid is its sprites' bounding box at
+   * densityx resolution — for these menus never the same shape. (`sceneApi`
+   * is null only for renders issued during scene construction, before any
+   * mesh exists, when the only layer IS the base.)
+   */
+  let sceneApi: { getOptions(): { cols: number; rows: number } } | null = null;
+  function isBaseGrid(grid: { cols: number; rows: number }): boolean {
+    if (!sceneApi) return true;
+    const opts = sceneApi.getOptions();
+    return grid.cols === opts.cols && grid.rows === opts.rows;
+  }
+
   const camera = createGlyphOrthographicCamera({ rotX: 0, rotY: 0, zoom: 1 });
   const scene = createGlyphScene(surface, {
     mode: "solid",
@@ -501,12 +540,22 @@ export function createQuakeGlyphUiOverlay(
     doubleSided: true,
     camera,
     // Flat art: the glyph must track texel luminance, not a light rig.
-    // Tone-lift the art's cell colours FIRST, then stamp the DOM text — the
-    // text's colours are authored for the screen already and must not shift.
-    transformCells: (grid) => { liftCellColors(grid); stampText(grid); },
+    // Runs once per LAYER (see `isBaseGrid`): the backdrop gets its own,
+    // milder curve so the art keeps reading as sitting in front of it, and
+    // DOM text — whose coordinate math and screen-authored colours assume the
+    // full-host grid — is stamped into the base grid only, AFTER its lift.
+    transformCells: (grid) => {
+      if (isBaseGrid(grid)) {
+        liftCellColors(grid, backdropGamma, backdropLiftCache);
+        stampText(grid);
+      } else {
+        liftCellColors(grid, artGamma, artLiftCache);
+      }
+    },
     directionalLight: { direction: [0, 0, 1], intensity: 0 },
     ambientLight: { intensity: Math.max(0, options.ambient ?? 1.4) },
   });
+  sceneApi = scene;
 
   const meshes = new Map<number, { setPolygons(p: Polygon[]): void; dispose(): void }>();
   let lastKey = "";
