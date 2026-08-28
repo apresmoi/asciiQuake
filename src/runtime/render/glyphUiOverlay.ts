@@ -109,12 +109,34 @@ export interface QuakeGlyphUiOverlayOptions {
    */
   readonly ambient?: number;
   readonly glyphPalette?: string;
+  /** Final-string encode strategy. Defaults to `atlas`, as the world does. */
+  readonly colorEncoding?: "atlas" | "spans";
+  /**
+   * Selectors for DOM text that should be STAMPED INTO the glyph grid instead of
+   * being painted by the browser.
+   *
+   * This is what collapses the UI to a single `<pre>`. The art is already
+   * textured quads; the words were still real DOM (the boot log alone is ~190
+   * spans, an open Options panel ~435). Stamping them through glyphcss's
+   * post-rasterize `transformCells` hook — which mutates the final grid just
+   * before the one `<pre>` write — puts them on the same character grid as the
+   * art, so the whole screen is one ASCII image.
+   */
+  readonly textSelectors?: readonly string[];
 }
 
 export interface QuakeGlyphUiOverlay {
   readonly element: HTMLElement;
   sync(): void;
   dispose(): void;
+}
+
+/** `rgb(r, g, b)` from getComputedStyle → `#rrggbb` for the cell grid. */
+function rgbToHex(value: string): string {
+  const m = /rgba?\((\d+)[,\s]+(\d+)[,\s]+(\d+)/.exec(value);
+  if (!m) return "#c8c8c8";
+  const h = (n: string) => Number(n).toString(16).padStart(2, "0");
+  return `#${h(m[1]!)}${h(m[2]!)}${h(m[3]!)}`;
 }
 
 const DEFAULT_MAX_CELLS = 24_000;
@@ -280,16 +302,64 @@ export function createQuakeGlyphUiOverlay(
     mode: "solid",
     glyphPalette: options.glyphPalette ?? "detail",
     useColors: true,
+    // Same encoder the world overlay uses: one text node of PUA code points
+    // painted by the COLR/CPAL colour font, instead of a <span> per colour run.
+    colorEncoding: options.colorEncoding ?? "atlas",
     autoSize: true,
     doubleSided: true,
     camera,
     // Flat art: the glyph must track texel luminance, not a light rig.
+    transformCells: (grid) => stampText(grid),
     directionalLight: { direction: [0, 0, 1], intensity: 0 },
     ambientLight: { intensity: Math.max(0, options.ambient ?? 1.4) },
   });
 
   const meshes = new Map<number, { setPolygons(p: Polygon[]): void; dispose(): void }>();
   let lastKey = "";
+
+  /**
+   * Draw the page's text into the rasterized grid.
+   *
+   * Runs inside the render, on the final `CellGrid`, so the words land in the
+   * SAME `<pre>` as the art rather than sitting above it as DOM. Each element's
+   * screen box maps to a cell and its characters are written across from there,
+   * so the text keeps the layout CSS already computed for it.
+   */
+  function stampText(grid: { cols: number; rows: number; char: string[]; color: (string | null)[] }): void {
+    const selectors = options.textSelectors;
+    if (!selectors?.length) return;
+    const box = hostEl.getBoundingClientRect();
+    if (!box.width || !box.height) return;
+    const cw = box.width / grid.cols;
+    const ch = box.height / grid.rows;
+
+    for (const selector of selectors) {
+      let nodes: NodeListOf<Element>;
+      try { nodes = document.querySelectorAll(selector); } catch { continue; }
+      for (const node of nodes) {
+        if (!(node instanceof HTMLElement)) continue;
+        const text = node.textContent;
+        if (!text) continue;
+        const r = node.getBoundingClientRect();
+        if (!r.width || !r.height) continue;
+        const style = getComputedStyle(node);
+        if (style.visibility === "hidden" || style.display === "none") continue;
+        const col = Math.round((r.left - box.left) / cw);
+        const row = Math.round((r.top - box.top + r.height / 2) / ch);
+        if (row < 0 || row >= grid.rows) continue;
+        const colour = rgbToHex(style.color);
+        for (let i = 0; i < text.length; i++) {
+          const c = col + i;
+          if (c < 0 || c >= grid.cols) continue;
+          const glyph = text[i]!;
+          if (glyph === " ") continue;   // don't punch holes in the art behind
+          const idx = row * grid.cols + c;
+          grid.char[idx] = glyph;
+          grid.color[idx] = colour;
+        }
+      }
+    }
+  }
 
   /** Polygons grouped by detail density — one glyphcss mesh per group. */
   function buildPolygons(hostBox: DOMRect): Map<number, Polygon[]> {

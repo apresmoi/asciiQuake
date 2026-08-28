@@ -1537,6 +1537,8 @@ if (quakeRenderMode === "glyphcss" && quakeStartupUrlParams.get("glyphImage") !=
       minCellPx: quakeUrlNumberParam(quakeStartupUrlParams, "glyphImageCell", 2, 24) ?? undefined,
       glyphPalette: quakeStartupUrlParams.get("glyphImagePalette") ?? undefined,
       ambient: quakeUrlNumberParam(quakeStartupUrlParams, "glyphImageAmbient", 0.2, 6) ?? undefined,
+      colorEncoding: quakeStartupUrlParams.get("glyphImageEncoding") === "spans" ? "spans" : "atlas",
+      // Words go INTO the grid, not on top of it — the last step to a single <pre>.
       sprites: [
         // Layer 0 is the backdrop; everything else composites in front of it.
         { selector: "#quake-loading-overlay", layer: 0, fit: "cover", brightness: quakeUrlNumberParam(quakeStartupUrlParams, "glyphImageBackdrop", 0, 1) ?? 0.45 },
