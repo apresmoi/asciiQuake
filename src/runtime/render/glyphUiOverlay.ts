@@ -119,7 +119,8 @@ export function createQuakeGlyphUiOverlay(
     ambientLight: { intensity: 1 },
   });
 
-  let mesh: { dispose(): void } | null = null;
+  let mesh: { setPolygons(p: Polygon[]): void; dispose(): void } | null = null;
+  let lastKey = "";
 
   function buildPolygons(hostBox: DOMRect): Polygon[] {
     const polys: Polygon[] = [];
@@ -204,8 +205,28 @@ export function createQuakeGlyphUiOverlay(
     camera.zoom = 1;
 
     const polys = buildPolygons(hostBox);
-    mesh?.dispose();
-    mesh = polys.length ? scene.add(polys) : null;
+    if (!polys.length) return;
+
+    // Update the mesh IN PLACE. Disposing and re-adding restarts glyphcss's
+    // async texture load, so every rebuild renders untextured until the images
+    // come back — visible as the UI blinking whenever the menu selection
+    // changes, and as a grid of `$` in `#ffffff` (every quad falling back to its
+    // flat colour) when rebuilds come faster than the textures can load.
+    if (mesh) mesh.setPolygons(polys);
+    else mesh = scene.add(polys);
+
+    // Cheap change key: only the numbers that can move. Hashing the whole
+    // polygon array with JSON.stringify was itself slow enough to stall startup
+    // once the sprite count grew.
+    let key = "";
+    for (const poly of polys) {
+      const v = (poly as unknown as { vertices: number[][]; uvs: number[][] });
+      key += v.vertices[0]![0]!.toFixed(1) + "," + v.vertices[0]![1]!.toFixed(1) + ","
+        + v.vertices[2]![0]!.toFixed(1) + "," + v.vertices[2]![1]!.toFixed(1) + ","
+        + v.uvs[0]![0]!.toFixed(3) + "," + v.uvs[0]![1]!.toFixed(3) + ";";
+    }
+    if (key === lastKey) return;   // nothing moved — skip the render entirely
+    lastKey = key;
     scene.rerender();
   }
 
