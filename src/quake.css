@@ -2848,7 +2848,15 @@ body.quake-menu-open .dn-stats-overlay {
 .quake-glyph-render #quake-about-back::before,
 .quake-glyph-render #quake-multiplayer-field::before,
 .quake-glyph-render #quake-multiplayer-create::before,
-.quake-glyph-render #quake-multiplayer-back::before {
+.quake-glyph-render #quake-multiplayer-back::before,
+/* The menu labels paint their art on the ELEMENT, not a pseudo, so they were
+   missed by the ::before list above and flashed as PNGs on the very first
+   painted frame — measured: visible at 60ms, gone by 200ms once JS adopted
+   them. Suppressing them here closes that window. */
+.quake-glyph-render .quake-main-menu-label,
+.quake-glyph-render .quake-single-player-label,
+.quake-glyph-render .quake-intermission-label-art,
+.quake-glyph-render .quake-multiplayer-field-label {
   background-image: none !important;
 }
 .quake-glyph-render #quake-main-menu-plaque,
