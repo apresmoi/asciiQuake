@@ -1536,7 +1536,14 @@ if (quakeRenderMode === "glyphcss" && quakeStartupUrlParams.get("glyphImage") !=
       maxCells: quakeUrlNumberParam(quakeStartupUrlParams, "glyphImageCells", 2000, 120_000) ?? undefined,
       minCellPx: quakeUrlNumberParam(quakeStartupUrlParams, "glyphImageCell", 2, 24) ?? undefined,
       glyphPalette: quakeStartupUrlParams.get("glyphImagePalette") ?? undefined,
-      ambient: quakeUrlNumberParam(quakeStartupUrlParams, "glyphImageAmbient", 0.2, 6) ?? undefined,
+      // 2.0 lifts the art without visibly washing it — measured on the menu
+      // screens: at 3.0 the plaque's bronze clips to grey-white per channel.
+      ambient: quakeUrlNumberParam(quakeStartupUrlParams, "glyphImageAmbient", 0.2, 6) ?? 2.0,
+      // Hue-preserving tone lift (below 1 brightens; see the overlay's `gamma`
+      // doc). This carries the brightness the linear levers cannot: ambient
+      // past ~2.4 clips the art's bright channels and washes the bronze grey,
+      // while the curve spends its lift on the dark backdrop and midtones.
+      gamma: quakeUrlNumberParam(quakeStartupUrlParams, "glyphImageGamma", 0.2, 1) ?? 0.55,
       colorEncoding: quakeStartupUrlParams.get("glyphImageEncoding") === "spans" ? "spans" : "atlas",
       // Art authored as `::before` — the panel plaque (on every page) and each
       // button's selection cursor. Materialized into real elements to convert.
@@ -1565,7 +1572,7 @@ if (quakeRenderMode === "glyphcss" && quakeStartupUrlParams.get("glyphImage") !=
       // Words go INTO the grid, not on top of it — the last step to a single <pre>.
       sprites: [
         // Layer 0 is the backdrop; everything else composites in front of it.
-        { selector: "#quake-loading-overlay", layer: 0, fit: "cover", texture: "/q/menu-background.png", brightness: quakeUrlNumberParam(quakeStartupUrlParams, "glyphImageBackdrop", 0, 1) ?? 0.45 },
+        { selector: "#quake-loading-overlay", layer: 0, fit: "cover", texture: "/q/menu-background.png", brightness: quakeUrlNumberParam(quakeStartupUrlParams, "glyphImageBackdrop", 0, 1) ?? 0.6 },
         // `?glyphImageDensity=` puts small art in its own higher-density detail
         // layer. OFF by default (1): a detail layer blanks every base cell under
         // its box (glyphcss's occlusion id-map, see its AGENTS.md), so a sprite

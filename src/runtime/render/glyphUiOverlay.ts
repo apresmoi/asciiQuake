@@ -110,6 +110,18 @@ export interface QuakeGlyphUiOverlayOptions {
    * contrast; brightness alone cannot, because a tint can only attenuate.
    */
   readonly ambient?: number;
+  /**
+   * Tone-curve exponent applied to every cell colour AFTER rasterization,
+   * hue-preserving (RGB scaled by lumaOut/lumaIn, capped so no channel clips).
+   * Below 1 lifts the dark and mid tones the way a display gamma does — the
+   * lever `ambient` cannot be: ambient is a LINEAR multiplier, so pushing it
+   * high enough to rescue the shadows drives the art's bright texels past 255
+   * per channel and washes the bronze to grey-white (measured at ambient 3.0:
+   * the plaque reads as monochrome). A curve spends its lift where the source
+   * is dark and tapers to nothing at the top, so highlights keep their hue.
+   * Default 1 = off.
+   */
+  readonly gamma?: number;
   readonly glyphPalette?: string;
   /** Final-string encode strategy. Defaults to `atlas`, as the world does. */
   readonly colorEncoding?: "atlas" | "spans";
@@ -328,6 +340,56 @@ export function createQuakeGlyphUiOverlay(
     }
   }
 
+  /**
+   * Re-resolve a stand-in's box from its host's live `::before`.
+   *
+   * Copying the geometry once at creation was wrong twice over: a panel is
+   * HIDDEN when the overlay first scans it, so container-relative units (`cqw`,
+   * the menu's sizing unit) resolve against a zero-size container, and the
+   * frozen pixel values then never track a resize. Measured symptom: a plaque
+   * stand-in 160x720 inside an 860x538 card, and a 120px-tall cursor on a 54px
+   * button. Re-reading on every sync costs a handful of style reads and keeps
+   * the stand-in the size the pseudo would actually have been.
+   */
+  function applyPseudoGeometry(host: HTMLElement, stand: HTMLElement): void {
+    const cs = getComputedStyle(host, "::before");
+    // Honour the pseudo's own visibility. The selection cursor is `display:none`
+    // until its item is active, so a stand-in that ignores that draws a cursor on
+    // EVERY button at once — which reads as oversized art everywhere and as a
+    // selection that never moves. Zero-sizing it makes `buildPolygons` skip it.
+    const shown = cs.display !== "none" && cs.visibility !== "hidden" && cs.content !== "none";
+    stand.style.top = cs.top;
+    stand.style.left = cs.left;
+
+    // CLAMP to the host's visible area. The plaque is sized in `cqw`, which
+    // resolves against the viewport, and the real `::before` is then clipped by
+    // the card's `overflow: hidden` — measured 160x720 inside an 860x538 card.
+    // A quad drawn at the unclipped size paints the art far outside the card,
+    // which is what read as "the image on the left is huge".
+    const clip = getComputedStyle(host).overflow !== "visible";
+    const offX = parseFloat(cs.left) || 0;
+    const offY = parseFloat(cs.top) || 0;
+    const wantW = parseFloat(cs.width) || 0;
+    const wantH = parseFloat(cs.height) || 0;
+    const maxW = clip ? Math.max(0, host.clientWidth - offX) : wantW;
+    const maxH = clip ? Math.max(0, host.clientHeight - offY) : wantH;
+    stand.style.width = shown ? `${Math.min(wantW, maxW)}px` : "0px";
+    stand.style.height = shown ? `${Math.min(wantH, maxH)}px` : "0px";
+    // Clipping shows the TOP-LEFT of the art, so the sampled window must shrink
+    // to match rather than squashing the whole sprite into the smaller box.
+    stand.dataset.glyphClipU = wantW > 0 ? String(Math.min(1, maxW / wantW)) : "1";
+    stand.dataset.glyphClipV = wantH > 0 ? String(Math.min(1, maxH / wantH)) : "1";
+    stand.dataset.glyphBgSize = cs.backgroundSize;
+    stand.dataset.glyphBgPos = cs.backgroundPosition;
+  }
+
+  function refreshPseudoGeometry(): void {
+    for (const stand of document.querySelectorAll(".quake-glyph-pseudo")) {
+      const host = stand.parentElement;
+      if (host instanceof HTMLElement && stand instanceof HTMLElement) applyPseudoGeometry(host, stand);
+    }
+  }
+
   /** Copy `::before` art onto a real child so a sprite rule can pick it up. */
   function materializePseudo(): void {
     for (const selector of options.pseudoSelectors ?? []) {
@@ -356,12 +418,9 @@ export function createQuakeGlyphUiOverlay(
         stand.dataset.glyphTexture = url;
         stand.dataset.glyphBgSize = cs.backgroundSize;
         stand.dataset.glyphBgPos = cs.backgroundPosition;
-        stand.style.cssText = [
-          "position:absolute", `top:${cs.top}`, `left:${cs.left}`,
-          `width:${cs.width}`, `height:${cs.height}`,
-          "pointer-events:none", "background:none",
-        ].join(";");
+        stand.style.cssText = "position:absolute;pointer-events:none;background:none";
         node.appendChild(stand);
+        applyPseudoGeometry(node, stand);
       }
     }
   }
@@ -391,6 +450,45 @@ export function createQuakeGlyphUiOverlay(
   surface.style.overflow = "hidden";
   hostEl.insertBefore(surface, hostEl.firstChild);
 
+  /**
+   * Hue-preserving tone lift for the final cell grid — see the `gamma` option.
+   *
+   * Runs on hex strings, so results are memoized: a frame has tens of
+   * thousands of cells but only a few hundred distinct colours (the sources
+   * are palettized Quake art), and the map is stable across frames.
+   */
+  const gamma = Math.min(1, Math.max(0.2, options.gamma ?? 1));
+  const liftCache = new Map<string, string>();
+  function liftCellColors(grid: { char: string[]; color: (string | null)[] }): void {
+    if (gamma >= 1) return;
+    const colors = grid.color;
+    for (let i = 0; i < colors.length; i++) {
+      const hex = colors[i];
+      if (!hex) continue;
+      let lifted = liftCache.get(hex);
+      if (lifted === undefined) {
+        const r = parseInt(hex.slice(1, 3), 16);
+        const g = parseInt(hex.slice(3, 5), 16);
+        const b = parseInt(hex.slice(5, 7), 16);
+        const luma = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+        if (luma <= 0) lifted = hex;
+        else {
+          // Scale toward the curve's target luminance, but never past the point
+          // where the largest channel would clip — that cap is what keeps a
+          // bright bronze from washing to white.
+          const scale = Math.min(
+            (255 * Math.pow(luma / 255, gamma)) / luma,
+            255 / Math.max(r, g, b),
+          );
+          const h = (v: number) => Math.round(v * scale).toString(16).padStart(2, "0");
+          lifted = `#${h(r)}${h(g)}${h(b)}`;
+        }
+        liftCache.set(hex, lifted);
+      }
+      colors[i] = lifted;
+    }
+  }
+
   const camera = createGlyphOrthographicCamera({ rotX: 0, rotY: 0, zoom: 1 });
   const scene = createGlyphScene(surface, {
     mode: "solid",
@@ -403,7 +501,9 @@ export function createQuakeGlyphUiOverlay(
     doubleSided: true,
     camera,
     // Flat art: the glyph must track texel luminance, not a light rig.
-    transformCells: (grid) => stampText(grid),
+    // Tone-lift the art's cell colours FIRST, then stamp the DOM text — the
+    // text's colours are authored for the screen already and must not shift.
+    transformCells: (grid) => { liftCellColors(grid); stampText(grid); },
     directionalLight: { direction: [0, 0, 1], intensity: 0 },
     ambientLight: { intensity: Math.max(0, options.ambient ?? 1.4) },
   });
@@ -479,6 +579,8 @@ export function createQuakeGlyphUiOverlay(
 
       const fit = s.sprite.fit ?? (s.isImg ? "contain" : "cover");
       let u0 = 0, u1 = 1, v0 = 0, v1 = 1;
+      const clipU = Number(s.sprite.element.dataset.glyphClipU ?? "1");
+      const clipV = Number(s.sprite.element.dataset.glyphClipV ?? "1");
       if (fit === "css") {
         // Reproduce the element's own background mapping. Only the forms Quake
         // actually uses are handled — a percentage/`auto` size plus a
@@ -580,6 +682,9 @@ export function createQuakeGlyphUiOverlay(
   function sync(force = false): void {
     const hostBox = hostEl.getBoundingClientRect();
     if (!hostBox.width || !hostBox.height) return;
+    // Stand-ins are sized from their host's live `::before`, which resolves
+    // differently once a hidden panel opens — refresh before measuring anything.
+    refreshPseudoGeometry();
     const now = performance.now();
     if (!force && !adoptedSinceDraw && now - lastBuildAt < REBUILD_INTERVAL_MS) {
       // DEFER, never drop. Returning here lost the update entirely: hovering a
@@ -727,6 +832,11 @@ export function createQuakeGlyphUiOverlay(
   rescan();
   queueSync();
 
+
+  if (import.meta.env?.DEV) {
+    // Dev handle for interaction experiments (hotspot-hosted inputs/buttons).
+    (window as unknown as { __quakeGlyphUiScene?: unknown }).__quakeGlyphUiScene = scene;
+  }
 
   return {
     element: surface,
