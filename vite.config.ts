@@ -19,6 +19,17 @@ function asciiQuakeVersion(): string {
   }
 }
 
+function glyphCssVersion(): string {
+  try {
+    const packageJson = JSON.parse(
+      readFileSync(path.join(CONFIG_DIR, "node_modules/glyphcss/package.json"), "utf8"),
+    ) as { version?: unknown };
+    return typeof packageJson.version === "string" ? packageJson.version : "0.0.0";
+  } catch {
+    return "0.0.0";
+  }
+}
+
 function polyCssVersion(): string {
   try {
     const packageJson = JSON.parse(
@@ -39,6 +50,7 @@ export default defineConfig({
   define: {
     __ASCIIQUAKE_VERSION__: JSON.stringify(asciiQuakeVersion()),
     __POLYCSS_VERSION__: JSON.stringify(polyCssVersion()),
+    __GLYPHCSS_VERSION__: JSON.stringify(glyphCssVersion()),
   },
   publicDir: "build/generated/public",
   build: {

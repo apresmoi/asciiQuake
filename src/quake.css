@@ -1287,6 +1287,27 @@ body.quake-menu-open:not(.quake-gameplay-started) .quake-menu-panel {
   background-size: var(--quake-bitmap-sheet-size) var(--quake-bitmap-sheet-size);
   image-rendering: pixelated;
 }
+
+/* Character-rendered bitmap text (the ASCII backend). Occupies the same cell box
+   as the sprite it replaces so every layout that positions bitmap text — the
+   console, centerprint, menus, HUD — keeps working untouched. Quake's high-bit
+   "alt" glyphs are the brown variant of the same character, so they stay a
+   colour difference rather than a different glyph. */
+.quake-bitmap-char {
+  display: block;
+  flex: 0 0 auto;
+  width: var(--quake-bitmap-glyph-size);
+  height: var(--quake-bitmap-glyph-size);
+  font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  font-size: calc(var(--quake-bitmap-glyph-size) * 0.95);
+  line-height: var(--quake-bitmap-glyph-size);
+  text-align: center;
+  text-transform: uppercase;
+  color: #f6f1df;
+}
+.quake-bitmap-char-alt {
+  color: #d0a070;
+}
 .quake-bitmap-col-0 {
   background-position-x: 0;
 }

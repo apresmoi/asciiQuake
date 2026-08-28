@@ -25,6 +25,8 @@ export interface QuakeGlyphUiSprite {
   readonly element: HTMLElement;
   /** Paint order. Higher sits in front; resolved by the scene's depth test. */
   readonly layer?: number;
+  /** Detail-layer multiplier — see {@link QuakeGlyphUiSpriteRule.density}. */
+  readonly density?: number;
   /**
    * How the art maps into the box.
    * - `contain` — whole image, its own aspect (an `<img>`).
@@ -37,10 +39,36 @@ export interface QuakeGlyphUiSprite {
   readonly fit?: "cover" | "contain" | "css";
 }
 
+/** Matches sprites by selector, so elements created LATER are still adopted. */
+export interface QuakeGlyphUiSpriteRule {
+  readonly selector: string;
+  readonly layer?: number;
+  readonly fit?: "cover" | "contain" | "css";
+  /**
+   * Render this sprite at N x the shared grid's resolution, in its own glyphcss
+   * detail layer (`cell = base cell / density`, same on-screen size). This is the
+   * same mechanism the world overlay uses to keep monsters and pickups crisp
+   * over a cheap coarse world.
+   *
+   * It is the right answer for small art: a title or a menu label occupies a
+   * handful of cells at the backdrop's resolution, and raising the SHARED budget
+   * to fix that pays for every cell of a full-viewport backdrop that gains
+   * nothing. Each distinct density costs one extra `<pre>` — but a library detail
+   * layer, aligned to the base grid and depth-occluded by it, not the ad-hoc
+   * separate scene this file replaced.
+   */
+  readonly density?: number;
+}
+
 export interface QuakeGlyphUiOverlayOptions {
   /** Element the shared grid covers — its box is the ASCII canvas. */
   readonly host: HTMLElement;
-  readonly sprites: readonly QuakeGlyphUiSprite[];
+  /**
+   * Selector rules, rescanned as the DOM changes. Rules rather than resolved
+   * elements because much of this UI is built after startup: the boot log alone
+   * appends 808 sprite-sheet spans, none of which exist when this mounts.
+   */
+  readonly sprites: readonly QuakeGlyphUiSpriteRule[];
   /** Ceiling on total cells; the cell grows until the grid fits. */
   readonly maxCells?: number;
   /** Smallest cell in px. The floor on how fine the art can get. */
@@ -85,12 +113,34 @@ export function createQuakeGlyphUiOverlay(
     return /url\((["']?)(.*?)\1\)/.exec(bg)?.[2] ?? "";
   }
 
-  // Capture every URL BEFORE hiding any art: hiding clears `background-image`,
-  // and reading it afterwards yields "none".
-  const states: SpriteState[] = options.sprites.map((sprite) => {
-    const isImg = sprite.element instanceof HTMLImageElement;
-    return { sprite, isImg, url: readUrl(sprite.element, isImg), natural: null };
-  });
+  // Keyed by element so a rescan is idempotent. URLs are captured BEFORE the art
+  // is hidden: hiding clears `background-image`, and reading it after yields
+  // "none".
+  const states = new Map<HTMLElement, SpriteState>();
+  let adoptedSinceDraw = false;
+
+  function adopt(el: HTMLElement, rule: QuakeGlyphUiSpriteRule): void {
+    if (states.has(el)) return;
+    const isImg = el instanceof HTMLImageElement;
+    const url = readUrl(el, isImg);
+    if (!url) return;
+    states.set(el, {
+      sprite: { element: el, layer: rule.layer, fit: rule.fit, density: rule.density },
+      isImg, url, natural: null,
+    });
+    if (isImg) el.style.visibility = "hidden";
+    else el.style.backgroundImage = "none";
+    adoptedSinceDraw = true;
+    resolveNatural(states.get(el)!);
+  }
+
+  function rescan(): void {
+    for (const rule of options.sprites) {
+      for (const node of document.querySelectorAll(rule.selector)) {
+        if (node instanceof HTMLElement) adopt(node, rule);
+      }
+    }
+  }
 
   const surface = document.createElement("div");
   surface.className = "quake-glyph-ui";
@@ -100,11 +150,6 @@ export function createQuakeGlyphUiOverlay(
   surface.style.pointerEvents = "none";
   surface.style.overflow = "hidden";
   hostEl.insertBefore(surface, hostEl.firstChild);
-
-  for (const s of states) {
-    if (s.isImg) s.sprite.element.style.visibility = "hidden";
-    else s.sprite.element.style.backgroundImage = "none";
-  }
 
   const camera = createGlyphOrthographicCamera({ rotX: 0, rotY: 0, zoom: 1 });
   const scene = createGlyphScene(surface, {
@@ -119,27 +164,30 @@ export function createQuakeGlyphUiOverlay(
     ambientLight: { intensity: 1 },
   });
 
-  let mesh: { setPolygons(p: Polygon[]): void; dispose(): void } | null = null;
+  const meshes = new Map<number, { setPolygons(p: Polygon[]): void; dispose(): void }>();
   let lastKey = "";
 
-  function buildPolygons(hostBox: DOMRect): Polygon[] {
-    const polys: Polygon[] = [];
+  /** Polygons grouped by detail density — one glyphcss mesh per group. */
+  function buildPolygons(hostBox: DOMRect): Map<number, Polygon[]> {
+    const groups = new Map<number, Polygon[]>();
     // World units are CSS px (zoom is pinned to 1 below), with the origin at the
     // host's centre — so a sprite's screen box maps straight into world space.
     const cx = hostBox.width / 2;
     const cy = hostBox.height / 2;
 
-    states.forEach((s, i) => {
-      if (!s.natural || !s.url) return;
+    let i = 0;
+    for (const s of states.values()) {
+      const index = i++;
+      if (!s.natural || !s.url) continue;
       const box = s.sprite.element.getBoundingClientRect();
-      if (!box.width || !box.height) return;
+      if (!box.width || !box.height) continue;
 
       const left = box.left - hostBox.left;
       const top = box.top - hostBox.top;
       // X is screen-DOWN, Y is screen-RIGHT.
       const x0 = top - cy, x1 = top + box.height - cy;
       const y0 = left - cx, y1 = left + box.width - cx;
-      const z = (s.sprite.layer ?? i) * LAYER_STEP;
+      const z = (s.sprite.layer ?? index) * LAYER_STEP;
 
       const fit = s.sprite.fit ?? (s.isImg ? "contain" : "cover");
       let u0 = 0, u1 = 1, v0 = 0, v1 = 1;
@@ -179,19 +227,38 @@ export function createQuakeGlyphUiOverlay(
         }
       }
 
-      polys.push({
+      const bucket = Math.max(1, Math.round(s.sprite.density ?? 1));
+      (groups.get(bucket) ?? groups.set(bucket, []).get(bucket)!).push({
         vertices: [[x0, y0, z], [x0, y1, z], [x1, y1, z], [x1, y0, z]],
         texture: s.url,
         uvs: [[u0, v1], [u1, v1], [u1, v0], [u0, v0]],
+        // Flat fallback for texels the sampler cannot resolve. White is a
+        // deliberate choice over black: it makes an unsampled quad OBVIOUS
+        // rather than invisible against this dark UI. It is also why a sprite's
+        // transparent margin currently paints as a light block — see the
+        // transparency note on this module.
         color: "#ffffff",
       } as unknown as Polygon);
-    });
-    return polys;
+    }
+    return groups;
   }
 
-  function sync(): void {
+  /**
+   * Rebuild geometry at most this often (ms). Sprite art is static: it moves on
+   * resize, on a menu selection, and when new sprites appear — none of which
+   * need per-frame attention. Without this, every sync walked every sprite's
+   * `getBoundingClientRect()` and rebuilt the polygon list once per frame, which
+   * is what took the menu from 120fps to 14fps.
+   */
+  const REBUILD_INTERVAL_MS = 100;
+  let lastBuildAt = 0;
+
+  function sync(force = false): void {
     const hostBox = hostEl.getBoundingClientRect();
     if (!hostBox.width || !hostBox.height) return;
+    const now = performance.now();
+    if (!force && !adoptedSinceDraw && now - lastBuildAt < REBUILD_INTERVAL_MS) return;
+    lastBuildAt = now;
 
     // Cell grows until the grid fits the budget: cells = area / (aspect * px^2).
     const fitted = Math.sqrt((hostBox.width * hostBox.height) / (CELL_ASPECT * maxCells));
@@ -204,66 +271,93 @@ export function createQuakeGlyphUiOverlay(
     // box can be used verbatim above.
     camera.zoom = 1;
 
-    const polys = buildPolygons(hostBox);
-    if (!polys.length) return;
+    const groups = buildPolygons(hostBox);
+    if (!groups.size) return;
 
-    // Update the mesh IN PLACE. Disposing and re-adding restarts glyphcss's
-    // async texture load, so every rebuild renders untextured until the images
-    // come back — visible as the UI blinking whenever the menu selection
-    // changes, and as a grid of `$` in `#ffffff` (every quad falling back to its
-    // flat colour) when rebuilds come faster than the textures can load.
-    if (mesh) mesh.setPolygons(polys);
-    else mesh = scene.add(polys);
-
-    // Cheap change key: only the numbers that can move. Hashing the whole
-    // polygon array with JSON.stringify was itself slow enough to stall startup
-    // once the sprite count grew.
+    // Cheap change key: only the numbers that can move. Hashing whole polygon
+    // arrays with JSON.stringify was itself slow enough to stall startup.
     let key = "";
-    for (const poly of polys) {
-      const v = (poly as unknown as { vertices: number[][]; uvs: number[][] });
-      key += v.vertices[0]![0]!.toFixed(1) + "," + v.vertices[0]![1]!.toFixed(1) + ","
-        + v.vertices[2]![0]!.toFixed(1) + "," + v.vertices[2]![1]!.toFixed(1) + ","
-        + v.uvs[0]![0]!.toFixed(3) + "," + v.uvs[0]![1]!.toFixed(3) + ";";
+    for (const [density, polys] of groups) {
+      key += "d" + density + ":";
+      for (const poly of polys) {
+        const v = poly as unknown as { vertices: number[][]; uvs: number[][] };
+        key += v.vertices[0]![0]!.toFixed(1) + "," + v.vertices[0]![1]!.toFixed(1) + ","
+          + v.vertices[2]![0]!.toFixed(1) + "," + v.vertices[2]![1]!.toFixed(1) + ","
+          + v.uvs[0]![0]!.toFixed(3) + "," + v.uvs[0]![1]!.toFixed(3) + ";";
+      }
     }
-    if (key === lastKey) return;   // nothing moved — skip the render entirely
+    if (key === lastKey && !adoptedSinceDraw) return;   // nothing moved or joined
     lastKey = key;
+    adoptedSinceDraw = false;
+
+    // Update meshes IN PLACE. Disposing and re-adding restarts glyphcss's async
+    // texture load, so every rebuild renders untextured until the images return —
+    // seen as the UI blinking on menu selection, and as a grid of `$` in
+    // `#ffffff` when rebuilds outpace the loads.
+    for (const [density, polys] of groups) {
+      const existing = meshes.get(density);
+      if (existing) existing.setPolygons(polys);
+      else meshes.set(density, scene.add(polys, density > 1 ? { density } : undefined));
+    }
+    // A density group can empty out (its sprites' panel closed).
+    for (const [density, mesh] of meshes) {
+      if (!groups.has(density)) { mesh.dispose(); meshes.delete(density); }
+    }
     scene.rerender();
   }
 
-  // Natural sizes gate the UV maths; resolve them all, then draw once.
-  let pending = states.length;
-  const done = () => { if (--pending <= 0) sync(); };
-  for (const s of states) {
-    if (!s.url) { done(); continue; }
-    const el = s.sprite.element as HTMLImageElement;
-    if (s.isImg && el.naturalWidth) {
-      s.natural = { w: el.naturalWidth, h: el.naturalHeight };
-      done();
-      continue;
-    }
-    const probe = new Image();
-    probe.onload = () => { s.natural = { w: probe.naturalWidth || 1, h: probe.naturalHeight || 1 }; done(); };
-    probe.onerror = done;
-    probe.src = s.url;
+  // A sprite draws only once its source size is known. Redraws are coalesced
+  // into one rAF: the boot log adopts hundreds of glyphs in a burst and must not
+  // trigger a render each.
+  let syncQueued = false;
+  function queueSync(): void {
+    if (syncQueued) return;
+    syncQueued = true;
+    requestAnimationFrame(() => { syncQueued = false; sync(); });
   }
 
-  const onResize = () => sync();
-  window.addEventListener("resize", onResize);
-  // Menu panels mount hidden, so a sprite's box is 0x0 until its panel opens.
-  const boxObserver = typeof ResizeObserver !== "undefined" ? new ResizeObserver(() => sync()) : null;
-  if (boxObserver) {
-    boxObserver.observe(hostEl);
-    for (const s of states) boxObserver.observe(s.sprite.element);
+  function resolveNatural(state: SpriteState): void {
+    const el = state.sprite.element as HTMLImageElement;
+    if (state.isImg && el.naturalWidth) {
+      state.natural = { w: el.naturalWidth, h: el.naturalHeight };
+      queueSync();
+      return;
+    }
+    const probe = new Image();
+    probe.onload = () => {
+      state.natural = { w: probe.naturalWidth || 1, h: probe.naturalHeight || 1 };
+      queueSync();
+    };
+    probe.src = state.url;
   }
-  // A `css`-fit sprite's UV window comes from its computed background, and the
-  // menu swaps `background-position` by toggling a class on an ANCESTOR
-  // (`.quake-main-menu-item-active`). Watch class changes across the host so the
-  // highlighted frame actually follows the selection.
-  const classObserver = states.some((s) => s.sprite.fit === "css") && typeof MutationObserver !== "undefined"
-    ? new MutationObserver(() => sync())
+
+  const onResize = () => sync(true);
+  window.addEventListener("resize", onResize);
+  const boxObserver = typeof ResizeObserver !== "undefined" ? new ResizeObserver(() => queueSync()) : null;
+  boxObserver?.observe(hostEl);
+
+  // One observer, two jobs: adopt sprites created after startup, and follow the
+  // class toggle that swaps a menu label between its normal and highlighted
+  // frames. Scoped to the HOST, not `document.body` — the game toggles classes on
+  // body constantly during play, and every one of those was costing a full
+  // rescan plus a rebuild of every sprite's geometry. Measured: 120fps -> 14fps.
+  //
+  // `class`/`childList` only, never `style`: sync() writes inline styles inside
+  // this subtree, so watching them would retrigger itself forever.
+  const domObserver = typeof MutationObserver !== "undefined"
+    ? new MutationObserver((records) => {
+        // Adoption only matters when nodes were actually ADDED; a class flip on
+        // an existing element cannot introduce a new sprite.
+        if (records.some((r) => r.addedNodes.length > 0)) rescan();
+        queueSync();
+      })
     : null;
-  classObserver?.observe(hostEl, { subtree: true, attributes: true, attributeFilter: ["class"] });
-  requestAnimationFrame(sync);
+  domObserver?.observe(hostEl, {
+    subtree: true, childList: true, attributes: true, attributeFilter: ["class"],
+  });
+
+  rescan();
+  queueSync();
 
   return {
     element: surface,
@@ -271,11 +365,12 @@ export function createQuakeGlyphUiOverlay(
     dispose(): void {
       window.removeEventListener("resize", onResize);
       boxObserver?.disconnect();
-      classObserver?.disconnect();
-      mesh?.dispose();
+      domObserver?.disconnect();
+      for (const m of meshes.values()) m.dispose();
+      meshes.clear();
       scene.destroy();
       surface.remove();
-      for (const s of states) {
+      for (const s of states.values()) {
         if (s.isImg) s.sprite.element.style.visibility = "";
         else s.sprite.element.style.backgroundImage = "";
       }

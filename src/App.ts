@@ -32,7 +32,7 @@ import type {
 import { QUAKE_PLAYER_WEAPON_FIRE_FACTS } from "./generated/quakeProgramFacts";
 import { createQuakeSoundController, type QuakeSoundEvent } from "./runtime/audio";
 import { QUAKE_ALIAS_MODEL_RENDER_YAW_OFFSET } from "./runtime/aliasModelOrientation";
-import { mountQuakeBitmapText } from "./runtime/bitmapText";
+import { mountQuakeBitmapText, setQuakeBitmapTextAsCharacters } from "./runtime/bitmapText";
 import {
   QUAKE_COLLISION_UNIT_SCALE,
   QUAKE_PLAYER_MINS_Z,
@@ -75,6 +75,7 @@ import {
 import {
   QUAKE_LOADING_CONSOLE_PAK_LINE,
   type QuakeLoadingProgressTracker,
+  setQuakeLoadingRendererLine,
 } from "./runtime/loadingConsole";
 import { createQuakeAppRuntimeContext } from "./runtime/app/context";
 import {
@@ -857,6 +858,10 @@ const QUAKE_MONSTER_RUNTIME_ENABLED = true;
 const QUAKE_MONSTER_MOUNT_VIEW_DOT_MIN = -0.1;
 const quakeStartupUrlParams = new URLSearchParams(window.location.search);
 const quakeRenderMode = resolveQuakeRenderMode();
+// The ASCII backend draws bitmap text as real characters rather than conchars
+// sprite slices — set before any bitmap text is built.
+setQuakeBitmapTextAsCharacters(quakeRenderMode === "glyphcss");
+setQuakeLoadingRendererLine(quakeRenderMode);
 const quakeDebugMonsterMotionMaterial = quakeDebugMonsterMotionMaterialPolicy(quakeStartupUrlParams);
 const quakeDebugMonsterPlayerClearance = quakeDebugMonsterPlayerClearancePolicy(quakeStartupUrlParams);
 const quakeDebugMonsterCameraStandoff = quakeDebugMonsterCameraStandoffPolicy(quakeStartupUrlParams);
@@ -1526,14 +1531,6 @@ const quakeGlyphOverlay: QuakeGlyphWorldOverlay | null =
 if (quakeRenderMode === "glyphcss" && quakeStartupUrlParams.get("glyphImage") !== "0") {
   const uiHost = document.getElementById("quake-loading-overlay");
   if (uiHost) {
-    const sprite = (selector: string, layer: number, fit?: "cover" | "contain" | "css") => {
-      const el = document.querySelector(selector);
-      return el instanceof HTMLElement ? [{ element: el, layer, fit }] : [];
-    };
-    const sprites = (selector: string, layer: number, fit?: "cover" | "contain" | "css") =>
-      [...document.querySelectorAll(selector)]
-        .filter((el): el is HTMLElement => el instanceof HTMLElement)
-        .map((element) => ({ element, layer, fit }));
     createQuakeGlyphUiOverlay({
       host: uiHost,
       maxCells: quakeUrlNumberParam(quakeStartupUrlParams, "glyphImageCells", 2000, 120_000) ?? undefined,
@@ -1541,15 +1538,18 @@ if (quakeRenderMode === "glyphcss" && quakeStartupUrlParams.get("glyphImage") !=
       glyphPalette: quakeStartupUrlParams.get("glyphImagePalette") ?? undefined,
       sprites: [
         // Layer 0 is the backdrop; everything else composites in front of it.
-        ...sprite("#quake-loading-overlay", 0, "cover"),
-        ...sprite("#quake-main-menu-plaque", 1),
-        ...sprite("#quake-main-menu-title", 1),
-        ...sprite("#quake-classic-hud-image", 2),
-        // Menu labels are two-frame sprite sheets whose visible frame is chosen
-        // by `background-position`, so they need the CSS-accurate UV mapping.
-        ...sprites(".quake-main-menu-label", 2, "css"),
-        ...sprites(".quake-main-menu-item-cursor", 3, "css"),
-        ...sprites(".quake-menu-panel-title img", 2),
+        { selector: "#quake-loading-overlay", layer: 0, fit: "cover" },
+        // Small art gets its own higher-density detail layer rather than paying
+        // for a finer SHARED grid, which would mostly buy backdrop cells.
+        { selector: "#quake-main-menu-plaque", layer: 1, density: 4 },
+        { selector: "#quake-main-menu-title", layer: 1, density: 4 },
+        { selector: "#quake-classic-hud-image", layer: 2, density: 4 },
+        { selector: ".quake-menu-panel-title img", layer: 2, density: 4 },
+        // Sprite SHEETS — the visible frame is chosen by `background-position`,
+        // so these need the CSS-accurate UV mapping rather than a plain fit.
+        { selector: ".quake-main-menu-label", layer: 2, fit: "css", density: 4 },
+        { selector: ".quake-main-menu-item-cursor", layer: 3, fit: "css", density: 4 },
+        { selector: "img.asciiquake-logo", layer: 3, density: 3 },
       ],
     });
   }

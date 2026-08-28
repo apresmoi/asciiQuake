@@ -91,6 +91,13 @@ function createQuakeBitmapText(
   return container;
 }
 
+/** Set by the app when the ASCII backend is active. */
+let quakeBitmapTextRendersAsCharacters = false;
+
+export function setQuakeBitmapTextAsCharacters(enabled: boolean): void {
+  quakeBitmapTextRendersAsCharacters = enabled;
+}
+
 function createQuakeBitmapWord(text: string, alt: boolean): HTMLElement {
   const wordElement = document.createElement("span");
   wordElement.className = "quake-bitmap-word";
@@ -98,7 +105,29 @@ function createQuakeBitmapWord(text: string, alt: boolean): HTMLElement {
   return wordElement;
 }
 
+/**
+ * Render bitmap text as real characters rather than sprite-sheet slices.
+ *
+ * The ASCII backend turns the rest of the UI's art into glyphs, and this text is
+ * the one thing that was already characters before it was ever an image —
+ * `char.charCodeAt(0)` picks the cell, so the letter is the input. Reconstructing
+ * a letter out of an image of that letter costs one element and one texture
+ * window PER CHARACTER (808 of them on the menu screen), and at the shared grid's
+ * cell size each 16x16 source glyph lands on ~2x3 cells, so it comes out as
+ * unreadable blocks. Emitting the character directly is sharper AND free.
+ *
+ * `alt` is Quake's high-bit "brown" variant of the same glyph, so it stays a
+ * styling hook rather than a different character.
+ */
+function createQuakeBitmapGlyphAsText(char: string, alt: boolean): HTMLElement {
+  const element = document.createElement("span");
+  element.className = alt ? "quake-bitmap-char quake-bitmap-char-alt" : "quake-bitmap-char";
+  element.textContent = char;
+  return element;
+}
+
 function createQuakeBitmapGlyph(char: string, alt: boolean): HTMLElement {
+  if (quakeBitmapTextRendersAsCharacters) return createQuakeBitmapGlyphAsText(char, alt);
   const glyph = (char.charCodeAt(0) & 127) + (alt ? 128 : 0);
   const col = glyph & 15;
   const row = glyph >> 4;

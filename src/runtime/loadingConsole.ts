@@ -4,13 +4,23 @@ export const QUAKE_ASSETS_REGENERATING_ACTION =
 export const QUAKE_LOADING_CONSOLE_PAK_LINE = "Assets from id1/pak0.pak";
 
 declare const __POLYCSS_VERSION__: string;
+declare const __GLYPHCSS_VERSION__: string;
 
-const QUAKE_LOADING_CONSOLE_BOOT_LINES = [
+/** Set by the app once the render backend is resolved. */
+let quakeLoadingRendererLine = `Using PolyCSS renderer v${__POLYCSS_VERSION__}`;
+
+export function setQuakeLoadingRendererLine(mode: "polycss" | "glyphcss"): void {
+  quakeLoadingRendererLine = mode === "glyphcss"
+    ? `Using GlyphCSS renderer v${__GLYPHCSS_VERSION__}`
+    : `Using PolyCSS renderer v${__POLYCSS_VERSION__}`;
+}
+
+const quakeLoadingConsoleBootLines = (): readonly string[] => [
   "Quake (C) 1996 id Software, Inc.",
   "Shareware version 1.06",
-  `Using PolyCSS renderer v${__POLYCSS_VERSION__}`,
+  quakeLoadingRendererLine,
   "Host_Init",
-] as const;
+];
 const QUAKE_LOADING_CONSOLE_LINE_DELAY_MS = 55;
 const QUAKE_LOADING_CONSOLE_LINE_DELAYS_MS = [38, 104, 26, 78, 33, 118, 24, 69] as const;
 const QUAKE_LOADING_CONSOLE_MAX_LINES = 28;
@@ -124,7 +134,7 @@ export function createQuakeLoadingConsole(options: QuakeLoadingConsoleOptions): 
     currentStatus = "";
     render();
     if (!options.hasCurrentResult() && status === "Loading") {
-      for (const line of QUAKE_LOADING_CONSOLE_BOOT_LINES) {
+      for (const line of quakeLoadingConsoleBootLines()) {
         queueLine(line);
       }
     }
