@@ -2848,21 +2848,23 @@ body.quake-menu-open .dn-stats-overlay {
 .quake-glyph-render #quake-about-back::before,
 .quake-glyph-render #quake-multiplayer-field::before,
 .quake-glyph-render #quake-multiplayer-create::before,
-.quake-glyph-render #quake-multiplayer-back::before,
-/* The menu labels paint their art on the ELEMENT, not a pseudo, so they were
-   missed by the ::before list above and flashed as PNGs on the very first
-   painted frame — measured: visible at 60ms, gone by 200ms once JS adopted
-   them. Suppressing them here closes that window. */
-.quake-glyph-render .quake-main-menu-label,
-.quake-glyph-render .quake-single-player-label,
-.quake-glyph-render .quake-intermission-label-art,
-.quake-glyph-render .quake-multiplayer-field-label {
+.quake-glyph-render #quake-multiplayer-back::before {
   background-image: none !important;
 }
 .quake-glyph-render #quake-main-menu-plaque,
 .quake-glyph-render #quake-main-menu-title,
 .quake-glyph-render #quake-classic-hud-image,
 .quake-glyph-render .quake-menu-panel-title img,
-.quake-glyph-render img.asciiquake-logo {
+.quake-glyph-render img.asciiquake-logo,
+/* The menu labels paint their art on the ELEMENT, not a `::before`, so they
+   were missed by the list above and flashed as PNGs on the first painted frame
+   (measured: visible at 60ms, gone by 200ms once JS adopted them). They must be
+   hidden with `visibility`, NOT `background-image: none` — the overlay reads
+   each sprite's texture URL out of the computed `background-image`, so blanking
+   it here removed the art entirely and the landing menu rendered nothing. */
+.quake-glyph-render .quake-main-menu-label,
+.quake-glyph-render .quake-single-player-label,
+.quake-glyph-render .quake-intermission-label-art,
+.quake-glyph-render .quake-multiplayer-field-label {
   visibility: hidden;
 }
