@@ -29,6 +29,8 @@ export interface QuakeGlyphUiSprite {
   readonly density?: number;
   /** Split the art into one quad per connected opaque region — see the rule. */
   readonly segment?: boolean;
+  /** Per-sprite brightness, 0..1 — see {@link QuakeGlyphUiSpriteRule.brightness}. */
+  readonly brightness?: number;
   /**
    * How the art maps into the box.
    * - `contain` — whole image, its own aspect (an `<img>`).
@@ -71,6 +73,17 @@ export interface QuakeGlyphUiSpriteRule {
    * is blanked and the backdrop shows through everywhere between them.
    */
   readonly segment?: boolean;
+  /**
+   * Brightness for this sprite, 0..1 (default 1 = the source as authored).
+   *
+   * The rasterizer multiplies each sampled texel by the polygon's flat colour
+   * (`texel x base / 255`), so a grey base dims the art — and because texel
+   * luminance also folds into the GLYPH choice, dimming pushes a cell down the
+   * intensity ramp to a sparser character, not just a darker one. That is what
+   * buys contrast here: the backdrop drops to faint punctuation while the art on
+   * top keeps dense glyphs, instead of both sitting in the same mid range.
+   */
+  readonly brightness?: number;
 }
 
 export interface QuakeGlyphUiOverlayOptions {
@@ -86,6 +99,15 @@ export interface QuakeGlyphUiOverlayOptions {
   readonly maxCells?: number;
   /** Smallest cell in px. The floor on how fine the art can get. */
   readonly minCellPx?: number;
+  /**
+   * Scene ambient intensity — the headroom every sprite's `brightness` scales
+   * DOWN from. Above 1 it lifts the art past the source's own luminance, which
+   * Quake's menu art needs: it is dark bronze on near-black, and at ambient 1 the
+   * whole screen sits in the ramp's sparse low end with nothing to separate art
+   * from backdrop. Raising this and dimming the backdrop is what creates the
+   * contrast; brightness alone cannot, because a tint can only attenuate.
+   */
+  readonly ambient?: number;
   readonly glyphPalette?: string;
 }
 
@@ -218,7 +240,10 @@ export function createQuakeGlyphUiOverlay(
     const url = readUrl(el, isImg);
     if (!url) return;
     states.set(el, {
-      sprite: { element: el, layer: rule.layer, fit: rule.fit, density: rule.density, segment: rule.segment },
+      sprite: {
+        element: el, layer: rule.layer, fit: rule.fit,
+        density: rule.density, segment: rule.segment, brightness: rule.brightness,
+      },
       isImg, url, natural: null, regions: null,
     });
     if (isImg) el.style.visibility = "hidden";
@@ -229,9 +254,15 @@ export function createQuakeGlyphUiOverlay(
 
   function rescan(): void {
     for (const rule of options.sprites) {
-      for (const node of document.querySelectorAll(rule.selector)) {
-        if (node instanceof HTMLElement) adopt(node, rule);
+      let nodes: NodeListOf<Element>;
+      try {
+        nodes = document.querySelectorAll(rule.selector);
+      } catch {
+        // An unselectable rule (a pseudo-element, a typo) must not take the whole
+        // scan down with it — every other sprite would silently stop converting.
+        continue;
       }
+      for (const node of nodes) if (node instanceof HTMLElement) adopt(node, rule);
     }
   }
 
@@ -254,7 +285,7 @@ export function createQuakeGlyphUiOverlay(
     camera,
     // Flat art: the glyph must track texel luminance, not a light rig.
     directionalLight: { direction: [0, 0, 1], intensity: 0 },
-    ambientLight: { intensity: 1 },
+    ambientLight: { intensity: Math.max(0, options.ambient ?? 1.4) },
   });
 
   const meshes = new Map<number, { setPolygons(p: Polygon[]): void; dispose(): void }>();
@@ -320,6 +351,9 @@ export function createQuakeGlyphUiOverlay(
         }
       }
 
+      const level = Math.max(0, Math.min(1, s.sprite.brightness ?? 1));
+      const channel = Math.round(255 * level).toString(16).padStart(2, "0");
+      const tint = `#${channel}${channel}${channel}`;
       const bucket = Math.max(1, Math.round(s.sprite.density ?? 1));
       const target = groups.get(bucket) ?? groups.set(bucket, []).get(bucket)!;
 
@@ -345,7 +379,7 @@ export function createQuakeGlyphUiOverlay(
             vertices: [[rx0, ry0, z], [rx0, ry1, z], [rx1, ry1, z], [rx1, ry0, z]],
             texture: s.url,
             uvs: [[ru0, rvTop], [ru1, rvTop], [ru1, rvBot], [ru0, rvBot]],
-            color: "#ffffff",
+            color: tint,
           } as unknown as Polygon);
         }
         continue;
@@ -355,12 +389,8 @@ export function createQuakeGlyphUiOverlay(
         vertices: [[x0, y0, z], [x0, y1, z], [x1, y1, z], [x1, y0, z]],
         texture: s.url,
         uvs: [[u0, v1], [u1, v1], [u1, v0], [u0, v0]],
-        // Flat fallback for texels the sampler cannot resolve. White is a
-        // deliberate choice over black: it makes an unsampled quad OBVIOUS
-        // rather than invisible against this dark UI. It is also why a sprite's
-        // transparent margin currently paints as a light block — see the
-        // transparency note on this module.
-        color: "#ffffff",
+        // Doubles as this sprite's brightness tint — see `brightness` on the rule.
+        color: tint,
       } as unknown as Polygon);
     }
     return groups;
@@ -375,12 +405,25 @@ export function createQuakeGlyphUiOverlay(
    */
   const REBUILD_INTERVAL_MS = 100;
   let lastBuildAt = 0;
+  let trailingSync: ReturnType<typeof setTimeout> | null = null;
 
   function sync(force = false): void {
     const hostBox = hostEl.getBoundingClientRect();
     if (!hostBox.width || !hostBox.height) return;
     const now = performance.now();
-    if (!force && !adoptedSinceDraw && now - lastBuildAt < REBUILD_INTERVAL_MS) return;
+    if (!force && !adoptedSinceDraw && now - lastBuildAt < REBUILD_INTERVAL_MS) {
+      // DEFER, never drop. Returning here lost the update entirely: hovering a
+      // menu item changes its `background-position` to the highlighted frame,
+      // and if that sync landed inside the throttle window the new frame was
+      // never drawn — the selection appeared frozen even though the DOM had
+      // already moved.
+      if (!trailingSync) {
+        trailingSync = setTimeout(() => { trailingSync = null; sync(); },
+                                  REBUILD_INTERVAL_MS - (now - lastBuildAt));
+      }
+      return;
+    }
+    if (trailingSync) { clearTimeout(trailingSync); trailingSync = null; }
     lastBuildAt = now;
 
     // Cell grows until the grid fits the budget: cells = area / (aspect * px^2).
@@ -485,18 +528,43 @@ export function createQuakeGlyphUiOverlay(
         queueSync();
       })
     : null;
-  domObserver?.observe(hostEl, {
-    subtree: true, childList: true, attributes: true, attributeFilter: ["class"],
-  });
+  // childList only, and on body because sprites are built all over the page.
+  // Attributes are deliberately NOT watched: the game toggles classes constantly
+  // during play, and observing them body-wide cost more than the render did
+  // (measured: 120fps -> 7fps).
+  domObserver?.observe(document.body, { subtree: true, childList: true });
+
+  // A `css`-fit sprite's visible frame comes from its live `background-position`
+  // — the menu selection moves by toggling a class on an ANCESTOR, which no
+  // affordable observer scope catches (the menu lives under `#quake-menu`, not
+  // under this overlay's host). Poll just those few elements instead: it is a
+  // handful of `getComputedStyle` reads, versus a body-wide attribute observer.
+  let frameWatch: ReturnType<typeof setInterval> | null = null;
+  let lastFrames = "";
+  function watchSheetFrames(): void {
+    let signature = "";
+    for (const st of states.values()) {
+      if (st.sprite.fit !== "css") continue;
+      const cs = getComputedStyle(st.sprite.element);
+      signature += cs.backgroundPosition + "|" + cs.backgroundSize + ";";
+    }
+    if (signature === lastFrames) return;
+    lastFrames = signature;
+    sync(true);
+  }
+  frameWatch = setInterval(watchSheetFrames, 100);
 
   rescan();
   queueSync();
+
 
   return {
     element: surface,
     sync,
     dispose(): void {
       window.removeEventListener("resize", onResize);
+      if (frameWatch) clearInterval(frameWatch);
+      if (trailingSync) clearTimeout(trailingSync);
       boxObserver?.disconnect();
       domObserver?.disconnect();
       for (const m of meshes.values()) m.dispose();

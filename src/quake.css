@@ -1303,10 +1303,13 @@ body.quake-menu-open:not(.quake-gameplay-started) .quake-menu-panel {
   line-height: var(--quake-bitmap-glyph-size);
   text-align: center;
   text-transform: uppercase;
-  color: #f6f1df;
+  /* Dimmer than the sprite text it replaces: a solid character inks far more of
+     its cell than Quake's thin bitmap glyph did, so matching the old colour read
+     as glaring next to the ASCII art around it. */
+  color: #9c968a;
 }
 .quake-bitmap-char-alt {
-  color: #d0a070;
+  color: #9a7550;
 }
 .quake-bitmap-col-0 {
   background-position-x: 0;

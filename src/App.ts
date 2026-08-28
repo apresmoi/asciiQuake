@@ -1536,9 +1536,10 @@ if (quakeRenderMode === "glyphcss" && quakeStartupUrlParams.get("glyphImage") !=
       maxCells: quakeUrlNumberParam(quakeStartupUrlParams, "glyphImageCells", 2000, 120_000) ?? undefined,
       minCellPx: quakeUrlNumberParam(quakeStartupUrlParams, "glyphImageCell", 2, 24) ?? undefined,
       glyphPalette: quakeStartupUrlParams.get("glyphImagePalette") ?? undefined,
+      ambient: quakeUrlNumberParam(quakeStartupUrlParams, "glyphImageAmbient", 0.2, 6) ?? undefined,
       sprites: [
         // Layer 0 is the backdrop; everything else composites in front of it.
-        { selector: "#quake-loading-overlay", layer: 0, fit: "cover" },
+        { selector: "#quake-loading-overlay", layer: 0, fit: "cover", brightness: quakeUrlNumberParam(quakeStartupUrlParams, "glyphImageBackdrop", 0, 1) ?? 0.45 },
         // `?glyphImageDensity=` puts small art in its own higher-density detail
         // layer. OFF by default (1): a detail layer blanks every base cell under
         // its box (glyphcss's occlusion id-map, see its AGENTS.md), so a sprite
@@ -1553,6 +1554,10 @@ if (quakeRenderMode === "glyphcss" && quakeStartupUrlParams.get("glyphImage") !=
         // so these need the CSS-accurate UV mapping rather than a plain fit.
         { selector: ".quake-main-menu-label", layer: 2, fit: "css", density: quakeUrlNumberParam(quakeStartupUrlParams, "glyphImageDensity", 1, 8) ?? 4 },
         { selector: ".quake-main-menu-item-cursor", layer: 3, fit: "css", density: quakeUrlNumberParam(quakeStartupUrlParams, "glyphImageDensity", 1, 8) ?? 4 },
+        // Remaining menu screens. Pseudo-element art (`::before` plaques) cannot
+        // be selected or measured, so it stays CSS — only real elements convert.
+        { selector: ".quake-menu-panel-header img", layer: 2 },
+        { selector: ".quake-intermission-value-glyph", layer: 2, fit: "css" },
         { selector: "img.asciiquake-logo", layer: 3, density: quakeUrlNumberParam(quakeStartupUrlParams, "glyphImageDensity", 1, 8) ?? 4 },
       ],
     });
