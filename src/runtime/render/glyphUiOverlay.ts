@@ -267,6 +267,7 @@ export function createQuakeGlyphUiOverlay(
   const minCellPx = Math.max(2, options.minCellPx ?? DEFAULT_MIN_CELL_PX);
 
   function readUrl(el: HTMLElement, isImg: boolean, declared?: string): string {
+    if (el.dataset.glyphTexture) return el.dataset.glyphTexture;
     if (declared) return declared;
     if (isImg) return (el as HTMLImageElement).currentSrc || (el as HTMLImageElement).src;
     const bg = getComputedStyle(el).backgroundImage;
@@ -309,21 +310,26 @@ export function createQuakeGlyphUiOverlay(
         // The suppressing CSS blanks `background-image`, so fall back to the
         // rule's declared texture rather than skipping the element.
         const declared = options.pseudoTextures?.[selector];
-        const bg = cs.backgroundImage !== "none" && !cs.backgroundImage.includes("gradient")
-          ? cs.backgroundImage
-          : declared ? `url("${declared}")` : "";
-        if (!bg) continue;
+        const fromCss = cs.backgroundImage !== "none" && !cs.backgroundImage.includes("gradient")
+          ? /url\((["']?)(.*?)\1\)/.exec(cs.backgroundImage)?.[2]
+          : undefined;
+        const url = fromCss ?? declared;
+        if (!url) continue;
         const stand = document.createElement("span");
         stand.className = "quake-glyph-pseudo";
-        // Mirror the pseudo's own box and painting so the stand-in sits exactly
-        // where it did; the sprite rule then measures it like any element.
+        // GEOMETRY ONLY — deliberately no `background-image`. The stand-in is a
+        // real element, so any background it carries PAINTS as HTML until the
+        // overlay adopts it (a visible flash), and a pseudo's own
+        // `background-size` (the cursor's is `600% 100%`) renders wildly
+        // oversized at the stand-in's box. The texture rides along as data and
+        // is read by `readUrl`, so this element never paints anything.
+        stand.dataset.glyphTexture = url;
+        stand.dataset.glyphBgSize = cs.backgroundSize;
+        stand.dataset.glyphBgPos = cs.backgroundPosition;
         stand.style.cssText = [
           "position:absolute", `top:${cs.top}`, `left:${cs.left}`,
           `width:${cs.width}`, `height:${cs.height}`,
-          `background-image:${bg}`, `background-size:${cs.backgroundSize}`,
-          `background-position:${cs.backgroundPosition}`,
-          `background-repeat:${cs.backgroundRepeat}`,
-          "pointer-events:none", "z-index:-1",
+          "pointer-events:none", "background:none",
         ].join(";");
         node.appendChild(stand);
       }
@@ -447,7 +453,13 @@ export function createQuakeGlyphUiOverlay(
         // actually uses are handled — a percentage/`auto` size plus a
         // percentage position — and anything else falls through to `cover`.
         const cs = getComputedStyle(s.sprite.element);
-        const [sizeW, sizeH] = cs.backgroundSize.split(" ");
+        // A materialized pseudo carries its sheet window as data: its own
+        // computed background is deliberately empty so the stand-in can never
+        // paint as HTML.
+        const ds = s.sprite.element.dataset;
+        const bgSize = ds.glyphBgSize ?? cs.backgroundSize;
+        const bgPos = ds.glyphBgPos ?? cs.backgroundPosition;
+        const [sizeW, sizeH] = bgSize.split(" ");
         const scale = sizeW.endsWith("%")
           ? (box.width * (parseFloat(sizeW) / 100)) / s.natural.w
           : sizeW.endsWith("px")
@@ -460,7 +472,7 @@ export function createQuakeGlyphUiOverlay(
         const fv = Math.min(1, box.height / drawnH);
         // `background-position` percentage aligns the leftover, not the origin:
         // 0% pins the top/left, 100% the bottom/right.
-        const [posX, posY] = cs.backgroundPosition.split(" ");
+        const [posX, posY] = bgPos.split(" ");
         const px = posX?.endsWith("%") ? parseFloat(posX) / 100 : 0;
         const py = posY?.endsWith("%") ? parseFloat(posY) / 100 : 0;
         u0 = (1 - fu) * px; u1 = u0 + fu;
