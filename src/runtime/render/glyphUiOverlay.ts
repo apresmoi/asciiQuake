@@ -27,6 +27,8 @@ export interface QuakeGlyphUiSprite {
   readonly layer?: number;
   /** Detail-layer multiplier — see {@link QuakeGlyphUiSpriteRule.density}. */
   readonly density?: number;
+  /** Explicit texture URL — see {@link QuakeGlyphUiSpriteRule.texture}. */
+  readonly texture?: string;
   /** Split the art into one quad per connected opaque region — see the rule. */
   readonly segment?: boolean;
   /** Per-sprite brightness, 0..1 — see {@link QuakeGlyphUiSpriteRule.brightness}. */
@@ -111,6 +113,26 @@ export interface QuakeGlyphUiOverlayOptions {
   readonly glyphPalette?: string;
   /** Final-string encode strategy. Defaults to `atlas`, as the world does. */
   readonly colorEncoding?: "atlas" | "spans";
+  /**
+   * Selectors whose `::before` art is MATERIALIZED into a real element so it can
+   * be converted. A pseudo-element cannot be selected or measured —
+   * `querySelectorAll` never returns it and it has no `getBoundingClientRect` —
+   * so the overlay is blind to it and it keeps painting as HTML. The panel
+   * plaque and every menu button's selection cursor are authored this way.
+   */
+  readonly pseudoSelectors?: readonly string[];
+  /**
+   * Texture URL for a rule, when the element's own `background-image` cannot be
+   * read.
+   *
+   * The CSS that stops the HTML art painting (needed pre-paint, or the PNG
+   * flashes before the overlay mounts) sets `background-image: none`, which is
+   * also where the overlay would otherwise LEARN the texture — blanking it made
+   * the backdrop and plaque render as empty black. Declaring the URL here breaks
+   * that circular dependency: CSS can suppress the paint from the first frame
+   * while the overlay still knows what to draw.
+   */
+  readonly texture?: string;
   /**
    * Selectors for DOM text that should be STAMPED INTO the glyph grid instead of
    * being painted by the browser.
@@ -244,7 +266,8 @@ export function createQuakeGlyphUiOverlay(
   const maxCells = Math.max(256, options.maxCells ?? DEFAULT_MAX_CELLS);
   const minCellPx = Math.max(2, options.minCellPx ?? DEFAULT_MIN_CELL_PX);
 
-  function readUrl(el: HTMLElement, isImg: boolean): string {
+  function readUrl(el: HTMLElement, isImg: boolean, declared?: string): string {
+    if (declared) return declared;
     if (isImg) return (el as HTMLImageElement).currentSrc || (el as HTMLImageElement).src;
     const bg = getComputedStyle(el).backgroundImage;
     return /url\((["']?)(.*?)\1\)/.exec(bg)?.[2] ?? "";
@@ -259,11 +282,11 @@ export function createQuakeGlyphUiOverlay(
   function adopt(el: HTMLElement, rule: QuakeGlyphUiSpriteRule): void {
     if (states.has(el)) return;
     const isImg = el instanceof HTMLImageElement;
-    const url = readUrl(el, isImg);
+    const url = readUrl(el, isImg, rule.texture);
     if (!url) return;
     states.set(el, {
       sprite: {
-        element: el, layer: rule.layer, fit: rule.fit,
+        element: el, layer: rule.layer, fit: rule.fit, texture: rule.texture,
         density: rule.density, segment: rule.segment, brightness: rule.brightness,
       },
       isImg, url, natural: null, regions: null,
@@ -274,7 +297,41 @@ export function createQuakeGlyphUiOverlay(
     resolveNatural(states.get(el)!);
   }
 
+  /** Copy `::before` art onto a real child so a sprite rule can pick it up. */
+  function materializePseudo(): void {
+    for (const selector of options.pseudoSelectors ?? []) {
+      let nodes: NodeListOf<Element>;
+      try { nodes = document.querySelectorAll(selector); } catch { continue; }
+      for (const node of nodes) {
+        if (!(node instanceof HTMLElement)) continue;
+        if (node.querySelector(":scope > .quake-glyph-pseudo")) continue;
+        const cs = getComputedStyle(node, "::before");
+        // The suppressing CSS blanks `background-image`, so fall back to the
+        // rule's declared texture rather than skipping the element.
+        const declared = options.pseudoTextures?.[selector];
+        const bg = cs.backgroundImage !== "none" && !cs.backgroundImage.includes("gradient")
+          ? cs.backgroundImage
+          : declared ? `url("${declared}")` : "";
+        if (!bg) continue;
+        const stand = document.createElement("span");
+        stand.className = "quake-glyph-pseudo";
+        // Mirror the pseudo's own box and painting so the stand-in sits exactly
+        // where it did; the sprite rule then measures it like any element.
+        stand.style.cssText = [
+          "position:absolute", `top:${cs.top}`, `left:${cs.left}`,
+          `width:${cs.width}`, `height:${cs.height}`,
+          `background-image:${bg}`, `background-size:${cs.backgroundSize}`,
+          `background-position:${cs.backgroundPosition}`,
+          `background-repeat:${cs.backgroundRepeat}`,
+          "pointer-events:none", "z-index:-1",
+        ].join(";");
+        node.appendChild(stand);
+      }
+    }
+  }
+
   function rescan(): void {
+    materializePseudo();
     for (const rule of options.sprites) {
       let nodes: NodeListOf<Element>;
       try {

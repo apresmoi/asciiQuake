@@ -1538,10 +1538,33 @@ if (quakeRenderMode === "glyphcss" && quakeStartupUrlParams.get("glyphImage") !=
       glyphPalette: quakeStartupUrlParams.get("glyphImagePalette") ?? undefined,
       ambient: quakeUrlNumberParam(quakeStartupUrlParams, "glyphImageAmbient", 0.2, 6) ?? undefined,
       colorEncoding: quakeStartupUrlParams.get("glyphImageEncoding") === "spans" ? "spans" : "atlas",
+      // Art authored as `::before` — the panel plaque (on every page) and each
+      // button's selection cursor. Materialized into real elements to convert.
+      // The suppressing CSS blanks these before the overlay can read them.
+      pseudoTextures: {
+        ".quake-menu-card": "/q/main-menu-plaque.png",
+        "#quake-debug-card": "/q/main-menu-plaque.png",
+        ".quake-single-player-button": "/q/main-menu-cursor.png",
+        ".quake-option-toggle": "/q/main-menu-cursor.png",
+        ".quake-option-crosshair": "/q/main-menu-cursor.png",
+        ".quake-option-glyph-detail": "/q/main-menu-cursor.png",
+        ".quake-option-glyph-palette": "/q/main-menu-cursor.png",
+        "#quake-options-back": "/q/main-menu-cursor.png",
+        "#quake-about-back": "/q/main-menu-cursor.png",
+        "#quake-multiplayer-field": "/q/main-menu-cursor.png",
+        "#quake-multiplayer-create": "/q/main-menu-cursor.png",
+        "#quake-multiplayer-back": "/q/main-menu-cursor.png",
+      },
+      pseudoSelectors: [
+        ".quake-menu-card", "#quake-debug-card", ".quake-single-player-button",
+        ".quake-option-toggle", ".quake-option-crosshair", ".quake-option-glyph-detail",
+        ".quake-option-glyph-palette", "#quake-options-back", "#quake-about-back",
+        "#quake-multiplayer-field", "#quake-multiplayer-create", "#quake-multiplayer-back",
+      ],
       // Words go INTO the grid, not on top of it — the last step to a single <pre>.
       sprites: [
         // Layer 0 is the backdrop; everything else composites in front of it.
-        { selector: "#quake-loading-overlay", layer: 0, fit: "cover", brightness: quakeUrlNumberParam(quakeStartupUrlParams, "glyphImageBackdrop", 0, 1) ?? 0.45 },
+        { selector: "#quake-loading-overlay", layer: 0, fit: "cover", texture: "/q/menu-background.png", brightness: quakeUrlNumberParam(quakeStartupUrlParams, "glyphImageBackdrop", 0, 1) ?? 0.45 },
         // `?glyphImageDensity=` puts small art in its own higher-density detail
         // layer. OFF by default (1): a detail layer blanks every base cell under
         // its box (glyphcss's occlusion id-map, see its AGENTS.md), so a sprite
@@ -1560,6 +1583,7 @@ if (quakeRenderMode === "glyphcss" && quakeStartupUrlParams.get("glyphImage") !=
         // be selected or measured, so it stays CSS — only real elements convert.
         { selector: ".quake-menu-panel-header img", layer: 2 },
         { selector: ".quake-intermission-value-glyph", layer: 2, fit: "css" },
+        { selector: ".quake-glyph-pseudo", layer: 2, fit: "css", density: quakeUrlNumberParam(quakeStartupUrlParams, "glyphImageDensity", 1, 8) ?? 4 },
         { selector: "img.asciiquake-logo", layer: 3, density: quakeUrlNumberParam(quakeStartupUrlParams, "glyphImageDensity", 1, 8) ?? 4 },
       ],
     });

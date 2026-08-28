@@ -14,6 +14,23 @@
     <link rel="preload" as="image" href="/src/assets/main-menu-quit-sprite.png" fetchpriority="high" />
     <link rel="preload" as="image" href="/q/conchars.png" />
     <script>
+      // Decide the render backend BEFORE first paint. The ASCII overlay draws all
+      // menu art itself, and the CSS that stops the HTML art painting keys off
+      // this class — setting it later (once the app boots) leaves a window where
+      // the PNGs paint first, seen as the backdrop flashing on every page open.
+      // Mirrors resolveQuakeRenderMode(): URL wins, then the stored preference,
+      // then the default (glyphcss).
+      (function () {
+        try {
+          var fromUrl = new URLSearchParams(window.location.search).get("renderMode");
+          var stored = null;
+          try { stored = window.localStorage.getItem("cssquake.renderMode"); } catch (e) {}
+          var mode = fromUrl || stored || "glyphcss";
+          if (mode === "glyphcss") document.documentElement.classList.add("quake-glyph-render");
+        } catch (e) {}
+      })();
+    </script>
+    <script>
       (function () {
         var GA_ID = "G-XV72TXWTM5";
         var productionHosts = ["asciiquake.wtf", "www.asciiquake.wtf"];

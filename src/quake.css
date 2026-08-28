@@ -970,7 +970,7 @@ body.quake-main-menu-pending #quake-main-menu {
     width: min(860px, calc(100vw - 64px), calc(132dvh - 45px));
   }
 }
-#quake-main-menu-plaque,
+.quake-glyph-render #quake-main-menu-plaque,
 #quake-main-menu-title {
   position: absolute;
   z-index: 2;
@@ -1124,7 +1124,7 @@ body:not(.quake-main-menu-pending) #quake-main-menu-list > .quake-main-menu-item
 .quake-main-menu-item-active .quake-main-menu-label {
   background-position: 0 100%;
 }
-.quake-main-menu-item-cursor {
+.quake-glyph-render .quake-main-menu-item-cursor {
   position: absolute;
   top: 0;
   right: calc(100% + var(--quake-main-menu-cursor-gap));
@@ -1203,7 +1203,7 @@ body.quake-menu-open:not(.quake-gameplay-started) .quake-menu-panel {
     width: min(860px, calc(100vw - 64px), calc(132dvh - 45px));
   }
 }
-.quake-menu-card::before {
+.quake-glyph-render .quake-menu-card::before {
   content: "";
   position: absolute;
   top: 1.25cqw;
@@ -1537,7 +1537,7 @@ body.quake-menu-open:not(.quake-gameplay-started) .quake-menu-panel {
   image-rendering: pixelated;
   pointer-events: none;
 }
-.quake-single-player-button::before {
+.quake-glyph-render .quake-single-player-button::before {
   content: "";
   position: absolute;
   top: 0;
@@ -1612,7 +1612,7 @@ body.quake-menu-open:not(.quake-gameplay-started) .quake-menu-panel {
   min-width: 0;
   color: rgba(246, 241, 223, 0.84);
 }
-.quake-multiplayer-field::before {
+.quake-glyph-render #quake-multiplayer-field::before {
   content: "";
   position: absolute;
   top: 50%;
@@ -2024,7 +2024,7 @@ body.quake-menu-open:not(.quake-gameplay-started) .quake-menu-panel {
 .quake-option-checkbox {
   display: none;
 }
-.quake-option-toggle::before {
+.quake-glyph-render .quake-option-toggle::before {
   content: "";
   position: absolute;
   top: 0;
@@ -2174,7 +2174,7 @@ body.quake-debug-pointer-unlocked #quake-debug-card {
 body.quake-debug-pointer-unlocked #quake-debug-card {
   border-color: rgba(132, 73, 38, 0.82);
 }
-#quake-debug-card::before {
+.quake-glyph-render #quake-debug-card::before {
   content: "";
   position: absolute;
   inset: 0;
@@ -2689,7 +2689,6 @@ body.quake-menu-unlocked #quake-weapon {
 #quake-loading-status::before,
 #quake-main-menu-art,
 .quake-main-menu-label,
-.quake-main-menu-item-cursor,
 .quake-bitmap-glyph,
 #quake-classic-hud,
 .quake-hud-slot,
@@ -2827,4 +2826,35 @@ body.quake-menu-open .dn-stats-overlay {
   100% {
     background-position: calc(-13 * var(--quake-menu-row-text-size)) 0;
   }
+}
+
+
+/* ── ASCII backend: the art is drawn by glyphcss, so the HTML must never paint it
+   ──────────────────────────────────────────────────────────────────────────────
+   Hiding these from JS after the overlay mounts leaves a window where the PNG
+   paints first — visible as the backdrop flashing when a page opens. The class is
+   set before the menu is built, so declaring it here means the browser never
+   paints this art at all; the elements stay in the DOM purely as layout anchors
+   telling the overlay where to draw. */
+.quake-glyph-render #quake-loading-overlay,
+.quake-glyph-render .quake-menu-card::before,
+.quake-glyph-render .quake-single-player-button::before,
+.quake-glyph-render #quake-debug-card::before,
+.quake-glyph-render .quake-option-toggle::before,
+.quake-glyph-render .quake-option-crosshair::before,
+.quake-glyph-render .quake-option-glyph-detail::before,
+.quake-glyph-render .quake-option-glyph-palette::before,
+.quake-glyph-render #quake-options-back::before,
+.quake-glyph-render #quake-about-back::before,
+.quake-glyph-render #quake-multiplayer-field::before,
+.quake-glyph-render #quake-multiplayer-create::before,
+.quake-glyph-render #quake-multiplayer-back::before {
+  background-image: none !important;
+}
+.quake-glyph-render #quake-main-menu-plaque,
+.quake-glyph-render #quake-main-menu-title,
+.quake-glyph-render #quake-classic-hud-image,
+.quake-glyph-render .quake-menu-panel-title img,
+.quake-glyph-render img.asciiquake-logo {
+  visibility: hidden;
 }
