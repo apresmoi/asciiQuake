@@ -420,7 +420,15 @@ export function createQuakeGlyphUiOverlay(
     for (const [density, polys] of groups) {
       const existing = meshes.get(density);
       if (existing) existing.setPolygons(polys);
-      else meshes.set(density, scene.add(polys, density > 1 ? { density } : undefined));
+      else meshes.set(density, scene.add(polys, density > 1
+        // `transparent: true` is what makes density usable here. An OPAQUE detail
+        // layer blanks every base cell under its box via glyphcss's shared
+        // occlusion id-map, so a sprite with a transparent margin punches a hole
+        // through the backdrop. A transparent one does not occlude at all, so the
+        // art composites over the base grid exactly as it does at density 1 —
+        // just sampled finer. (The world overlay uses the same flag for entities.)
+        ? { density, transparent: true }
+        : undefined));
     }
     // A density group can empty out (its sprites' panel closed).
     for (const [density, mesh] of meshes) {
