@@ -27,6 +27,8 @@ export interface QuakeGlyphUiSprite {
   readonly layer?: number;
   /** Detail-layer multiplier — see {@link QuakeGlyphUiSpriteRule.density}. */
   readonly density?: number;
+  /** Split the art into one quad per connected opaque region — see the rule. */
+  readonly segment?: boolean;
   /**
    * How the art maps into the box.
    * - `contain` — whole image, its own aspect (an `<img>`).
@@ -58,6 +60,17 @@ export interface QuakeGlyphUiSpriteRule {
    * separate scene this file replaced.
    */
   readonly density?: number;
+  /**
+   * Split the art into one quad per connected OPAQUE region instead of a single
+   * rectangle, cutting along the transparent pixels.
+   *
+   * This is what makes `density` usable. A detail layer blanks every base cell
+   * under its box, so one quad spanning a whole word punches an opaque rectangle
+   * through the backdrop — the gaps between letters included. Segmenting first
+   * means each letter carries its own tight quad, so only the letter's own box
+   * is blanked and the backdrop shows through everywhere between them.
+   */
+  readonly segment?: boolean;
 }
 
 export interface QuakeGlyphUiOverlayOptions {
@@ -93,11 +106,91 @@ const CELL_ASPECT = 0.606;
  */
 const LAYER_STEP = 0.5;
 
+
+/** Longest edge used when labelling. Bboxes only need to be approximately right,
+ *  and a 1343px logo does not deserve a 350k-pixel flood fill. */
+const SEGMENT_MAX_EDGE = 384;
+/** Alpha at or below which a source pixel counts as empty. */
+const SEGMENT_ALPHA_MIN = 8;
+/** Regions this close (in sample cells) are merged — keeps a dotted letter or an
+ *  accent from splintering into a dozen quads. */
+const SEGMENT_GAP = 1;
+
+/**
+ * Connected opaque regions of an image, as normalized (0..1) UV boxes.
+ *
+ * Two-pass scan with union-find over an 8-connected neighbourhood, dilated by
+ * `SEGMENT_GAP` so a letter's disconnected parts (the dot on an `i`, an antialiased
+ * hairline) stay one region rather than becoming separate quads.
+ */
+function segmentOpaqueRegions(img: HTMLImageElement): { u0: number; v0: number; u1: number; v1: number }[] | null {
+  const nw = img.naturalWidth || img.width;
+  const nh = img.naturalHeight || img.height;
+  if (!nw || !nh) return null;
+  const scale = Math.min(1, SEGMENT_MAX_EDGE / Math.max(nw, nh));
+  const w = Math.max(1, Math.round(nw * scale));
+  const h = Math.max(1, Math.round(nh * scale));
+
+  let data: Uint8ClampedArray;
+  try {
+    const canvas = document.createElement("canvas");
+    canvas.width = w; canvas.height = h;
+    const ctx = canvas.getContext("2d", { willReadFrequently: true });
+    if (!ctx) return null;
+    ctx.drawImage(img, 0, 0, w, h);
+    data = ctx.getImageData(0, 0, w, h).data;
+  } catch {
+    return null;   // tainted canvas — fall back to a single quad
+  }
+
+  const n = w * h;
+  const solid = new Uint8Array(n);
+  for (let i = 0; i < n; i++) solid[i] = data[i * 4 + 3]! > SEGMENT_ALPHA_MIN ? 1 : 0;
+
+  const parent = new Int32Array(n).fill(-1);
+  const find = (a: number): number => { let r = a; while (parent[r]! >= 0) r = parent[r]!; while (parent[a]! >= 0) { const nx = parent[a]!; parent[a] = r; a = nx; } return r; };
+  const union = (a: number, b: number): void => { const ra = find(a), rb = find(b); if (ra !== rb) parent[rb] = ra; };
+
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = y * w + x;
+      if (!solid[i]) continue;
+      for (let dy = -SEGMENT_GAP; dy <= SEGMENT_GAP; dy++) {
+        for (let dx = -SEGMENT_GAP; dx <= SEGMENT_GAP; dx++) {
+          const ny = y + dy, nx = x + dx;
+          if (ny < 0 || nx < 0 || ny >= h || nx >= w) continue;
+          const j = ny * w + nx;
+          if (j < i && solid[j]) union(i, j);
+        }
+      }
+    }
+  }
+
+  const boxes = new Map<number, { x0: number; y0: number; x1: number; y1: number }>();
+  for (let i = 0; i < n; i++) {
+    if (!solid[i]) continue;
+    const r = find(i);
+    const x = i % w, y = (i / w) | 0;
+    const b = boxes.get(r);
+    if (!b) boxes.set(r, { x0: x, y0: y, x1: x, y1: y });
+    else { if (x < b.x0) b.x0 = x; if (y < b.y0) b.y0 = y; if (x > b.x1) b.x1 = x; if (y > b.y1) b.y1 = y; }
+  }
+  if (!boxes.size) return null;
+
+  // Expand by half a sample cell so a region cannot clip its own edge pixels.
+  return [...boxes.values()].map((b) => ({
+    u0: Math.max(0, b.x0 / w), v0: Math.max(0, b.y0 / h),
+    u1: Math.min(1, (b.x1 + 1) / w), v1: Math.min(1, (b.y1 + 1) / h),
+  }));
+}
+
 interface SpriteState {
   readonly sprite: QuakeGlyphUiSprite;
   readonly isImg: boolean;
   readonly url: string;
   natural: { w: number; h: number } | null;
+  /** Connected opaque regions in normalized (0..1) source coordinates. */
+  regions: { u0: number; v0: number; u1: number; v1: number }[] | null;
 }
 
 export function createQuakeGlyphUiOverlay(
@@ -125,8 +218,8 @@ export function createQuakeGlyphUiOverlay(
     const url = readUrl(el, isImg);
     if (!url) return;
     states.set(el, {
-      sprite: { element: el, layer: rule.layer, fit: rule.fit, density: rule.density },
-      isImg, url, natural: null,
+      sprite: { element: el, layer: rule.layer, fit: rule.fit, density: rule.density, segment: rule.segment },
+      isImg, url, natural: null, regions: null,
     });
     if (isImg) el.style.visibility = "hidden";
     else el.style.backgroundImage = "none";
@@ -228,7 +321,37 @@ export function createQuakeGlyphUiOverlay(
       }
 
       const bucket = Math.max(1, Math.round(s.sprite.density ?? 1));
-      (groups.get(bucket) ?? groups.set(bucket, []).get(bucket)!).push({
+      const target = groups.get(bucket) ?? groups.set(bucket, []).get(bucket)!;
+
+      // Segmented art emits a tight quad per connected opaque region instead of
+      // one rectangle, so the transparent gaps between letters belong to no quad
+      // and a detail layer cannot blank the backdrop through them.
+      if (s.regions) {
+        const spanU = u1 - u0, spanV = v1 - v0;
+        for (const r of s.regions) {
+          // Region UVs are in SOURCE space; fold them through this sprite's own
+          // visible window so a sheet-cropped sprite still lands correctly.
+          const ru0 = u0 + r.u0 * spanU, ru1 = u0 + r.u1 * spanU;
+          // The quad's V axis is INVERTED relative to image space: the base
+          // mapping puts `v1` on the TOP edge. For a full-size quad that cancels
+          // out, but a sub-region has to flip explicitly or every letter comes
+          // out mirrored vertically.
+          const rvTop = v1 - r.v0 * spanV;
+          const rvBot = v1 - r.v1 * spanV;
+          // And place it proportionally inside the element's box.
+          const rx0 = x0 + (x1 - x0) * r.v0, rx1 = x0 + (x1 - x0) * r.v1;
+          const ry0 = y0 + (y1 - y0) * r.u0, ry1 = y0 + (y1 - y0) * r.u1;
+          target.push({
+            vertices: [[rx0, ry0, z], [rx0, ry1, z], [rx1, ry1, z], [rx1, ry0, z]],
+            texture: s.url,
+            uvs: [[ru0, rvTop], [ru1, rvTop], [ru1, rvBot], [ru0, rvBot]],
+            color: "#ffffff",
+          } as unknown as Polygon);
+        }
+        continue;
+      }
+
+      target.push({
         vertices: [[x0, y0, z], [x0, y1, z], [x1, y1, z], [x1, y0, z]],
         texture: s.url,
         uvs: [[u0, v1], [u1, v1], [u1, v0], [u0, v0]],
@@ -320,12 +443,14 @@ export function createQuakeGlyphUiOverlay(
     const el = state.sprite.element as HTMLImageElement;
     if (state.isImg && el.naturalWidth) {
       state.natural = { w: el.naturalWidth, h: el.naturalHeight };
+      if (state.sprite.segment) state.regions = segmentOpaqueRegions(el);
       queueSync();
       return;
     }
     const probe = new Image();
     probe.onload = () => {
       state.natural = { w: probe.naturalWidth || 1, h: probe.naturalHeight || 1 };
+      if (state.sprite.segment) state.regions = segmentOpaqueRegions(probe);
       queueSync();
     };
     probe.src = state.url;
