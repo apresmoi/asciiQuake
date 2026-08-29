@@ -88,6 +88,13 @@ function createQuakeBitmapText(
   container.setAttribute("aria-hidden", "true");
 
   if (options.wrap === "anywhere") {
+    if (quakeBitmapTextRendersAsCharacters) {
+      // One run for the whole line: anywhere-wrapped callers (notify,
+      // centerprint) pre-chunk their text to line length, so the run never
+      // wraps and stays a single grid row for the overlay to stamp.
+      container.append(createQuakeBitmapRun(text, options.alt));
+      return container;
+    }
     for (const char of text) container.append(createQuakeBitmapGlyph(char, options.alt));
     return container;
   }
@@ -115,6 +122,7 @@ export function setQuakeBitmapTextAsCharacters(enabled: boolean): void {
 }
 
 function createQuakeBitmapWord(text: string, alt: boolean): HTMLElement {
+  if (quakeBitmapTextRendersAsCharacters) return createQuakeBitmapRun(text, alt);
   const wordElement = document.createElement("span");
   wordElement.className = "quake-bitmap-word";
   for (const char of text) wordElement.append(createQuakeBitmapGlyph(char, alt));
@@ -122,28 +130,27 @@ function createQuakeBitmapWord(text: string, alt: boolean): HTMLElement {
 }
 
 /**
- * Render bitmap text as real characters rather than sprite-sheet slices.
+ * ASCII backend: one element per word-run of text, carrying the words as a
+ * plain text node for the glyph overlay to stamp INTO the character grid.
  *
- * The ASCII backend turns the rest of the UI's art into glyphs, and this text is
- * the one thing that was already characters before it was ever an image —
- * `char.charCodeAt(0)` picks the cell, so the letter is the input. Reconstructing
- * a letter out of an image of that letter costs one element and one texture
- * window PER CHARACTER (808 of them on the menu screen), and at the shared grid's
- * cell size each 16x16 source glyph lands on ~2x3 cells, so it comes out as
- * unreadable blocks. Emitting the character directly is sharper AND free.
- *
- * `alt` is Quake's high-bit "brown" variant of the same glyph, so it stays a
- * styling hook rather than a different character.
+ * This replaces the span-per-character output (`createQuakeBitmapGlyphAsText`)
+ * that put ~1,470 `.quake-bitmap-char` elements over the menu as HTML painted
+ * ON TOP of the grid. A run keeps the exact box the character row occupied
+ * (explicit `width = chars x glyph size`, the word wrapper's own height), so
+ * every flex layout, hit target and wrap point stays put — but the paint moves
+ * into the shared `<pre>`: the run itself is visibility-hidden whenever the
+ * glyph UI host is up (see quake.css) and the overlay's `stampText` draws its
+ * text on the cells its box covers.
  */
-function createQuakeBitmapGlyphAsText(char: string, alt: boolean): HTMLElement {
-  const element = document.createElement("span");
-  element.className = alt ? "quake-bitmap-char quake-bitmap-char-alt" : "quake-bitmap-char";
-  element.textContent = char;
-  return element;
+function createQuakeBitmapRun(text: string, alt: boolean): HTMLElement {
+  const run = document.createElement("span");
+  run.className = alt ? "quake-bitmap-word quake-bitmap-run quake-bitmap-run-alt" : "quake-bitmap-word quake-bitmap-run";
+  run.textContent = text;
+  run.style.width = `calc(${text.length} * var(--quake-bitmap-glyph-size))`;
+  return run;
 }
 
 function createQuakeBitmapGlyph(char: string, alt: boolean): HTMLElement {
-  if (quakeBitmapTextRendersAsCharacters) return createQuakeBitmapGlyphAsText(char, alt);
   const glyph = (char.charCodeAt(0) & 127) + (alt ? 128 : 0);
   const col = glyph & 15;
   const row = glyph >> 4;

@@ -12,6 +12,9 @@ import {
   type QuakeRenderMode,
 } from "./runtime/render/engine";
 import { createQuakeGlyphUiOverlay } from "./runtime/render/glyphUiOverlay";
+import { createQuakeMenuSceneManifest } from "./runtime/render/menuSceneManifest";
+import { updateQuakeMenuSceneState } from "./runtime/menuSceneState";
+import { GLYPH_FONT_ATLAS_ASCII } from "glyphcss";
 import {
   createQuakeGlyphWorldOverlay,
   QUAKE_GLYPH_OVERLAY_CELL_PX,
@@ -1427,6 +1430,19 @@ installInspectableQuakePolycssCamera(scene, host);
 const sceneElement = quakeRenderEngine.sceneElement;
 sceneElement.removeAttribute("data-polycss-lighting");
 
+// Both glyph overlays encode against glyphcss's ASCII-only atlas variant:
+// 94 printable-ASCII glyphs, which frees the shared PUA budget for 68 palette
+// slots instead of the universal atlas's 30. The menus' desaturation and
+// page-to-page colour shift were both 30-slot median-cut error; the world and
+// UI here only ever emit `detail`-ramp ASCII, so the universal set's Greek/
+// braille/box-drawing coverage bought nothing. `?glyphAtlas=universal` opts
+// back into the universal atlas for comparison. Configs needing non-ASCII
+// glyphs (braille charMode, exotic `?glyphPalette=`) fall back to the span
+// encoder — the same fallback they already hit under the universal atlas.
+const quakeGlyphFontAtlas = quakeStartupUrlParams.get("glyphAtlas") === "universal"
+  ? undefined
+  : GLYPH_FONT_ATLAS_ASCII;
+
 // glyphcss world overlay (Phase 3 milestone): when the ASCII backend is
 // selected, polycss still drives all game logic/camera/controls while this
 // overlay mirrors the world geometry as ASCII driven by the live camera.
@@ -1434,6 +1450,7 @@ const quakeGlyphOverlay: QuakeGlyphWorldOverlay | null =
   quakeRenderMode === "glyphcss"
     ? createQuakeGlyphWorldOverlay({
         host: quakeApp,
+        fontAtlas: quakeGlyphFontAtlas,
         insertBefore: weapon ?? quakeMenu,
         // Skip the (fully hidden) polycss world render while the opaque ASCII is
         // up — polycss was still rasterizing every textured DOM polygon behind it.
@@ -1533,6 +1550,14 @@ if (quakeRenderMode === "glyphcss" && quakeStartupUrlParams.get("glyphImage") !=
   if (uiHost) {
     createQuakeGlyphUiOverlay({
       host: uiHost,
+      // The declarative menu scene: the LANDING menu (plus the backdrop and
+      // corner logo) renders from this manifest + the shared menu scene state,
+      // with no DOM reads. Screens not yet in the manifest still come from the
+      // selector rules below.
+      menu: createQuakeMenuSceneManifest({
+        density: quakeUrlNumberParam(quakeStartupUrlParams, "glyphImageDensity", 1, 8) ?? 4,
+        backdropBrightness: quakeUrlNumberParam(quakeStartupUrlParams, "glyphImageBackdrop", 0, 1) ?? 0.6,
+      }),
       maxCells: quakeUrlNumberParam(quakeStartupUrlParams, "glyphImageCells", 2000, 120_000) ?? undefined,
       minCellPx: quakeUrlNumberParam(quakeStartupUrlParams, "glyphImageCell", 2, 24) ?? undefined,
       glyphPalette: quakeStartupUrlParams.get("glyphImagePalette") ?? undefined,
@@ -1551,13 +1576,12 @@ if (quakeRenderMode === "glyphcss" && quakeStartupUrlParams.get("glyphImage") !=
       // while the art's 0.55 stays clearly ahead. `?glyphImageBackdropGamma=`.
       backdropGamma: quakeUrlNumberParam(quakeStartupUrlParams, "glyphImageBackdropGamma", 0.2, 1) ?? 0.8,
       colorEncoding: quakeStartupUrlParams.get("glyphImageEncoding") === "spans" ? "spans" : "atlas",
+      fontAtlas: quakeGlyphFontAtlas,
       // Art authored as `::before` — the panel plaque (on every page) and each
       // button's selection cursor. Materialized into real elements to convert.
       // The suppressing CSS blanks these before the overlay can read them.
       pseudoTextures: {
-        ".quake-menu-card": "/q/main-menu-plaque.png",
         "#quake-debug-card": "/q/main-menu-plaque.png",
-        ".quake-single-player-button": "/q/main-menu-cursor.png",
         ".quake-option-toggle": "/q/main-menu-cursor.png",
         ".quake-option-crosshair": "/q/main-menu-cursor.png",
         ".quake-option-glyph-detail": "/q/main-menu-cursor.png",
@@ -1568,17 +1592,34 @@ if (quakeRenderMode === "glyphcss" && quakeStartupUrlParams.get("glyphImage") !=
         "#quake-multiplayer-create": "/q/main-menu-cursor.png",
         "#quake-multiplayer-back": "/q/main-menu-cursor.png",
       },
-      svgSelectors: [".quake-single-player-label"],
+      // The menu cards' plaques, the panel titles and the single-player labels
+      // (formerly SVG-defs art) are manifest sprites now — the pseudo and SVG
+      // machinery below only serves what the manifest does not yet cover: the
+      // debug card, and the focus cursors on still-HTML text rows.
       pseudoSelectors: [
-        ".quake-menu-card", "#quake-debug-card", ".quake-single-player-button",
+        "#quake-debug-card",
         ".quake-option-toggle", ".quake-option-crosshair", ".quake-option-glyph-detail",
         ".quake-option-glyph-palette", "#quake-options-back", "#quake-about-back",
         "#quake-multiplayer-field", "#quake-multiplayer-create", "#quake-multiplayer-back",
       ],
-      // Words go INTO the grid, not on top of it — the last step to a single <pre>.
+      // Words go INTO the grid, not on top of it. Bitmap text is authored as
+      // one `.quake-bitmap-run` element per word (see bitmapText.ts); the runs
+      // are visibility-hidden while this overlay's host is up and stamped into
+      // the shared character grid instead. The version tag is plain DOM text,
+      // stamped the same way.
+      textSelectors: [".quake-bitmap-run", ".asciiquake-version"],
+      // Display-size bitmap text (the multiplayer titles) keeps its SIZE by
+      // rendering as conchars sprite art rather than one grid cell per letter.
+      textArt: [{
+        selector: ".quake-bitmap-text--title .quake-bitmap-run",
+        layer: 2,
+        density: quakeUrlNumberParam(quakeStartupUrlParams, "glyphImageDensity", 1, 8) ?? 4,
+      }],
+      //
+      // The LANDING screen, the backdrop and the corner logo are gone from
+      // this list: they render from the scene manifest above. What remains is
+      // the not-yet-migrated screens' art, still discovered by tracing.
       sprites: [
-        // Layer 0 is the backdrop; everything else composites in front of it.
-        { selector: "#quake-loading-overlay", layer: 0, fit: "cover", texture: "/q/menu-background.png", brightness: quakeUrlNumberParam(quakeStartupUrlParams, "glyphImageBackdrop", 0, 1) ?? 0.6 },
         // `?glyphImageDensity=` puts small art in its own higher-density detail
         // layer, and `segment: true` makes that layer OCCLUDE correctly: the
         // sprite is split into one tight quad per connected opaque region, so
@@ -1589,23 +1630,9 @@ if (quakeRenderMode === "glyphcss" && quakeStartupUrlParams.get("glyphImage") !=
         // a black box around the art, so the overlay renders an unsegmented
         // density sprite `transparent` instead, and the bright backdrop then
         // leaks straight through the art's transparent texels.
-        { selector: "#quake-main-menu-plaque", layer: 1, density: quakeUrlNumberParam(quakeStartupUrlParams, "glyphImageDensity", 1, 8) ?? 4, segment: true },
-        { selector: "#quake-main-menu-title", layer: 1, density: quakeUrlNumberParam(quakeStartupUrlParams, "glyphImageDensity", 1, 8) ?? 4, segment: true },
         { selector: "#quake-classic-hud-image", layer: 2, density: quakeUrlNumberParam(quakeStartupUrlParams, "glyphImageDensity", 1, 8) ?? 4, segment: true },
-        { selector: ".quake-menu-panel-title img", layer: 2, density: quakeUrlNumberParam(quakeStartupUrlParams, "glyphImageDensity", 1, 8) ?? 4, segment: true },
-        // Sprite SHEETS — the visible frame is chosen by `background-position`,
-        // so these need the CSS-accurate UV mapping rather than a plain fit.
-        // (Segmented regions are clipped to that visible window, so the hidden
-        // frame's regions never draw.)
-        { selector: ".quake-main-menu-label", layer: 2, fit: "css", density: quakeUrlNumberParam(quakeStartupUrlParams, "glyphImageDensity", 1, 8) ?? 4, segment: true },
-        { selector: ".quake-main-menu-item-cursor", layer: 3, fit: "css", density: quakeUrlNumberParam(quakeStartupUrlParams, "glyphImageDensity", 1, 8) ?? 4, segment: true },
-        // Remaining menu screens. Pseudo-element art (`::before` plaques) cannot
-        // be selected or measured, so it stays CSS — only real elements convert.
-        { selector: ".quake-menu-panel-header img", layer: 2 },
         { selector: ".quake-intermission-value-glyph", layer: 2, fit: "css" },
-        { selector: ".quake-single-player-label", layer: 2, density: quakeUrlNumberParam(quakeStartupUrlParams, "glyphImageDensity", 1, 8) ?? 4, segment: true },
         { selector: ".quake-glyph-pseudo", layer: 2, fit: "css", density: quakeUrlNumberParam(quakeStartupUrlParams, "glyphImageDensity", 1, 8) ?? 4, segment: true },
-        { selector: "img.asciiquake-logo", layer: 3, density: quakeUrlNumberParam(quakeStartupUrlParams, "glyphImageDensity", 1, 8) ?? 4, segment: true },
       ],
     });
   }
@@ -5972,6 +5999,7 @@ async function loadQuake(): Promise<void> {
 
 function clearQuakeMainMenuStartupState(): void {
   removeQuakeBodyClasses("quake-main-menu-pending", "quake-main-menu-deferred");
+  updateQuakeMenuSceneState({ pending: false, deferred: false });
 }
 
 function syncQuakeRoutePresentation(route: QuakeUrlRoute, options: { preferMenu?: boolean } = {}): void {

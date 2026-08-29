@@ -7,6 +7,7 @@ import {
 } from "../loadingConsole";
 import type { QuakeUrlRoute } from "../routeState";
 import { addQuakeBodyClasses, removeQuakeBodyClasses } from "./dom";
+import { updateQuakeMenuSceneState } from "../menuSceneState";
 import type { QuakeAppDomElements } from "./dom";
 import type { QuakeAssetManifest, QuakeMapLoadOptions } from "./session";
 
@@ -246,6 +247,9 @@ export function createQuakeLoadingFlow(options: QuakeLoadingFlowOptions): QuakeL
   function hideMainMenuForLoadingError(): void {
     removeQuakeBodyClasses("quake-menu-open", "quake-main-menu-pending");
     addQuakeBodyClasses("quake-main-menu-deferred");
+    // Mirror into the scene state: the glyph overlay draws the menu from data,
+    // not from these classes/attributes.
+    updateQuakeMenuSceneState({ screen: null, pending: false, deferred: true });
     if (dom.mainMenu) dom.mainMenu.hidden = true;
     dom.singlePlayerPanel?.setAttribute("hidden", "");
     dom.levelPanel?.setAttribute("hidden", "");

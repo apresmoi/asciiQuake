@@ -1131,13 +1131,13 @@ body:not(.quake-main-menu-pending) #quake-main-menu-list > .quake-main-menu-item
   display: none;
   width: 5cqw;
   height: 7.5cqw;
-  background-image: url("./assets/main-menu-cursor-baked.png");
-  background-position: 0 0;
-  background-size: 600% 100%;
   image-rendering: pixelated;
   transform: none;
-  animation: quake-main-menu-cursor-frame 600ms steps(1, end) infinite;
   pointer-events: none;
+  /* Drawn by the glyph overlay from the menu scene manifest — this element is
+     now only the LAYOUT ANCHOR that widens the item's pointer hit area (see
+     mainMenuPointerRow), so it keeps its box but must never paint. */
+  visibility: hidden;
 }
 .quake-main-menu-item-active .quake-main-menu-item-cursor {
   display: block;
@@ -1310,6 +1310,34 @@ body.quake-menu-open:not(.quake-gameplay-started) .quake-menu-panel {
 }
 .quake-bitmap-char-alt {
   color: #9a7550;
+}
+
+/* Word-RUN bitmap text (the ASCII backend's replacement for span-per-character
+   output): one element per word, its box exactly the row of character cells it
+   replaced (explicit width = chars x glyph size), its words carried as a plain
+   text node. The glyph overlay stamps that text INTO the shared character
+   grid, so while the glyph UI surface is up the run must not also paint as
+   HTML — visibility (not display) keeps its box driving layout, wrapping and
+   hit targets. When the surface is hidden (in-game text: notify, centerprint)
+   the run paints as ordinary HTML text, like the character spans it replaced. */
+.quake-bitmap-run {
+  display: block;
+  flex: 0 0 auto;
+  height: var(--quake-bitmap-glyph-size);
+  overflow: hidden;
+  font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  font-size: calc(var(--quake-bitmap-glyph-size) * 0.95);
+  line-height: var(--quake-bitmap-glyph-size);
+  white-space: nowrap;
+  text-transform: uppercase;
+  color: #9c968a;
+}
+.quake-bitmap-run-alt {
+  color: #9a7550;
+}
+body.quake-glyph-render:has(#quake-loading-overlay:not([hidden])) .quake-bitmap-run,
+body.quake-glyph-render:has(#quake-loading-overlay:not([hidden])) .asciiquake-version {
+  visibility: hidden;
 }
 .quake-bitmap-col-0 {
   background-position-x: 0;
@@ -1586,6 +1614,13 @@ body.quake-menu-open:not(.quake-gameplay-started) .quake-menu-panel {
 }
 #quake-multiplayer-panel[data-quake-multiplayer-state="failure"] {
   background: rgba(0, 0, 0, 0.86);
+}
+/* ASCII backend: the failure text lives IN the glyph grid, which renders
+   BELOW this panel — the HTML wash would bury it (measured: ROOM FULL barely
+   visible through the 0.86 black). The grid's own dimmed backdrop supplies
+   the contrast instead. */
+.quake-glyph-render #quake-multiplayer-panel[data-quake-multiplayer-state="failure"] {
+  background: transparent;
 }
 #quake-multiplayer-panel[data-quake-multiplayer-state="failure"] .quake-menu-card {
   --quake-menu-offset-y: 0%;

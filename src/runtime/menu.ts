@@ -1,4 +1,5 @@
 import { mountQuakeBitmapText } from "./bitmapText";
+import { updateQuakeMenuSceneState, type QuakeMenuSceneScreen } from "./menuSceneState";
 
 interface QuakeMenuControls {
   update(partial: { moveEnabled?: boolean }): void;
@@ -101,6 +102,21 @@ export function createQuakeMenuController({
   let savingGame = false;
   let loadingLevelMap: string | null = null;
 
+  /**
+   * Which manifest screen a panel element is. The glyph overlay renders the
+   * menu from the scene manifest + shared scene state, so every visibility
+   * change here is mirrored into that state — the controller stays the single
+   * owner, the overlay just draws what it is told.
+   */
+  function sceneScreenFor(panel: HTMLElement): QuakeMenuSceneScreen | null {
+    if (panel === singlePlayerPanel) return "single-player";
+    if (panel === multiplayerPanel) return "multiplayer";
+    if (panel === levelPanel) return "level-select";
+    if (panel === aboutPanel) return "help";
+    if (panel === optionsPanel) return "options";
+    return null;
+  }
+
   function setMultiplayerPanelState(state: string | null): void {
     if (!multiplayerPanel) return;
     if (state) {
@@ -108,6 +124,7 @@ export function createQuakeMenuController({
     } else {
       multiplayerPanel.removeAttribute(QUAKE_MULTIPLAYER_PANEL_STATE_ATTRIBUTE);
     }
+    updateQuakeMenuSceneState({ multiplayerFailure: state === QUAKE_MULTIPLAYER_FAILURE_STATE });
   }
 
   function isMultiplayerFailurePanelOpen(): boolean {
@@ -131,6 +148,7 @@ export function createQuakeMenuController({
     optionsPanel?.setAttribute("hidden", "");
     mainMenu.hidden = false;
     document.body.classList.add("quake-menu-open");
+    updateQuakeMenuSceneState({ screen: "landing" });
     onMenuVisibilityChange?.(true);
     onMenuPauseChange?.(true);
     clearCrosshairTarget();
@@ -149,6 +167,7 @@ export function createQuakeMenuController({
     aboutPanel?.setAttribute("hidden", "");
     optionsPanel?.setAttribute("hidden", "");
     document.body.classList.remove("quake-menu-open");
+    updateQuakeMenuSceneState({ screen: null });
     onMenuVisibilityChange?.(false);
     onMenuPauseChange?.(false);
     host.focus({ preventScroll: true });
@@ -157,6 +176,7 @@ export function createQuakeMenuController({
 
   function clearPendingMainMenu(): void {
     document.body.classList.remove(QUAKE_MAIN_MENU_PENDING_CLASS);
+    updateQuakeMenuSceneState({ pending: false });
   }
 
   function startFromMainMenu(): void {
@@ -271,6 +291,7 @@ export function createQuakeMenuController({
     optionsPanel?.setAttribute("hidden", "");
     panel.hidden = false;
     document.body.classList.add("quake-menu-open");
+    updateQuakeMenuSceneState({ screen: sceneScreenFor(panel) });
     onMenuVisibilityChange?.(true);
     onMenuPauseChange?.(true);
     panel.focus({ preventScroll: true });
@@ -433,6 +454,37 @@ export function createQuakeMenuController({
       button.disabled = disabled;
       button.setAttribute("aria-disabled", String(disabled));
     }
+    // Mirror into the scene state so the overlay dims the manifest labels the
+    // way the CSS dimmed the buttons. Gated on the panel being open: the shared
+    // `disabledItems` belongs to whichever screen is up.
+    if (isSinglePlayerPanelOpen()) {
+      const disabledItems: string[] = [];
+      for (const button of singlePlayerPanel.querySelectorAll<HTMLButtonElement>(".quake-single-player-button")) {
+        if (!button.disabled) continue;
+        const action = button.getAttribute(QUAKE_SINGLE_PLAYER_ACTION_ATTRIBUTE);
+        if (action) disabledItems.push(action);
+      }
+      updateQuakeMenuSceneState({ disabledItems });
+    }
+  }
+
+  /** Selection cursor on the single-player panel: keyboard focus and pointer
+   *  hover both land here, so the manifest cursor follows either — the panel's
+   *  own replacement for the old `:hover`/`:focus-visible` pseudo cursor. */
+  function syncSinglePlayerActiveItem(target: EventTarget | null): void {
+    const button = singlePlayerButtonFor(target);
+    if (!button || button.disabled) return;
+    updateQuakeMenuSceneState({
+      activeItem: button.getAttribute(QUAKE_SINGLE_PLAYER_ACTION_ATTRIBUTE),
+    });
+  }
+
+  function handleSinglePlayerFocusIn(event: FocusEvent): void {
+    syncSinglePlayerActiveItem(event.target);
+  }
+
+  function handleSinglePlayerPointerOver(event: PointerEvent): void {
+    syncSinglePlayerActiveItem(event.target);
   }
 
   function singlePlayerButtons(): HTMLButtonElement[] {
@@ -530,6 +582,11 @@ export function createQuakeMenuController({
       syncMainMenuItemEnabled(multiplayerItem, multiplayerEnabled);
       syncMultiplayerComingSoonNote(multiplayerItem, !multiplayerEnabled);
     }
+
+    const disabledItems: string[] = [];
+    if (!isQuitEnabled?.()) disabledItems.push("quit");
+    if (!isMultiplayerMenuEnabled()) disabledItems.push("multiplayer");
+    updateQuakeMenuSceneState({ disabledItems });
   }
 
   function isMultiplayerMenuEnabled(): boolean {
@@ -584,6 +641,9 @@ export function createQuakeMenuController({
     for (let index = 0; index < items.length; index++) {
       items[index]?.classList.toggle("quake-main-menu-item-active", index === mainMenuSelectionIndex);
     }
+    updateQuakeMenuSceneState({
+      activeItem: items[mainMenuSelectionIndex]?.getAttribute(QUAKE_MAIN_MENU_ACTION_ATTRIBUTE) ?? null,
+    });
   }
 
   function selectMainMenuRow(row: number): boolean {
@@ -1006,6 +1066,8 @@ export function createQuakeMenuController({
     mainMenu?.removeEventListener("pointermove", handleMainMenuPointerMove);
     mainMenu?.removeEventListener("pointerleave", handleMainMenuPointerLeave);
     singlePlayerPanel?.removeEventListener("click", handleMenuPanelClick);
+    singlePlayerPanel?.removeEventListener("focusin", handleSinglePlayerFocusIn);
+    singlePlayerPanel?.removeEventListener("pointerover", handleSinglePlayerPointerOver);
     multiplayerPanel?.removeEventListener("click", handleMenuPanelClick);
     levelPanel?.removeEventListener("click", handleMenuPanelClick);
     aboutPanel?.removeEventListener("click", handleMenuPanelClick);
@@ -1019,6 +1081,8 @@ export function createQuakeMenuController({
     mainMenu?.addEventListener("pointermove", handleMainMenuPointerMove);
     mainMenu?.addEventListener("pointerleave", handleMainMenuPointerLeave);
     singlePlayerPanel?.addEventListener("click", handleMenuPanelClick);
+    singlePlayerPanel?.addEventListener("focusin", handleSinglePlayerFocusIn);
+    singlePlayerPanel?.addEventListener("pointerover", handleSinglePlayerPointerOver);
     multiplayerPanel?.addEventListener("click", handleMenuPanelClick);
     levelPanel?.addEventListener("click", handleMenuPanelClick);
     aboutPanel?.addEventListener("click", handleMenuPanelClick);

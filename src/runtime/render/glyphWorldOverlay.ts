@@ -1,4 +1,4 @@
-import { createGlyphPerspectiveCamera, createGlyphScene } from "glyphcss";
+import { createGlyphPerspectiveCamera, createGlyphScene, type GlyphFontAtlas } from "glyphcss";
 import type { GlyphMeshHandle, GlyphMeshTransform } from "glyphcss";
 import { BASE_TILE, type Vec3 } from "@layoutit/polycss";
 
@@ -64,6 +64,16 @@ export interface QuakeGlyphWorldOverlayOptions {
    *  no-op configs: `halfblock`/`quadrant` charMode (two colours per cell) and
    *  `useColors: false`. `?glyphColorEncoding=spans` opts back out. */
   readonly colorEncoding?: QuakeGlyphColorEncoding;
+  /**
+   * Font atlas the `atlas` encoding maps against. The app passes glyphcss's
+   * ASCII-only variant (94 printable-ASCII glyphs, 68 palette slots vs the
+   * universal atlas's 212/30): this overlay only ever emits `detail`-ramp
+   * ASCII in its default configuration, so the freed glyph axis buys ~2.3x
+   * the colour resolution. A config that needs non-ASCII glyphs (braille
+   * charMode, an exotic `?glyphPalette=`) falls back to the span encoder —
+   * the same fallback those configs already hit under the universal atlas.
+   */
+  readonly fontAtlas?: GlyphFontAtlas;
   /** Hidden-line removal for the wireframe/braille path — "hide" depth-tests each
    *  stroke against a solid prepass so far edges stop painting over near ones.
    *  No-op in solid mode. `?glyphHiddenLines=hide`. */
@@ -425,6 +435,7 @@ export function createQuakeGlyphWorldOverlay(
     hiddenLines,
     colorTolerance,
     colorEncoding,
+    fontAtlas: options.fontAtlas,
     useColors: true,
     autoSize: true,
     // Dense intensity ramp (≈70 levels vs the 10-char default) for smooth tonal

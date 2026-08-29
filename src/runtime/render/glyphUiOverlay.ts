@@ -1,5 +1,13 @@
-import { createGlyphOrthographicCamera, createGlyphScene } from "glyphcss";
+import { createGlyphOrthographicCamera, createGlyphScene, type GlyphFontAtlas } from "glyphcss";
 import type { Polygon } from "@layoutit/polycss";
+import {
+  QUAKE_MENU_SCENE_FRAME_W,
+  QUAKE_MENU_SCENE_FRAME_H,
+  quakeMenuSceneFrame,
+  type QuakeMenuSceneManifest,
+  type QuakeMenuSceneSpriteDef,
+} from "./menuSceneManifest";
+import { getQuakeMenuSceneState, subscribeQuakeMenuSceneState } from "../menuSceneState";
 
 /**
  * Renders a whole screen of sprite art as ONE ASCII image.
@@ -140,6 +148,17 @@ export interface QuakeGlyphUiOverlayOptions {
   /** Final-string encode strategy. Defaults to `atlas`, as the world does. */
   readonly colorEncoding?: "atlas" | "spans";
   /**
+   * Font atlas the `atlas` encoding maps against. The app passes glyphcss's
+   * ASCII-only variant (94 printable-ASCII glyphs, 68 palette slots vs the
+   * universal atlas's 212/30). This UI renders nothing but `detail`-ramp
+   * ASCII, and the 30-slot budget was the measured cause of the menu art's
+   * desaturation and its page-to-page colour shift: a full screen of backdrop
+   * greys outvoted the art's bronzes in the median cut, and every navigation
+   * retrained the palette. 68 slots more than doubles the colour resolution
+   * the same quantizer works with.
+   */
+  readonly fontAtlas?: GlyphFontAtlas;
+  /**
    * Selectors whose `::before` art is MATERIALIZED into a real element so it can
    * be converted. A pseudo-element cannot be selected or measured —
    * `querySelectorAll` never returns it and it has no `getBoundingClientRect` —
@@ -147,6 +166,20 @@ export interface QuakeGlyphUiOverlayOptions {
    * plaque and every menu button's selection cursor are authored this way.
    */
   readonly pseudoSelectors?: readonly string[];
+  /**
+   * Texture URL per pseudo selector, read when the pseudo's own computed
+   * `background-image` is blanked by the suppressing CSS.
+   */
+  readonly pseudoTextures?: Readonly<Record<string, string>>;
+  /**
+   * Declarative menu scene. Screens listed here render from DATA — geometry
+   * from the manifest's 320x200 frame, visibility/selection from the shared
+   * menu scene state — with no DOM reads at all. Screens NOT in the manifest
+   * keep being discovered through the selector rules above, which is what
+   * makes the migration stageable: the landing menu can be manifest-driven
+   * while the panels are still traced.
+   */
+  readonly menu?: QuakeMenuSceneManifest;
   /**
    * Texture URL for a rule, when the element's own `background-image` cannot be
    * read.
@@ -171,7 +204,22 @@ export interface QuakeGlyphUiOverlayOptions {
    * art, so the whole screen is one ASCII image.
    */
   readonly textSelectors?: readonly string[];
+  /**
+   * Text rendered as ART: each matched element's characters become textured
+   * quads sampling Quake's conchars sheet (one 8x8 glyph cell per character),
+   * instead of being stamped as grid characters. For DISPLAY-size bitmap text
+   * — the multiplayer panel's title is 14 q-units tall — a stamped character
+   * occupies one grid cell and effectively vanishes; the conchars art keeps
+   * the size the layout gave it, exactly like the pre-ASCII HTML rendered it.
+   * Elements matched here are excluded from `textSelectors` stamping.
+   */
+  readonly textArt?: readonly { selector: string; layer: number; density?: number }[];
 }
+
+/** Quake's console character sheet: a 16x16 grid of glyph cells; the high bit
+ *  selects the brown "alt" variant baked into the lower half. */
+const CONCHARS_URL = "/q/conchars.png";
+const CONCHARS_GRID = 16;
 
 export interface QuakeGlyphUiOverlay {
   readonly element: HTMLElement;
@@ -326,35 +374,6 @@ export function createQuakeGlyphUiOverlay(
   }
 
   /**
-   * Build a texture from vector art referenced by a plain element.
-   *
-   * Some menu labels were authored as rendered `<svg>` that `<use>`d a shared
-   * pixel-art group — art no `<img>`/`background-image` detector can see, which
-   * is exactly why they kept painting as HTML after everything else converted.
-   * The markup now carries only a REFERENCE (`data-glyph-svg-art` plus the
-   * `viewBox` that crops it), so nothing vector is rendered: the art group is
-   * serialized under that viewBox into a data URI and sampled like any texture.
-   */
-  function materializeSvg(): void {
-    for (const selector of options.svgSelectors ?? []) {
-      let nodes: NodeListOf<Element>;
-      try { nodes = document.querySelectorAll(selector); } catch { continue; }
-      for (const node of nodes) {
-        if (!(node instanceof HTMLElement) || node.dataset.glyphTexture) continue;
-        const artId = node.dataset.glyphSvgArt;
-        const viewBox = node.dataset.glyphSvgViewbox;
-        const size = node.dataset.glyphSvgSize?.split(" ");
-        if (!artId || !viewBox || !size || size.length !== 2) continue;
-        const art = document.getElementById(artId);
-        if (!art) continue;
-        const doc = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${viewBox}" `
-          + `width="${size[0]}" height="${size[1]}">${art.outerHTML}</svg>`;
-        node.dataset.glyphTexture = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(doc)}`;
-      }
-    }
-  }
-
-  /**
    * Re-resolve a stand-in's box from its host's live `::before`.
    *
    * Copying the geometry once at creation was wrong twice over: a panel is
@@ -440,7 +459,6 @@ export function createQuakeGlyphUiOverlay(
   }
 
   function rescan(): void {
-    materializeSvg();
     materializePseudo();
     for (const rule of options.sprites) {
       let nodes: NodeListOf<Element>;
@@ -536,6 +554,7 @@ export function createQuakeGlyphUiOverlay(
     // Same encoder the world overlay uses: one text node of PUA code points
     // painted by the COLR/CPAL colour font, instead of a <span> per colour run.
     colorEncoding: options.colorEncoding ?? "atlas",
+    fontAtlas: options.fontAtlas,
     autoSize: true,
     doubleSided: true,
     camera,
@@ -560,13 +579,29 @@ export function createQuakeGlyphUiOverlay(
   const meshes = new Map<string, { setPolygons(p: Polygon[]): void; dispose(): void }>();
   let lastKey = "";
 
+  /** `#rrggbb` scaled by a 0..1 factor — approximates the CSS `opacity` that
+   *  dims disabled rows, which a stamped cell colour cannot express directly. */
+  function scaleHex(hex: string, factor: number): string {
+    if (factor >= 1) return hex;
+    const h = (o: number) =>
+      Math.round(parseInt(hex.slice(o, o + 2), 16) * factor).toString(16).padStart(2, "0");
+    return `#${h(1)}${h(3)}${h(5)}`;
+  }
+
   /**
    * Draw the page's text into the rasterized grid.
    *
    * Runs inside the render, on the final `CellGrid`, so the words land in the
-   * SAME `<pre>` as the art rather than sitting above it as DOM. Each element's
-   * screen box maps to a cell and its characters are written across from there,
-   * so the text keeps the layout CSS already computed for it.
+   * SAME `<pre>` as the art rather than sitting above it as DOM. Each matched
+   * element is one single-row RUN of text (`.quake-bitmap-run`, built by
+   * bitmapText in ASCII mode): its screen box maps to a starting cell and its
+   * characters are written across from there, one per cell, so the text keeps
+   * the layout CSS already computed for it while the paint happens here.
+   *
+   * `visibility: hidden` elements are stamped ON PURPOSE — that is exactly how
+   * the runs are authored (the CSS hides them so the grid is their only
+   * painter, while their boxes keep driving layout and hit targets). Collapsed
+   * panels never stamp because `display: none` zeroes their boxes.
    */
   function stampText(grid: { cols: number; rows: number; char: string[]; color: (string | null)[] }): void {
     const selectors = options.textSelectors;
@@ -576,29 +611,95 @@ export function createQuakeGlyphUiOverlay(
     const cw = box.width / grid.cols;
     const ch = box.height / grid.rows;
 
+    /** Write one run of characters at (row, col), skipping spaces so the art
+     *  behind keeps its cells. Returns the column after the last character. */
+    const write = (row: number, col: number, text: string, colour: string): number => {
+      if (row < 0 || row >= grid.rows) return col + text.length;
+      for (let i = 0; i < text.length; i++) {
+        const c = col + i;
+        if (c < 0 || c >= grid.cols) continue;
+        const glyph = text[i]!;
+        if (glyph === " ") continue;   // don't punch holes in the art behind
+        const idx = row * grid.cols + c;
+        grid.char[idx] = glyph;
+        grid.color[idx] = colour;
+      }
+      return col + text.length;
+    };
+
+    /** Effective colour: computed colour times the accumulated `opacity` that
+     *  dims disabled rows — the compositor applied it for HTML, a stamped cell
+     *  must fold it into the colour. The dimming classes sit on the row or its
+     *  immediate wrappers, so a short ancestor walk suffices. */
+    const runColour = (node: HTMLElement, style: CSSStyleDeclaration): string => {
+      let opacity = parseFloat(style.opacity) || 1;
+      let ancestor = node.parentElement;
+      for (let depth = 0; ancestor && depth < 6; depth++, ancestor = ancestor.parentElement) {
+        const o = parseFloat(getComputedStyle(ancestor).opacity);
+        if (o < 1) opacity *= o;
+      }
+      return scaleHex(rgbToHex(style.color), opacity);
+    };
+
     for (const selector of selectors) {
       let nodes: NodeListOf<Element>;
       try { nodes = document.querySelectorAll(selector); } catch { continue; }
+
+      /**
+       * Word runs are REFLOWED per visual line, not stamped at their own boxes.
+       * The HTML lays words out for 16px character cells while a grid cell is
+       * a third of that, so stamping each word at its own box position tears a
+       * sentence apart with giant gaps (measured: "QUAKE      (C)      1996").
+       * Instead, runs are grouped by their `.quake-bitmap-text` container and
+       * visual line (box top), and each line's words are written contiguously
+       * from the line's own starting cell with single spaces between them —
+       * the container keeps its position and its wrap points, the words keep
+       * grid-correct spacing.
+       */
+      const lines = new Map<string, { row: number; col: number; parts: { text: string; colour: string }[] }>();
+      let lineSeq = 0;
+      const lineKeys = new Map<Element, Map<number, string>>();
+
       for (const node of nodes) {
         if (!(node instanceof HTMLElement)) continue;
-        const text = node.textContent;
-        if (!text) continue;
+        // Rendered as conchars art instead — see `textArt`.
+        if (options.textArt?.some((rule) => { try { return node.matches(rule.selector); } catch { return false; } })) continue;
+        let text = node.textContent;
+        if (!text || !text.trim()) continue;
         const r = node.getBoundingClientRect();
         if (!r.width || !r.height) continue;
         const style = getComputedStyle(node);
-        if (style.visibility === "hidden" || style.display === "none") continue;
+        if (style.display === "none") continue;
+        if (style.textTransform === "uppercase") text = text.toUpperCase();
+        const colour = runColour(node, style);
         const col = Math.round((r.left - box.left) / cw);
         const row = Math.round((r.top - box.top + r.height / 2) / ch);
-        if (row < 0 || row >= grid.rows) continue;
-        const colour = rgbToHex(style.color);
-        for (let i = 0; i < text.length; i++) {
-          const c = col + i;
-          if (c < 0 || c >= grid.cols) continue;
-          const glyph = text[i]!;
-          if (glyph === " ") continue;   // don't punch holes in the art behind
-          const idx = row * grid.cols + c;
-          grid.char[idx] = glyph;
-          grid.color[idx] = colour;
+
+        const container = node.closest(".quake-bitmap-text");
+        if (!container) {
+          // Plain text element (the version tag): stamp at its own box.
+          write(row, col, text, colour);
+          continue;
+        }
+        let byRow = lineKeys.get(container);
+        if (!byRow) lineKeys.set(container, (byRow = new Map()));
+        let key = byRow.get(row);
+        if (key === undefined) {
+          key = String(lineSeq++);
+          byRow.set(row, key);
+          lines.set(key, { row, col, parts: [] });
+        }
+        lines.get(key)!.parts.push({ text, colour });
+      }
+
+      for (const line of lines.values()) {
+        let col = line.col;
+        for (let i = 0; i < line.parts.length; i++) {
+          const part = line.parts[i]!;
+          col = write(line.row, col, part.text, part.colour);
+          // Single space between words — except after an email's user half,
+          // whose split is purely a wrap affordance, not a word break.
+          if (!part.text.endsWith("@")) col += 1;
         }
       }
     }
@@ -617,8 +718,258 @@ export function createQuakeGlyphUiOverlay(
    * segmentation fails degrades to the leak, never to the box.
    */
   interface PolyGroup { density: number; transparent: boolean; polys: Polygon[] }
+
+  /** Everything one textured quad needs, source-agnostic: the DOM tracer and
+   *  the manifest renderer both funnel through here, so grouping, occlusion
+   *  policy and the segmented emission behave identically for both.
+   *
+   *  `u0..v1` is the visible source window in IMAGE space — v grows DOWN the
+   *  image, exactly like `background-position` percentages and the segmenter's
+   *  region boxes. glyphcss samples OBJ-style (v = 0 at the image's BOTTOM),
+   *  so emission flips V once, here and only here. The previous code flipped
+   *  by assigning the window's raw values to swapped corners, which is only
+   *  equivalent for full or centre-symmetric windows (v0 + v1 = 1) — every
+   *  full-image sprite and `cover` crop rendered fine while a sprite SHEET's
+   *  asymmetric frame window drew the mirror-image frame: measured on the
+   *  landing labels as the active item showing the sheet's NORMAL frame, and
+   *  on the single-player panel as NEW GAME/LOAD/SAVE drawing in reverse
+   *  order. */
+  interface QuadEmit {
+    x0: number; x1: number; y0: number; y1: number; z: number;
+    url: string;
+    u0: number; u1: number; v0: number; v1: number;
+    regions: { u0: number; v0: number; u1: number; v1: number }[] | null;
+    density: number;
+    brightness: number;
+  }
+
+  function emitQuad(groups: Map<string, PolyGroup>, q: QuadEmit): void {
+    const level = Math.max(0, Math.min(1, q.brightness));
+    const channel = Math.round(255 * level).toString(16).padStart(2, "0");
+    const tint = `#${channel}${channel}${channel}`;
+    const spanU = q.u1 - q.u0, spanV = q.v1 - q.v0;
+    const segmented = !!q.regions && q.density > 1 && spanU > 0 && spanV > 0;
+    const key = `d${q.density}${q.density > 1 && !segmented ? "t" : ""}`;
+    const target = (groups.get(key)
+      ?? groups.set(key, { density: q.density, transparent: q.density > 1 && !segmented, polys: [] }).get(key)!)
+      .polys;
+
+    // Segmented art emits a tight quad per connected opaque region instead of
+    // one rectangle, so the transparent gaps between letters belong to no quad
+    // and the occlusion id-map cannot blank the backdrop through them.
+    if (segmented) {
+      for (const r of q.regions!) {
+        // Region UVs are ABSOLUTE source coordinates, but only the part inside
+        // this sprite's visible window exists on screen — a sprite SHEET's
+        // hidden frame contributes regions too, and drawing those would stamp
+        // both frames into the box. Clip to the window, then work in
+        // window-relative fractions.
+        const cu0 = Math.max(r.u0, q.u0), cu1 = Math.min(r.u1, q.u1);
+        const cv0 = Math.max(r.v0, q.v0), cv1 = Math.min(r.v1, q.v1);
+        if (cu0 >= cu1 || cv0 >= cv1) continue;
+        const fu0 = (cu0 - q.u0) / spanU, fu1 = (cu1 - q.u0) / spanU;
+        const fv0 = (cv0 - q.v0) / spanV, fv1 = (cv1 - q.v0) / spanV;
+        // Place the region proportionally inside the element's box; the screen
+        // TOP of the region samples the image row `cv0`, flipped into the
+        // sampler's bottom-up V (see the QuadEmit doc).
+        const rx0 = q.x0 + (q.x1 - q.x0) * fv0, rx1 = q.x0 + (q.x1 - q.x0) * fv1;
+        const ry0 = q.y0 + (q.y1 - q.y0) * fu0, ry1 = q.y0 + (q.y1 - q.y0) * fu1;
+        target.push({
+          vertices: [[rx0, ry0, q.z], [rx0, ry1, q.z], [rx1, ry1, q.z], [rx1, ry0, q.z]],
+          texture: q.url,
+          uvs: [[cu0, 1 - cv0], [cu1, 1 - cv0], [cu1, 1 - cv1], [cu0, 1 - cv1]],
+          color: tint,
+        } as unknown as Polygon);
+      }
+      return;
+    }
+
+    target.push({
+      vertices: [[q.x0, q.y0, q.z], [q.x0, q.y1, q.z], [q.x1, q.y1, q.z], [q.x1, q.y0, q.z]],
+      texture: q.url,
+      // Screen top (x0) samples image row v0 — flipped into bottom-up V.
+      uvs: [[q.u0, 1 - q.v0], [q.u1, 1 - q.v0], [q.u1, 1 - q.v1], [q.u0, 1 - q.v1]],
+      // Doubles as this sprite's brightness tint — see `brightness` on the rule.
+      color: tint,
+    } as unknown as Polygon);
+  }
+
+  /**
+   * Texture facts for MANIFEST sprites, keyed by URL — the manifest's stand-in
+   * for the DOM tracer's per-element `SpriteState`. Resolved once per texture:
+   * natural size for UV math, opaque regions for segmented occlusion.
+   */
+  interface MenuTextureState {
+    natural: { w: number; h: number } | null;
+    regions: { u0: number; v0: number; u1: number; v1: number }[] | null;
+  }
+  const menuTextures = new Map<string, MenuTextureState>();
+  function menuTexture(url: string, segment: boolean): MenuTextureState {
+    let tex = menuTextures.get(url);
+    if (!tex) {
+      const created: MenuTextureState = { natural: null, regions: null };
+      tex = created;
+      menuTextures.set(url, created);
+      const probe = new Image();
+      probe.onload = () => {
+        created.natural = { w: probe.naturalWidth || 1, h: probe.naturalHeight || 1 };
+        if (segment) created.regions = segmentOpaqueRegions(probe);
+        adoptedSinceDraw = true; // new art: redraw past the throttle and change key
+        queueSync();
+      };
+      probe.src = url;
+    }
+    return tex;
+  }
+
+  /** The manifest cursor's current sheet frame — a pure function of the clock,
+   *  so the frame watcher can tick the spin without any DOM reads. */
+  function menuAnimationFrame(def: QuakeMenuSceneSpriteDef, now: number): number {
+    if (!def.animate || !def.sheet) return 0;
+    return Math.floor(now / (def.animate.periodMs / def.sheet.frames)) % def.sheet.frames;
+  }
+
+  /**
+   * Draw the declarative menu scene — geometry from the manifest, visibility
+   * and selection from the shared menu scene state. No DOM is consulted: this
+   * is the inversion of the tracer above, and screens covered here must NOT
+   * also appear in the selector rules.
+   */
+  function emitMenuScene(groups: Map<string, PolyGroup>, hostBox: DOMRect): void {
+    const manifest = options.menu;
+    if (!manifest) return;
+    const st = getQuakeMenuSceneState();
+    const cx = hostBox.width / 2;
+    const cy = hostBox.height / 2;
+    const now = performance.now();
+
+    const drawSprite = (
+      def: QuakeMenuSceneSpriteDef,
+      box: { x: number; y: number; w: number; h: number },
+    ): void => {
+      if (box.w <= 0 || box.h <= 0) return;
+      const tex = menuTexture(def.texture, !!def.segment);
+      if (!tex.natural) return; // draws on the sync queued by the probe
+      const disabled = !!def.item && st.disabledItems.includes(def.item);
+      const isActive = !!def.item && def.item === st.activeItem && !disabled;
+      let frame = def.frame ?? 0;
+      if (def.role === "cursor") {
+        // The selection cursor exists only on the active item, and never while
+        // the menu is pending (matching the old CSS's pending rule).
+        if (!isActive || st.pending) return;
+        frame = menuAnimationFrame(def, now);
+      } else if (def.role === "label" && isActive) {
+        frame = 1; // the sheet's highlighted frame
+      }
+      let u0 = 0, u1 = 1, v0 = 0, v1 = 1;
+      if (def.sheet) {
+        const f0 = frame / def.sheet.frames;
+        const f1 = (frame + 1) / def.sheet.frames;
+        if (def.sheet.axis === "y") { v0 = f0; v1 = f1; }
+        else { u0 = f0; u1 = f1; }
+      } else if (def.fit === "cover" && tex.natural) {
+        // Crop the overflowing axis, centred — CSS `background-size: cover`.
+        const boxAspect = box.w / box.h;
+        const imgAspect = tex.natural.w / tex.natural.h;
+        if (imgAspect > boxAspect) {
+          const f = boxAspect / imgAspect;
+          u0 = (1 - f) / 2; u1 = (1 + f) / 2;
+        } else {
+          const f = imgAspect / boxAspect;
+          v0 = (1 - f) / 2; v1 = (1 + f) / 2;
+        }
+      }
+      let brightness = def.brightness ?? 1;
+      if (def.item && (st.pending || disabled)) brightness *= manifest.dimmedBrightness;
+      emitQuad(groups, {
+        x0: box.y - cy, x1: box.y + box.h - cy,
+        y0: box.x - cx, y1: box.x + box.w - cx,
+        z: def.layer * LAYER_STEP,
+        url: def.texture, u0, u1, v0, v1,
+        regions: tex.regions,
+        density: Math.max(1, Math.round(def.density ?? 1)),
+        brightness,
+      });
+    };
+
+    // Chrome: host-anchored, up whenever the overlay's host is.
+    for (const def of manifest.chrome) {
+      if (def.place) drawSprite(def, def.place(hostBox.width, hostBox.height));
+    }
+
+    const screenDef = st.screen && !st.deferred ? manifest.screens[st.screen] : undefined;
+    if (!screenDef) return;
+    // The multiplayer FAILURE card replaces the form on a bare card with no
+    // plaque or header (the CSS hides both) — draw no panel art there.
+    if (st.screen === "multiplayer" && st.multiplayerFailure) return;
+    const frame = quakeMenuSceneFrame(hostBox.width, hostBox.height);
+    const sx = frame.w / QUAKE_MENU_SCENE_FRAME_W;
+    const sy = frame.h / QUAKE_MENU_SCENE_FRAME_H;
+    for (const def of screenDef.sprites) {
+      if (!def.rect) continue;
+      drawSprite(def, {
+        x: frame.x + def.rect.x * sx,
+        y: frame.y + def.rect.y * sy,
+        w: def.rect.w * sx,
+        h: def.rect.h * sy,
+      });
+    }
+  }
+
+  /**
+   * Display-size bitmap text as conchars ART (see the `textArt` option): one
+   * textured quad per character, its UV window the glyph's cell in the sheet.
+   * The run elements are visibility-hidden like all stamped text; their boxes
+   * still come from layout, so the art lands exactly where the HTML text was.
+   */
+  function emitTextArt(groups: Map<string, PolyGroup>, hostBox: DOMRect): void {
+    const rules = options.textArt;
+    if (!rules?.length) return;
+    const cx = hostBox.width / 2;
+    const cy = hostBox.height / 2;
+    for (const rule of rules) {
+      let nodes: NodeListOf<Element>;
+      try { nodes = document.querySelectorAll(rule.selector); } catch { continue; }
+      for (const node of nodes) {
+        if (!(node instanceof HTMLElement)) continue;
+        const text = node.textContent;
+        if (!text || !text.trim()) continue;
+        const box = node.getBoundingClientRect();
+        if (!box.width || !box.height) continue;
+        if (getComputedStyle(node).display === "none") continue;
+        const tex = menuTexture(CONCHARS_URL, true);
+        if (!tex.natural) continue;
+        const alt = node.classList.contains("quake-bitmap-run-alt");
+        const charW = box.width / text.length;
+        const top = box.top - hostBox.top;
+        const z = rule.layer * LAYER_STEP;
+        for (let i = 0; i < text.length; i++) {
+          const char = text[i]!;
+          if (char === " ") continue;
+          const glyph = (char.charCodeAt(0) & 127) + (alt ? 128 : 0);
+          const gu = glyph & (CONCHARS_GRID - 1);
+          const gv = glyph >> 4;
+          const left = box.left - hostBox.left + i * charW;
+          emitQuad(groups, {
+            x0: top - cy, x1: top + box.height - cy,
+            y0: left - cx, y1: left + charW - cx,
+            z,
+            url: CONCHARS_URL,
+            u0: gu / CONCHARS_GRID, u1: (gu + 1) / CONCHARS_GRID,
+            v0: gv / CONCHARS_GRID, v1: (gv + 1) / CONCHARS_GRID,
+            regions: tex.regions,
+            density: Math.max(1, Math.round(rule.density ?? 1)),
+            brightness: 1,
+          });
+        }
+      }
+    }
+  }
+
   function buildPolygons(hostBox: DOMRect): Map<string, PolyGroup> {
     const groups = new Map<string, PolyGroup>();
+    emitMenuScene(groups, hostBox);
+    emitTextArt(groups, hostBox);
     // World units are CSS px (zoom is pinned to 1 below), with the origin at the
     // host's centre — so a sprite's screen box maps straight into world space.
     const cx = hostBox.width / 2;
@@ -684,58 +1035,13 @@ export function createQuakeGlyphUiOverlay(
         }
       }
 
-      const level = Math.max(0, Math.min(1, s.sprite.brightness ?? 1));
-      const channel = Math.round(255 * level).toString(16).padStart(2, "0");
-      const tint = `#${channel}${channel}${channel}`;
-      const density = Math.max(1, Math.round(s.sprite.density ?? 1));
-      const spanU = u1 - u0, spanV = v1 - v0;
-      const segmented = !!s.regions && density > 1 && spanU > 0 && spanV > 0;
-      const key = `d${density}${density > 1 && !segmented ? "t" : ""}`;
-      const target = (groups.get(key)
-        ?? groups.set(key, { density, transparent: density > 1 && !segmented, polys: [] }).get(key)!)
-        .polys;
-
-      // Segmented art emits a tight quad per connected opaque region instead of
-      // one rectangle, so the transparent gaps between letters belong to no quad
-      // and the occlusion id-map cannot blank the backdrop through them.
-      if (segmented) {
-        for (const r of s.regions!) {
-          // Region UVs are ABSOLUTE source coordinates, but only the part inside
-          // this sprite's visible window exists on screen — a sprite SHEET's
-          // hidden frame contributes regions too, and drawing those would stamp
-          // both frames into the box. Clip to the window, then work in
-          // window-relative fractions.
-          const cu0 = Math.max(r.u0, u0), cu1 = Math.min(r.u1, u1);
-          const cv0 = Math.max(r.v0, v0), cv1 = Math.min(r.v1, v1);
-          if (cu0 >= cu1 || cv0 >= cv1) continue;
-          const fu0 = (cu0 - u0) / spanU, fu1 = (cu1 - u0) / spanU;
-          const fv0 = (cv0 - v0) / spanV, fv1 = (cv1 - v0) / spanV;
-          // The quad's V axis is INVERTED relative to image space: the base
-          // mapping puts `v1` on the TOP edge. For a full-size quad that cancels
-          // out, but a sub-region has to flip explicitly or every letter comes
-          // out mirrored vertically.
-          const rvTop = v1 - fv0 * spanV;
-          const rvBot = v1 - fv1 * spanV;
-          // And place it proportionally inside the element's box.
-          const rx0 = x0 + (x1 - x0) * fv0, rx1 = x0 + (x1 - x0) * fv1;
-          const ry0 = y0 + (y1 - y0) * fu0, ry1 = y0 + (y1 - y0) * fu1;
-          target.push({
-            vertices: [[rx0, ry0, z], [rx0, ry1, z], [rx1, ry1, z], [rx1, ry0, z]],
-            texture: s.url,
-            uvs: [[cu0, rvTop], [cu1, rvTop], [cu1, rvBot], [cu0, rvBot]],
-            color: tint,
-          } as unknown as Polygon);
-        }
-        continue;
-      }
-
-      target.push({
-        vertices: [[x0, y0, z], [x0, y1, z], [x1, y1, z], [x1, y0, z]],
-        texture: s.url,
-        uvs: [[u0, v1], [u1, v1], [u1, v0], [u0, v0]],
-        // Doubles as this sprite's brightness tint — see `brightness` on the rule.
-        color: tint,
-      } as unknown as Polygon);
+      emitQuad(groups, {
+        x0, x1, y0, y1, z,
+        url: s.url, u0, u1, v0, v1,
+        regions: s.regions,
+        density: Math.max(1, Math.round(s.sprite.density ?? 1)),
+        brightness: s.sprite.brightness ?? 1,
+      });
     }
     return groups;
   }
@@ -874,6 +1180,14 @@ export function createQuakeGlyphUiOverlay(
         // Adoption only matters when nodes were actually ADDED; a class flip on
         // an existing element cannot introduce a new sprite.
         if (records.some((r) => r.addedNodes.length > 0)) rescan();
+        // Any childList change can be TEXT: stamped words live in the final
+        // grid, so a console line appended or an option value swapped must
+        // force a rebuild+rerender even when no sprite geometry moved — the
+        // change key only covers polygons, and skipping the render would
+        // leave the stale text on screen.
+        if (records.some((r) => r.addedNodes.length > 0 || r.removedNodes.length > 0)) {
+          adoptedSinceDraw = true;
+        }
         queueSync();
       })
     : null;
@@ -897,11 +1211,35 @@ export function createQuakeGlyphUiOverlay(
       const cs = getComputedStyle(st.sprite.element);
       signature += cs.backgroundPosition + "|" + cs.backgroundSize + ";";
     }
+    // The manifest cursor spins on a clock, not on CSS — fold its current
+    // frame into the same signature so the spin redraws without DOM reads.
+    const manifest = options.menu;
+    if (manifest) {
+      const menuState = getQuakeMenuSceneState();
+      const screenDef = menuState.screen && !menuState.deferred
+        ? manifest.screens[menuState.screen]
+        : undefined;
+      if (screenDef && menuState.activeItem && !menuState.pending) {
+        const now = performance.now();
+        for (const def of screenDef.sprites) {
+          if (def.role !== "cursor" || def.item !== menuState.activeItem || !def.animate) continue;
+          signature += `@${def.id}:${menuAnimationFrame(def, now)};`;
+        }
+      }
+    }
     if (signature === lastFrames) return;
     lastFrames = signature;
     sync(true);
   }
   frameWatch = setInterval(watchSheetFrames, 100);
+
+  // Selection, screen changes and pending/deferred flips arrive as DATA — the
+  // shared menu scene state — not as DOM mutations. Redraw on the next frame;
+  // `adoptedSinceDraw` lifts the rebuild throttle so a keypress-driven
+  // selection never waits out the 100ms window.
+  const unsubscribeMenuState = options.menu
+    ? subscribeQuakeMenuSceneState(() => { adoptedSinceDraw = true; queueSync(); })
+    : null;
 
   rescan();
   queueSync();
@@ -917,6 +1255,7 @@ export function createQuakeGlyphUiOverlay(
     sync,
     dispose(): void {
       window.removeEventListener("resize", onResize);
+      unsubscribeMenuState?.();
       if (frameWatch) clearInterval(frameWatch);
       if (trailingSync) clearTimeout(trailingSync);
       boxObserver?.disconnect();
