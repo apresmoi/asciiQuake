@@ -185,6 +185,21 @@ export interface QuakeGlyphUiOverlayOptions {
    * would lift the backdrop back into the art's range.
    */
   readonly inkCompensation?: number;
+  /**
+   * Brightness of the text conchars sheet — a hue-preserving gamma below 1,
+   * exactly like {@link gamma} but applied ONCE to the sheet the text quads
+   * sample rather than to rendered cells. Scoped to text because only the text
+   * path samples this sheet, so raising it cannot touch the art or backdrop.
+   * `?glyphImageTextGamma=`.
+   */
+  readonly textGamma?: number;
+  /**
+   * Saturation of that same sheet. 1 leaves it alone; above 1 pushes each
+   * channel away from the pixel's luma, which is what "more vibrant" means
+   * here — brightness alone washes toward grey because Quake's conchars are
+   * near-neutral to begin with. `?glyphImageTextSaturation=`.
+   */
+  readonly textSaturation?: number;
   readonly glyphPalette?: string;
   /** Final-string encode strategy. Defaults to `atlas`, as the world does. */
   readonly colorEncoding?: "atlas" | "spans";
@@ -1261,7 +1276,8 @@ export function createQuakeGlyphUiOverlay(
    * brighter colour AND a denser glyph choice. Amber stays amber — the same
    * clip-capped scale `liftCellColors` uses.
    */
-  const TEXT_SHEET_GAMMA = 0.5;
+  const TEXT_SHEET_GAMMA = Math.min(1, Math.max(0.2, options.textGamma ?? 0.5));
+  const TEXT_SHEET_SATURATION = Math.min(4, Math.max(0, options.textSaturation ?? 1));
   let textSheetUrl: string | null = null;
   let textSheetRequested = false;
   function ensureTextSheet(): string | null {
@@ -1292,9 +1308,19 @@ export function createQuakeGlyphUiOverlay(
             (255 * Math.pow(luma / 255, TEXT_SHEET_GAMMA)) / luma,
             255 / Math.max(r, g, b),
           );
-          d[i] = Math.round(r * scale);
-          d[i + 1] = Math.round(g * scale);
-          d[i + 2] = Math.round(b * scale);
+          let nr = r * scale, ng = g * scale, nb = b * scale;
+          if (TEXT_SHEET_SATURATION !== 1) {
+            // Push each channel away from the pixel's own luma. Done AFTER the
+            // gamma lift so the two compose: brightness first, then vibrancy.
+            const l = 0.2126 * nr + 0.7152 * ng + 0.0722 * nb;
+            nr = l + (nr - l) * TEXT_SHEET_SATURATION;
+            ng = l + (ng - l) * TEXT_SHEET_SATURATION;
+            nb = l + (nb - l) * TEXT_SHEET_SATURATION;
+          }
+          const clamp = (v: number) => Math.max(0, Math.min(255, Math.round(v)));
+          d[i] = clamp(nr);
+          d[i + 1] = clamp(ng);
+          d[i + 2] = clamp(nb);
         }
         ctx.putImageData(image, 0, 0);
         textSheetUrl = canvas.toDataURL("image/png");

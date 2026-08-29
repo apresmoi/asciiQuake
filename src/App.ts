@@ -1658,6 +1658,10 @@ if (quakeRenderMode === "glyphcss" && quakeStartupUrlParams.get("glyphImage") !=
       // Ink-coverage compensation strength for the art/text detail layers —
       // `?glyphImageInkComp=` (0 disables, 1 full). See the overlay option.
       inkCompensation: quakeUrlNumberParam(quakeStartupUrlParams, "glyphImageInkComp", 0, 1) ?? 0.7,
+      // Text-only brightness and vibrancy — both applied once to the conchars
+      // sheet the text quads sample, so neither can affect the art or backdrop.
+      textGamma: quakeUrlNumberParam(quakeStartupUrlParams, "glyphImageTextGamma", 0.2, 1) ?? 0.42,
+      textSaturation: quakeUrlNumberParam(quakeStartupUrlParams, "glyphImageTextSaturation", 0, 4) ?? 1.35,
       //
       // The LANDING screen, the backdrop and the corner logo are gone from
       // this list: they render from the scene manifest above. What remains is
