@@ -1363,6 +1363,12 @@ const quakeGlyphOverlay: QuakeGlyphWorldOverlay | null =
         fovScale: quakeUrlNumberParam(quakeStartupUrlParams, "glyphFovScale", 0.1, 10) ?? undefined,
         flat: quakeUrlNumberParam(quakeStartupUrlParams, "glyphFlat", 0, 1) ?? undefined,
         brighten: quakeUrlNumberParam(quakeStartupUrlParams, "glyphBright", 1, 12) ?? undefined,
+        // Hue-preserving tone lift after the brighten multiply (below 1 lifts
+        // mids/darks, clip guard holds highlights). `?glyphGamma=`.
+        gamma: quakeUrlNumberParam(quakeStartupUrlParams, "glyphGamma", 0.2, 1) ?? undefined,
+        // Sub-pixel glyph stroke — perceived-luminance coverage boost.
+        // `?glyphStroke=` (0 disables).
+        strokePx: quakeUrlNumberParam(quakeStartupUrlParams, "glyphStroke", 0, 2) ?? undefined,
         ambientLight: quakeUrlNumberParam(quakeStartupUrlParams, "glyphAmbient", 0, 1) ?? undefined,
         directionalLight: quakeUrlNumberParam(quakeStartupUrlParams, "glyphDir", 0, 1) ?? undefined,
         depthEpsilon: quakeUrlNumberParam(quakeStartupUrlParams, "glyphEps", 0, 0.1) ?? undefined,
@@ -1472,20 +1478,28 @@ const quakeMenuManifest = createQuakeMenuSceneManifest({
       maxCells: quakeUrlNumberParam(quakeStartupUrlParams, "glyphImageCells", 2000, 120_000) ?? undefined,
       minCellPx: quakeUrlNumberParam(quakeStartupUrlParams, "glyphImageCell", 2, 24) ?? undefined,
       glyphPalette: quakeStartupUrlParams.get("glyphImagePalette") ?? undefined,
-      // 2.0 lifts the art without visibly washing it — measured on the menu
-      // screens: at 3.0 the plaque's bronze clips to grey-white per channel.
-      ambient: quakeUrlNumberParam(quakeStartupUrlParams, "glyphImageAmbient", 0.2, 6) ?? 2.0,
+      // Measured against the cssquake.wtf reference menu (perceived-luminance
+      // region stats, 2026-08): 3.0 + the 0.6px glyph stroke + gamma 0.4 +
+      // backdropGamma 0.6 lands the banner/plaque within ~70% of the
+      // reference where the old 2.0/0.55/0.8 sat at ~35%. The earlier "3.0
+      // clips the bronze" observation predates the gamma clip guard, which
+      // now holds those channels. `?glyphImageAmbient=`.
+      ambient: quakeUrlNumberParam(quakeStartupUrlParams, "glyphImageAmbient", 0.2, 6) ?? 3.0,
       // Hue-preserving tone lift (below 1 brightens; see the overlay's `gamma`
       // doc). This carries the brightness the linear levers cannot: ambient
       // past ~2.4 clips the art's bright channels and washes the bronze grey,
       // while the curve spends its lift on the dark backdrop and midtones.
-      gamma: quakeUrlNumberParam(quakeStartupUrlParams, "glyphImageGamma", 0.2, 1) ?? 0.55,
+      gamma: quakeUrlNumberParam(quakeStartupUrlParams, "glyphImageGamma", 0.2, 1) ?? 0.4,
+      // Art-layer vibrancy (see the overlay's `saturation` doc).
+      // `?glyphImageSaturation=`.
+      saturation: quakeUrlNumberParam(quakeStartupUrlParams, "glyphImageSaturation", 0, 4) ?? undefined,
       // The backdrop's own, MILDER curve. One shared curve lifted the dark
-      // backdrop proportionally more than the art (measured: art:backdrop
-      // luminance ratio 2.5 -> 1.6), which read as the background sitting in
-      // front of the menu. 0.8 keeps the backdrop well above the old murk
-      // while the art's 0.55 stays clearly ahead. `?glyphImageBackdropGamma=`.
-      backdropGamma: quakeUrlNumberParam(quakeStartupUrlParams, "glyphImageBackdropGamma", 0.2, 1) ?? 0.8,
+      // backdrop proportionally more than the art, which read as the
+      // background sitting in front of the menu. 0.6 keeps the backdrop's
+      // concrete texture visible (the reference backdrop reads ~50 perceived
+      // luma) while the art's stronger lift + ink compensation stays ahead.
+      // `?glyphImageBackdropGamma=`.
+      backdropGamma: quakeUrlNumberParam(quakeStartupUrlParams, "glyphImageBackdropGamma", 0.2, 1) ?? 0.6,
       colorEncoding: quakeStartupUrlParams.get("glyphImageEncoding") === "spans" ? "spans" : "atlas",
       fontAtlas: quakeGlyphFontAtlas,
       // The INTERMISSION card is the one surface still built as DOM (it is
@@ -1501,10 +1515,13 @@ const quakeMenuManifest = createQuakeMenuSceneManifest({
       manifestTextDensity: quakeUrlNumberParam(quakeStartupUrlParams, "glyphImageTextDensity", 1, 16) ?? 10,
       // Ink-coverage compensation strength for the art/text detail layers —
       // `?glyphImageInkComp=` (0 disables, 1 full). See the overlay option.
-      inkCompensation: quakeUrlNumberParam(quakeStartupUrlParams, "glyphImageInkComp", 0, 1) ?? 0.7,
+      inkCompensation: quakeUrlNumberParam(quakeStartupUrlParams, "glyphImageInkComp", 0, 1) ?? 1,
+      // Sub-pixel glyph stroke — perceived-luminance coverage boost for the
+      // whole UI scene. `?glyphImageStroke=` (0 disables).
+      strokePx: quakeUrlNumberParam(quakeStartupUrlParams, "glyphImageStroke", 0, 2) ?? undefined,
       // Text-only brightness and vibrancy — both applied once to the conchars
       // sheet the text quads sample, so neither can affect the art or backdrop.
-      textGamma: quakeUrlNumberParam(quakeStartupUrlParams, "glyphImageTextGamma", 0.2, 1) ?? 0.42,
+      textGamma: quakeUrlNumberParam(quakeStartupUrlParams, "glyphImageTextGamma", 0.2, 1) ?? 0.38,
       textSaturation: quakeUrlNumberParam(quakeStartupUrlParams, "glyphImageTextSaturation", 0, 4) ?? 1.35,
       //
       // The LANDING screen, the backdrop and the corner logo are gone from

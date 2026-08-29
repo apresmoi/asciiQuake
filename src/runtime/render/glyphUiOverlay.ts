@@ -1,4 +1,4 @@
-import { createGlyphOrthographicCamera, createGlyphScene, type GlyphFontAtlas } from "glyphcss";
+import { createGlyphOrthographicCamera, createGlyphScene, quantizeGlyphAtlasPalette, type GlyphFontAtlas } from "glyphcss";
 import type { Polygon } from "@layoutit/polycss";
 import {
   QUAKE_MENU_SCENE_FRAME_W,
@@ -226,6 +226,24 @@ export interface QuakeGlyphUiOverlayOptions {
    */
   readonly textSaturation?: number;
   readonly glyphPalette?: string;
+  /**
+   * Art-layer vibrancy (1 = neutral). Composed after the art `gamma` lift,
+   * exactly like {@link textSaturation} for the conchars sheet: each channel
+   * is pushed away from the cell's own luma. Never touches the backdrop or
+   * the text sheet. `?glyphImageSaturation=`.
+   */
+  readonly saturation?: number;
+  /**
+   * `-webkit-text-stroke` width (px) for the scene surface. ASCII letterforms
+   * ink only a fraction of their cell — at this overlay's detail-layer font
+   * sizes (~2px) barely a fifth — so the art reads far darker than the same
+   * colours in a solid render. The sub-pixel stroke fattens every glyph while
+   * COLR atlas output keeps per-glyph palette colours (and span output keeps
+   * per-span colours via currentColor). Measured against the cssquake.wtf
+   * reference menu: +50-90% perceived luminance, hue preserved. 0 disables.
+   * `?glyphImageStroke=` overrides.
+   */
+  readonly strokePx?: number;
   /** Final-string encode strategy. Defaults to `atlas`, as the world does. */
   readonly colorEncoding?: "atlas" | "spans";
   /**
@@ -604,6 +622,9 @@ export function createQuakeGlyphUiOverlay(
   surface.style.inset = "0";
   surface.style.pointerEvents = "none";
   surface.style.overflow = "hidden";
+  // Coverage, not colour — see the `strokePx` option doc.
+  const strokePx = Math.max(0, Math.min(2, options.strokePx ?? 0.6));
+  if (strokePx > 0) surface.style.setProperty("-webkit-text-stroke", `${strokePx}px currentColor`);
   hostEl.insertBefore(surface, hostEl.firstChild);
 
   /**
@@ -629,14 +650,23 @@ export function createQuakeGlyphUiOverlay(
    */
   const artGamma = Math.min(1, Math.max(0.2, options.gamma ?? 1));
   const backdropGamma = Math.min(1, Math.max(0.2, options.backdropGamma ?? artGamma));
+  // Art-only vibrancy, composed after the gamma lift exactly like the text
+  // sheet's saturation (push each channel away from the cell's own luma).
+  // Measured against the reference menu: our lifted bronzes sat at R/G ~1.14
+  // where the reference art reads ~1.37 — the quantized-and-lifted art keeps
+  // its luminance but loses chroma, and this puts it back. The backdrop is
+  // near-neutral concrete, so it stays un-saturated on purpose.
+  // `?glyphImageSaturation=`.
+  const artSaturation = Math.min(4, Math.max(0, options.saturation ?? 1.4));
   const artLiftCache = new Map<string, string>();
   const backdropLiftCache = new Map<string, string>();
   function liftCellColors(
     grid: { char: string[]; color: (string | null)[] },
     gamma: number,
     liftCache: Map<string, string>,
+    saturation = 1,
   ): void {
-    if (gamma >= 1) return;
+    if (gamma >= 1 && saturation === 1) return;
     const colors = grid.color;
     for (let i = 0; i < colors.length; i++) {
       const hex = colors[i];
@@ -652,17 +682,61 @@ export function createQuakeGlyphUiOverlay(
           // Scale toward the curve's target luminance, but never past the point
           // where the largest channel would clip — that cap is what keeps a
           // bright bronze from washing to white.
-          const scale = Math.min(
+          const scale = gamma >= 1 ? 1 : Math.min(
             (255 * Math.pow(luma / 255, gamma)) / luma,
             255 / Math.max(r, g, b),
           );
-          const h = (v: number) => Math.round(v * scale).toString(16).padStart(2, "0");
-          lifted = `#${h(r)}${h(g)}${h(b)}`;
+          let nr = r * scale, ng = g * scale, nb = b * scale;
+          if (saturation !== 1) {
+            const l = 0.2126 * nr + 0.7152 * ng + 0.0722 * nb;
+            nr = l + (nr - l) * saturation;
+            ng = l + (ng - l) * saturation;
+            nb = l + (nb - l) * saturation;
+          }
+          const h = (v: number) =>
+            Math.max(0, Math.min(255, Math.round(v))).toString(16).padStart(2, "0");
+          lifted = `#${h(nr)}${h(ng)}${h(nb)}`;
         }
         liftCache.set(hex, lifted);
       }
       colors[i] = lifted;
     }
+  }
+
+  // PINNED atlas palette — same rationale as the world overlay's: the scene's
+  // pooled quantizer trains on whatever happens to be on screen when its
+  // drift/clock gates open, which both left the first render on a stale
+  // palette and retrained on every navigation (the measured page-to-page
+  // colour shift, and the backdrop outvoting the art's bronzes). This overlay
+  // already memoizes every DISTINCT final colour it produces (the lift caches
+  // above, plus the stamped DOM-text colours), so that union IS the colour
+  // universe — quantize it once per growth spurt and pin it: stable across
+  // screens, each distinct colour votes once (rare brights keep their slots).
+  const pinnedPaletteBudget = Math.max(1, options.fontAtlas?.maxPaletteSize ?? 68);
+  const stampedColors = new Set<string>();
+  let paletteUniverseCount = -1;
+  let uiPaletteTimer = 0;
+  function schedulePinnedUiPalette(): void {
+    if ((options.colorEncoding ?? "atlas") !== "atlas") return;
+    const size = artLiftCache.size + backdropLiftCache.size + stampedColors.size;
+    // No lifted colours yet (identity gammas keep the caches empty): leave the
+    // scene on its pooled quantizer rather than pinning a text-only palette.
+    if (size === 0 || size === paletteUniverseCount || uiPaletteTimer) return;
+    // Coalesce a screen's worth of new colours into one rebuild.
+    uiPaletteTimer = window.setTimeout(() => {
+      uiPaletteTimer = 0;
+      const now = artLiftCache.size + backdropLiftCache.size + stampedColors.size;
+      if (now === paletteUniverseCount || !sceneApi) return;
+      paletteUniverseCount = now;
+      const colors = [...new Set([
+        ...artLiftCache.values(),
+        ...backdropLiftCache.values(),
+        ...stampedColors,
+      ])];
+      sceneApi.setOptions({
+        atlasPalette: quantizeGlyphAtlasPalette(colors.map(() => "x"), colors, colors.length, pinnedPaletteBudget),
+      });
+    }, 150);
   }
 
   /**
@@ -804,11 +878,12 @@ export function createQuakeGlyphUiOverlay(
         liftCellColors(grid, backdropGamma, backdropLiftCache);
         stampText(grid);
       } else {
-        liftCellColors(grid, artGamma, artLiftCache);
+        liftCellColors(grid, artGamma, artLiftCache, artSaturation);
         // Detail layers only: the backdrop's sparse glyphs are a deliberate
         // depth cue, so the base grid is never coverage-compensated.
         compensateInkCoverage(grid);
       }
+      schedulePinnedUiPalette();
     },
     directionalLight: { direction: [0, 0, 1], intensity: 0 },
     ambientLight: { intensity: Math.max(0, options.ambient ?? 1.4) },
@@ -853,6 +928,7 @@ export function createQuakeGlyphUiOverlay(
     /** Write one run of characters at (row, col), skipping spaces so the art
      *  behind keeps its cells. Returns the column after the last character. */
     const write = (row: number, col: number, text: string, colour: string): number => {
+      stampedColors.add(colour);
       if (row < 0 || row >= grid.rows) return col + text.length;
       for (let i = 0; i < text.length; i++) {
         const c = col + i;
@@ -2072,6 +2148,7 @@ export function createQuakeGlyphUiOverlay(
       unsubscribeMenuState?.();
       if (frameWatch) clearInterval(frameWatch);
       if (trailingSync) clearTimeout(trailingSync);
+      if (uiPaletteTimer) { window.clearTimeout(uiPaletteTimer); uiPaletteTimer = 0; }
       boxObserver?.disconnect();
       domObserver?.disconnect();
       for (const m of meshes.values()) m.dispose();

@@ -1,4 +1,4 @@
-import { createGlyphPerspectiveCamera, createGlyphScene, type GlyphFontAtlas } from "glyphcss";
+import { createGlyphPerspectiveCamera, createGlyphScene, quantizeGlyphAtlasPalette, type GlyphFontAtlas } from "glyphcss";
 import type { GlyphMeshHandle, GlyphMeshTransform, GlyphOcclusionCoverage } from "glyphcss";
 import { BASE_TILE, type Vec3 } from "@layoutit/polycss";
 
@@ -115,6 +115,26 @@ export interface QuakeGlyphWorldOverlayOptions {
   readonly flat?: number;
   /** Colour brighten multiplier for the dark baked Quake colours. */
   readonly brighten?: number;
+  /**
+   * Hue-preserving tone-curve lift applied AFTER {@link brighten} (below 1
+   * lifts the mids and darks the way a display gamma does, while a per-channel
+   * clip guard keeps highlights from washing past white — the same curve the
+   * UI overlay's `gamma` uses). This is the lever the linear `brighten` cannot
+   * express: measured against the polycss reference, raising `brighten` past
+   * ~6.5 lifts the perceived MEAN but clips/compresses the perceived RANGE
+   * (channel clamp turns brights flat yellow) — the curve instead spends its
+   * lift on the mids and holds the top end. `?glyphGamma=` overrides.
+   */
+  readonly gamma?: number;
+  /**
+   * `-webkit-text-stroke` width (px) applied to the overlay's glyph output.
+   * ASCII letterforms ink only a fraction of their cell, so the same colours
+   * read far darker than a solid render — measured against the polycss
+   * reference, a sub-pixel stroke raises perceived luminance ~50% while
+   * preserving hue, where pushing colour lift alone clips. 0 disables.
+   * `?glyphStroke=` overrides.
+   */
+  readonly strokePx?: number;
   /** Ambient light (the floor of brightness; baked colours are the truth). `?glyphAmbient=`. */
   readonly ambientLight?: number;
   /** Directional light intensity (orientation shading for ASCII shape). `?glyphDir=`. */
@@ -268,6 +288,13 @@ const QUAKE_GLYPH_OVERLAY_ZOOM = 50;
 // ceiling's tonal separation (a gamma curve would hold highlights better; this
 // stays a straight multiply). `?glyphBright=` overrides.
 const QUAKE_GLYPH_OVERLAY_BRIGHTEN = 6.5;
+// Hue-preserving tone curve applied after the brighten multiply (see the
+// `gamma` option). 0.7, measured against the cssquake.wtf polycss reference
+// at the e1m1 spawn: with the 0.4px stroke it lands the perceived mean on
+// the reference (43 vs 43) where the plain multiply stalled at 29.
+const QUAKE_GLYPH_OVERLAY_GAMMA = 0.7;
+// Sub-pixel glyph stroke (see the `strokePx` option).
+const QUAKE_GLYPH_OVERLAY_STROKE_PX = 0.4;
 // Depth-test deadband for near-coplanar world surfaces (see scene `depthEpsilon`).
 // Default OFF: the real grazing-angle z-fighting came from glyphcss dropping the
 // perspective-correct zbuf under supersampling (cssQuake runs SS=2), which is now
@@ -404,6 +431,37 @@ export function createQuakeGlyphWorldOverlay(
   const entityOutline = options.entityOutline ?? false;
   const temporalBlend = Math.max(0, Math.min(0.9, options.temporalBlend ?? 0));
   const brighten = options.brighten ?? QUAKE_GLYPH_OVERLAY_BRIGHTEN;
+  const gamma = Math.min(1, Math.max(0.2, options.gamma ?? QUAKE_GLYPH_OVERLAY_GAMMA));
+  // Memoized (the sources are palettized Quake art: tens of thousands of polys,
+  // a few hundred distinct colours, stable across frames — same rationale as
+  // the UI overlay's lift cache).
+  const toneCache = new Map<string, string>();
+  const toneHex = (hex: string): string => {
+    if (gamma >= 1) return hex;
+    let lifted = toneCache.get(hex);
+    if (lifted === undefined) {
+      const match = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex);
+      if (!match) return hex;
+      const r = parseInt(match[1]!, 16);
+      const g = parseInt(match[2]!, 16);
+      const b = parseInt(match[3]!, 16);
+      const luma = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+      if (luma <= 0) lifted = hex;
+      else {
+        // Scale toward the curve's target luminance, but never past the point
+        // where the largest channel would clip — the guard that keeps bright
+        // surfaces from washing to flat yellow/white.
+        const scale = Math.min(
+          (255 * Math.pow(luma / 255, gamma)) / luma,
+          255 / Math.max(r, g, b),
+        );
+        const h = (v: number) => Math.round(v * scale).toString(16).padStart(2, "0");
+        lifted = `#${h(r)}${h(g)}${h(b)}`;
+      }
+      toneCache.set(hex, lifted);
+    }
+    return lifted;
+  };
   const ambientLight = options.ambientLight ?? 0.5;
   const directionalLight = options.directionalLight ?? 0.6;
   const depthEpsilon = Math.max(0, Math.min(0.1, options.depthEpsilon ?? QUAKE_GLYPH_OVERLAY_DEPTH_EPSILON));
@@ -428,6 +486,12 @@ export function createQuakeGlyphWorldOverlay(
   element.style.overflow = "hidden";
   element.style.background = "#000";
   element.style.fontFamily = '"Menlo", "Consolas", monospace';
+  // Coverage, not colour: ASCII ink fills ~a third of a cell, so the same
+  // colours read far darker than polycss's solid raster. The sub-pixel stroke
+  // fattens every letterform (COLR atlas glyphs keep their palette colours;
+  // span-mode strokes inherit each span's own colour via currentColor).
+  const strokePx = Math.max(0, Math.min(2, options.strokePx ?? QUAKE_GLYPH_OVERLAY_STROKE_PX));
+  if (strokePx > 0) element.style.setProperty("-webkit-text-stroke", `${strokePx}px currentColor`);
   element.style.fontSize = `${cellPx}px`;
   element.style.lineHeight = `${lineHeightPx}px`;
   element.style.letterSpacing = "0";
@@ -484,6 +548,35 @@ export function createQuakeGlyphWorldOverlay(
     camera,
   });
 
+  // PINNED atlas palette. The scene's own pooled quantizer trains on whatever
+  // is on screen when its gates open and then holds that palette until enough
+  // drift accumulates — measured here as the "first render" colour bug: the
+  // first world frame encodes against a palette trained during load, and the
+  // colours only snap right after the camera moves. This overlay knows the
+  // map's ENTIRE final colour universe (every polygon runs through the
+  // memoized tone caches above), so it pins a palette quantized over all of
+  // it: correct from the first frame, stable across camera moves, and immune
+  // to the population-weighted highlight crush of view-trained palettes
+  // (each distinct colour votes once — rare brights keep their slots).
+  const paletteBudget = Math.max(1, options.fontAtlas?.maxPaletteSize ?? 68);
+  const paletteColors = new Set<string>();
+  let palettePinnedCount = -1;
+  let paletteTimer = 0;
+  function schedulePinnedAtlasPalette(): void {
+    if (colorEncoding !== "atlas") return;
+    if (paletteColors.size === palettePinnedCount || paletteTimer) return;
+    // Coalesce bursts (world mesh + the initial entity wave) into one rebuild.
+    paletteTimer = window.setTimeout(() => {
+      paletteTimer = 0;
+      if (paletteColors.size === palettePinnedCount) return;
+      palettePinnedCount = paletteColors.size;
+      const colors = [...paletteColors];
+      scene.setOptions({
+        atlasPalette: quantizeGlyphAtlasPalette(colors.map(() => "x"), colors, colors.length, paletteBudget),
+      });
+    }, 100);
+  }
+
   // The scene's autoSize measures the cell box from its <pre> (scene.output), so
   // set the line-height there (not just the container) and re-fit so the row
   // count + projection aspect follow `?glyphLine=`.
@@ -528,10 +621,12 @@ export function createQuakeGlyphWorldOverlay(
       scene.rerender();
       return;
     }
-    const polygons: GlyphPolygon[] = geometry.polygons.map((polygon) => ({
-      vertices: polygon.v as Vec3[],
-      color: flattenHex(brightenHex(polygon.c, brighten), flatten),
-    }));
+    const polygons: GlyphPolygon[] = geometry.polygons.map((polygon) => {
+      const color = flattenHex(toneHex(brightenHex(polygon.c, brighten)), flatten);
+      paletteColors.add(color);
+      return { vertices: polygon.v as Vec3[], color };
+    });
+    schedulePinnedAtlasPalette();
     if (pvsVisibleLeavesAt) {
       worldPolys = polygons;
       worldLeaves = geometry.polygons.map((p) => (Array.isArray(p.l) && p.l.length ? p.l : null));
@@ -571,12 +666,15 @@ export function createQuakeGlyphWorldOverlay(
   const entities = new Map<string, GlyphMeshHandle>();
 
   function toGlyphPolygons(geometry: QuakeGlyphEntityGeometry): GlyphPolygon[] {
-    return geometry.polygons.map((polygon) => ({
-      vertices: polygon.v as Vec3[],
+    const polygons = geometry.polygons.map((polygon) => {
       // Entities keep their own colour variation (no world flatten); just lift
       // the dark baked Quake palette like the world does so they read.
-      color: brightenHex(polygon.c, brighten),
-    }));
+      const color = toneHex(brightenHex(polygon.c, brighten));
+      paletteColors.add(color);
+      return { vertices: polygon.v as Vec3[], color };
+    });
+    schedulePinnedAtlasPalette();
+    return polygons;
   }
 
   // Per-mesh detail: render an entity at a higher glyph density than the world
@@ -926,6 +1024,7 @@ export function createQuakeGlyphWorldOverlay(
 
   function dispose(): void {
     if (pendingFrame) { window.cancelAnimationFrame(pendingFrame); pendingFrame = 0; }
+    if (paletteTimer) { window.clearTimeout(paletteTimer); paletteTimer = 0; }
     // Drop staged ops rather than flushing them: the render that would have
     // applied them is cancelled above, and `scene.destroy()` follows.
     staged.clear();
