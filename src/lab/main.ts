@@ -59,6 +59,14 @@ let displayW = numParam("labW", 120, 1600, 620);
 let labText = startupParams.get("labText") ?? "Loading sound/misc/menu1.wav\nQUAKE v1.09";
 let textGlyphPx = numParam("labGlyphPx", 6, 96, 16);
 let palette = sanitizeQuakeGlyphPalette(startupParams.get("glyphImagePalette"));
+/** The LOGO mesh's own ramp (`?glyphImageLogoPalette=`), default "dense" — the
+ *  user-tuned corner-logo look. Every lab IMAGE previews with the logo's
+ *  per-mesh style (the lab's images ARE the logo path — see the density note),
+ *  so what this page shows for an image IS the game's logo treatment. */
+const LOGO_PALETTE_DEFAULT = "dense";
+let logoPalette = startupParams.get("glyphImageLogoPalette")
+  ? sanitizeQuakeGlyphPalette(startupParams.get("glyphImageLogoPalette"))
+  : LOGO_PALETTE_DEFAULT;
 let encoding: "atlas" | "spans" =
   startupParams.get("glyphImageEncoding") === "spans" ? "spans" : "atlas";
 let segment = startupParams.get("labSegment") !== "0";
@@ -182,7 +190,18 @@ function remount(): void {
             fit: "contain",
             density: values.logoDensity,
             segment,
+            styleTag: "logo",
           }],
+    // The logo's per-mesh style — identical wiring to App.ts, so the lab
+    // previews exactly what the game's corner logo will render.
+    meshStyles: {
+      logo: {
+        palette: logoPalette,
+        ambient: values.logoAmbient,
+        gamma: values.logoGamma,
+        saturation: values.logoSaturation,
+      },
+    },
     textArt:
       source === "text"
         ? [{ selector: ".lab-text-run", layer: 1, density: values.consoleDensity }]
@@ -348,6 +367,21 @@ function buildControls(): void {
     scheduleRemount();
   };
   controlsEl.appendChild(palSel);
+  // The LOGO mesh's own ramp (per-mesh override; images preview with it).
+  const logoPalSel = document.createElement("select");
+  logoPalSel.style.marginTop = "6px";
+  for (const name of Object.keys(WIREFRAME_PALETTES).filter(isAsciiOnlyGlyphPalette)) {
+    const o = document.createElement("option");
+    o.value = name;
+    o.textContent = `logo: ${name}${name === LOGO_PALETTE_DEFAULT ? " (game default)" : ""}`;
+    if (name === logoPalette) o.selected = true;
+    logoPalSel.appendChild(o);
+  }
+  logoPalSel.onchange = () => {
+    logoPalette = logoPalSel.value;
+    scheduleRemount();
+  };
+  controlsEl.appendChild(logoPalSel);
   const encSel = document.createElement("select");
   encSel.style.marginTop = "6px";
   for (const name of ["atlas", "spans"] as const) {
@@ -403,6 +437,7 @@ function buildControls(): void {
   reset.onclick = () => {
     for (const knob of QUAKE_GLYPH_UI_TUNING_KNOBS) values[knob.key] = knob.def;
     palette = "detail";
+    logoPalette = LOGO_PALETTE_DEFAULT;
     encoding = "atlas";
     buildControls();
     scheduleRemount();
@@ -475,6 +510,7 @@ function gameQueryString(): string {
     if (values[knob.key] !== knob.def) qs.set(knob.param, String(values[knob.key]));
   }
   if (palette !== "detail") qs.set("glyphImagePalette", palette);
+  if (logoPalette !== LOGO_PALETTE_DEFAULT) qs.set("glyphImageLogoPalette", logoPalette);
   if (encoding !== "atlas") qs.set("glyphImageEncoding", encoding);
   return `?${qs.toString()}`;
 }
@@ -486,6 +522,7 @@ function syncUrl(): void {
     if (values[knob.key] !== knob.def) qs.set(knob.param, String(values[knob.key]));
   }
   if (palette !== "detail") qs.set("glyphImagePalette", palette);
+  if (logoPalette !== LOGO_PALETTE_DEFAULT) qs.set("glyphImageLogoPalette", logoPalette);
   if (encoding !== "atlas") qs.set("glyphImageEncoding", encoding);
   if (source !== "logo") qs.set("labSource", source);
   if (displayW !== 620) qs.set("labW", String(displayW));

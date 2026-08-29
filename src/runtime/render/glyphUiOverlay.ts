@@ -86,6 +86,8 @@ export interface QuakeGlyphUiSprite {
    *   vs `0 100%` (highlighted), so the UV window has to follow the selection.
    */
   readonly fit?: "cover" | "contain" | "css";
+  /** Per-mesh style tag — see {@link QuakeGlyphUiSpriteRule.styleTag}. */
+  readonly styleTag?: string;
 }
 
 /** Matches sprites by selector, so elements created LATER are still adopted. */
@@ -93,6 +95,12 @@ export interface QuakeGlyphUiSpriteRule {
   readonly selector: string;
   readonly layer?: number;
   readonly fit?: "cover" | "contain" | "css";
+  /**
+   * Per-mesh STYLE tag: quads with the same tag form their own glyphcss mesh
+   * (named by the tag), styled by the overlay's `meshStyles[tag]` — its own
+   * glyph palette and tone, nothing else's. See {@link QuakeGlyphMeshStyle}.
+   */
+  readonly styleTag?: string;
   /**
    * Render this sprite at N x the shared grid's resolution, in its own glyphcss
    * detail layer (`cell = base cell / density`, same on-screen size). This is the
@@ -244,6 +252,31 @@ export interface QuakeGlyphUiOverlayOptions {
   readonly textSaturation?: number;
   readonly glyphPalette?: string;
   /**
+   * PER-MESH palette + tone overrides, keyed by style tag (a manifest sprite's
+   * `styleTag`, or a sprite rule's). Quads carrying a tag are grouped into
+   * their own glyphcss mesh named by the tag, and:
+   *
+   *  - `palette` rasterizes that mesh against its OWN glyph ramp (glyphcss's
+   *    per-mesh `glyphPalette`, additive in the linked build). The scene's
+   *    ramp is attached when the style declares none, which also guarantees
+   *    the styled mesh gets its own layer even at density 1.
+   *  - `ambient` is the mesh's EFFECTIVE ambient: the quad's tint is scaled by
+   *    `ambient / scene ambient` (exact for ratios ≤ 1 — colour AND glyph
+   *    choice land exactly where a scene-wide ambient of that value would put
+   *    them, because shade = texel × tint × scene ambient). A ratio > 1 cannot
+   *    brighten the shade pre-raster, so the excess is applied to the cell
+   *    colours post-raster (clip-capped, hue-preserving) — colours right,
+   *    glyph choice up to one ramp step sparse.
+   *  - `gamma`/`saturation` replace the art-layer lift for that mesh's grid in
+   *    `transformCells` (identified by glyphcss's layer info), levels and ink
+   *    compensation unchanged.
+   *
+   * Shipped use: the corner logo (`styleTag: "logo"`) carries the user-tuned
+   * dense-ramp look (ambient 1.65, gamma 1, saturation 1.1) while the menu
+   * art, backdrop and text keep the scene-wide tone.
+   */
+  readonly meshStyles?: Readonly<Record<string, QuakeGlyphMeshStyle>>;
+  /**
    * Art-layer vibrancy (1 = neutral). Composed after the art `gamma` lift,
    * exactly like {@link textSaturation} for the conchars sheet: each channel
    * is pushed away from the cell's own luma. Never touches the backdrop or
@@ -383,6 +416,18 @@ const SPINNER_FRAME_MS = 250;
 const SPINNER_GLYPHS = [12, 13] as const;
 function spinnerGlyph(now: number): number {
   return SPINNER_GLYPHS[Math.floor(now / SPINNER_FRAME_MS) % SPINNER_GLYPHS.length]!;
+}
+
+/** One mesh's style override — see {@link QuakeGlyphUiOverlayOptions.meshStyles}. */
+export interface QuakeGlyphMeshStyle {
+  /** Glyph ramp palette name (sanitize upstream — ASCII-only policy). */
+  readonly palette?: string;
+  /** Effective ambient for this mesh (scene ambient when omitted). */
+  readonly ambient?: number;
+  /** Tone-curve exponent for this mesh's grid (art `gamma` when omitted). */
+  readonly gamma?: number;
+  /** Vibrancy for this mesh's grid (art `saturation` when omitted). */
+  readonly saturation?: number;
 }
 
 export interface QuakeGlyphUiOverlay {
@@ -529,6 +574,7 @@ export function createQuakeGlyphUiOverlay(
       sprite: {
         element: el, layer: rule.layer, fit: rule.fit, texture: rule.texture,
         density: rule.density, segment: rule.segment, brightness: rule.brightness,
+        styleTag: rule.styleTag,
       },
       isImg, url, natural: null, regions: null,
     });
@@ -672,6 +718,9 @@ export function createQuakeGlyphUiOverlay(
    * thousands of cells but only a few hundred distinct colours (the sources
    * are palettized Quake art), and the map is stable across frames.
    */
+  // The scene's ambient intensity — also the denominator a style's per-mesh
+  // `ambient` is expressed against (see `meshStyles` / emitQuad).
+  const sceneAmbient = Math.max(0.0001, options.ambient ?? 1.4);
   const artGamma = Math.min(1, Math.max(0.2, options.gamma ?? 1));
   const backdropGamma = Math.min(1, Math.max(0.2, options.backdropGamma ?? artGamma));
   // Art-only vibrancy, composed after the gamma lift exactly like the text
@@ -690,6 +739,15 @@ export function createQuakeGlyphUiOverlay(
   const backdropWhite = Math.min(1, Math.max(backdropBlack + 0.05, options.backdropWhitePoint ?? 1));
   const artLiftCache = new Map<string, string>();
   const backdropLiftCache = new Map<string, string>();
+  /** One lift cache per styled mesh (tag → cache) — a style's gamma/saturation
+   *  differ from the art layers', so its colours memoize separately and join
+   *  the pinned-palette universe alongside them. */
+  const styleLiftCaches = new Map<string, Map<string, string>>();
+  function styleLiftCache(tag: string): Map<string, string> {
+    let cache = styleLiftCaches.get(tag);
+    if (!cache) styleLiftCaches.set(tag, (cache = new Map()));
+    return cache;
+  }
   function liftCellColors(
     grid: { char: string[]; color: (string | null)[] },
     gamma: number,
@@ -752,27 +810,60 @@ export function createQuakeGlyphUiOverlay(
   const stampedColors = new Set<string>();
   let paletteUniverseCount = -1;
   let uiPaletteTimer = 0;
+  function styleCacheSizes(): number {
+    let n = 0;
+    for (const cache of styleLiftCaches.values()) n += cache.size;
+    return n;
+  }
   function schedulePinnedUiPalette(): void {
     if ((options.colorEncoding ?? "atlas") !== "atlas") return;
-    const size = artLiftCache.size + backdropLiftCache.size + stampedColors.size;
+    const size = artLiftCache.size + backdropLiftCache.size + stampedColors.size + styleCacheSizes();
     // No lifted colours yet (identity gammas keep the caches empty): leave the
     // scene on its pooled quantizer rather than pinning a text-only palette.
     if (size === 0 || size === paletteUniverseCount || uiPaletteTimer) return;
     // Coalesce a screen's worth of new colours into one rebuild.
     uiPaletteTimer = window.setTimeout(() => {
       uiPaletteTimer = 0;
-      const now = artLiftCache.size + backdropLiftCache.size + stampedColors.size;
+      const now = artLiftCache.size + backdropLiftCache.size + stampedColors.size + styleCacheSizes();
       if (now === paletteUniverseCount || !sceneApi) return;
       paletteUniverseCount = now;
       const colors = [...new Set([
         ...artLiftCache.values(),
         ...backdropLiftCache.values(),
         ...stampedColors,
+        ...[...styleLiftCaches.values()].flatMap((cache) => [...cache.values()]),
       ])];
       sceneApi.setOptions({
         atlasPalette: quantizeGlyphAtlasPalette(colors.map(() => "x"), colors, colors.length, pinnedPaletteBudget),
       });
     }, 150);
+  }
+
+  /** Linear per-cell colour multiply (hue-preserving, capped so no channel
+   *  clips), memoized like the lifts — the post-raster half of a per-mesh
+   *  `ambient` that exceeds the scene's (see `meshStyles`). */
+  function scaleGridColors(
+    grid: { char: string[]; color: (string | null)[] },
+    factor: number,
+    cache: Map<string, string>,
+  ): void {
+    const colors = grid.color;
+    for (let i = 0; i < colors.length; i++) {
+      const hex = colors[i];
+      if (!hex) continue;
+      let scaled = cache.get(hex);
+      if (scaled === undefined) {
+        const r = parseInt(hex.slice(1, 3), 16);
+        const g = parseInt(hex.slice(3, 5), 16);
+        const b = parseInt(hex.slice(5, 7), 16);
+        const max = Math.max(r, g, b);
+        const f = max > 0 ? Math.min(factor, 255 / max) : 1;
+        const h = (v: number) => Math.round(v * f).toString(16).padStart(2, "0");
+        scaled = `#${h(r)}${h(g)}${h(b)}`;
+        cache.set(hex, scaled);
+      }
+      colors[i] = scaled;
+    }
   }
 
   /**
@@ -909,8 +1000,30 @@ export function createQuakeGlyphUiOverlay(
     // milder curve so the art keeps reading as sitting in front of it, and
     // DOM text — whose coordinate math and screen-authored colours assume the
     // full-host grid — is stamped into the base grid only, AFTER its lift.
-    transformCells: (grid) => {
-      if (isBaseGrid(grid)) {
+    transformCells: (grid, layer) => {
+      // A STYLED mesh's grid gets its own tone: glyphcss names each detail
+      // layer with its mesh id (the style tag), so this is exact per-mesh
+      // identification, not a shape heuristic. Levels and ink compensation
+      // stay the art layers' — only ambient overflow, gamma and saturation
+      // are overridden (see `meshStyles`).
+      const styledMesh = layer?.mesh;
+      const style = styledMesh !== undefined ? options.meshStyles?.[styledMesh] : undefined;
+      if (style && styledMesh !== undefined) {
+        // Ambient above the scene's: the 0..1 tint already carried
+        // min(1, ratio); apply the remainder linearly BEFORE the tone curve,
+        // like a true ambient would enter (hue-preserving, clip-capped).
+        const residual = style.ambient !== undefined ? style.ambient / sceneAmbient : 1;
+        if (residual > 1.001) scaleGridColors(grid, residual, styleLiftCache(styledMesh + "\u0000amb"));
+        liftCellColors(
+          grid,
+          Math.min(1, Math.max(0.2, style.gamma ?? artGamma)),
+          styleLiftCache(styledMesh),
+          Math.min(4, Math.max(0, style.saturation ?? artSaturation)),
+          artBlack,
+          artWhite,
+        );
+        compensateInkCoverage(grid);
+      } else if (isBaseGrid(grid)) {
         liftCellColors(grid, backdropGamma, backdropLiftCache, 1, backdropBlack, backdropWhite);
         stampText(grid);
       } else {
@@ -922,7 +1035,7 @@ export function createQuakeGlyphUiOverlay(
       schedulePinnedUiPalette();
     },
     directionalLight: { direction: [0, 0, 1], intensity: 0 },
-    ambientLight: { intensity: Math.max(0, options.ambient ?? 1.4) },
+    ambientLight: { intensity: sceneAmbient },
   });
   sceneApi = scene;
 
@@ -1072,7 +1185,7 @@ export function createQuakeGlyphUiOverlay(
    * box around the art that transparency was added to fix. So a sprite whose
    * segmentation fails degrades to the leak, never to the box.
    */
-  interface PolyGroup { density: number; transparent: boolean; polys: Polygon[] }
+  interface PolyGroup { density: number; transparent: boolean; styleTag?: string; polys: Polygon[] }
 
   /** Everything one textured quad needs, source-agnostic: the DOM tracer and
    *  the manifest renderer both funnel through here, so grouping, occlusion
@@ -1098,17 +1211,35 @@ export function createQuakeGlyphUiOverlay(
     brightness: number;
     /** Explicit tint (a SOLID quad's flat colour); overrides the grey. */
     tint?: string;
+    /** Style-override tag — see `meshStyles`. Tagged quads get their own mesh. */
+    styleTag?: string;
   }
 
   function emitQuad(groups: Map<string, PolyGroup>, q: QuadEmit): void {
-    const level = Math.max(0, Math.min(1, q.brightness));
+    // A style's `ambient` rides the tint: shade = texel × tint × scene
+    // ambient, so tint = styleAmbient/sceneAmbient reproduces exactly what a
+    // scene ambient of that value would render — colour AND glyph choice.
+    // Ratios above 1 can't be expressed in a 0..1 tint; the excess is applied
+    // post-raster in `transformCells` (see `meshStyles`' doc).
+    const styleAmbient = q.styleTag ? options.meshStyles?.[q.styleTag]?.ambient : undefined;
+    const ambientScale = styleAmbient !== undefined
+      ? Math.min(1, styleAmbient / sceneAmbient)
+      : 1;
+    const level = Math.max(0, Math.min(1, q.brightness * ambientScale));
     const channel = Math.round(255 * level).toString(16).padStart(2, "0");
     const tint = q.tint ?? `#${channel}${channel}${channel}`;
     const spanU = q.u1 - q.u0, spanV = q.v1 - q.v0;
     const segmented = !!q.regions && q.density > 1 && spanU > 0 && spanV > 0;
-    const key = `d${q.density}${q.density > 1 && !segmented ? "t" : ""}`;
+    // A tagged quad's mesh is its own: the tag joins the key so the mesh can
+    // carry its per-mesh palette and be identified by the transformCells hook.
+    const key = `d${q.density}${q.density > 1 && !segmented ? "t" : ""}${q.styleTag ? `/${q.styleTag}` : ""}`;
     const target = (groups.get(key)
-      ?? groups.set(key, { density: q.density, transparent: q.density > 1 && !segmented, polys: [] }).get(key)!)
+      ?? groups.set(key, {
+        density: q.density,
+        transparent: q.density > 1 && !segmented,
+        ...(q.styleTag ? { styleTag: q.styleTag } : {}),
+        polys: [],
+      }).get(key)!)
       .polys;
 
     // Segmented art emits a tight quad per connected opaque region instead of
@@ -1244,8 +1375,12 @@ export function createQuakeGlyphUiOverlay(
         z: def.layer * LAYER_STEP,
         url: def.texture, u0, u1, v0, v1,
         regions: tex.regions,
-        density: Math.max(1, Math.round(def.density ?? 1)),
+        // Fractional on purpose: glyphcss detail cells are base/density with
+        // no rounding, and the logo's shipped density is 1.472 (see the
+        // manifest's logo def).
+        density: Math.max(1, def.density ?? 1),
         brightness,
+        styleTag: def.styleTag,
       });
     };
 
@@ -1913,8 +2048,11 @@ export function createQuakeGlyphUiOverlay(
         x0, x1, y0, y1, z,
         url: s.url, u0, u1, v0, v1,
         regions: s.regions,
-        density: Math.max(1, Math.round(s.sprite.density ?? 1)),
+        // Fractional on purpose — same contract as the manifest sprites (the
+        // lab drives the logo's 1.472 default through this path).
+        density: Math.max(1, s.sprite.density ?? 1),
         brightness: s.sprite.brightness ?? 1,
+        styleTag: s.sprite.styleTag,
       });
     }
     return groups;
@@ -2014,9 +2152,28 @@ export function createQuakeGlyphUiOverlay(
       // with that punches a rectangular black box around the art. Density 1
       // shares the base grid, where the rasterizer composites texture alpha
       // per cell and no cross-layer occlusion exists.
-      else meshes.set(groupKey, scene.add(group.polys, group.density > 1
-        ? (group.transparent ? { density: group.density, transparent: true } : { density: group.density })
-        : undefined));
+      else {
+        const style = group.styleTag ? options.meshStyles?.[group.styleTag] : undefined;
+        const base = group.density > 1
+          ? (group.transparent
+            ? { density: group.density, transparent: true as const }
+            : { density: group.density })
+          : undefined;
+        // A styled mesh is named by its tag (that name is what transformCells
+        // receives as layer identity) and ALWAYS carries a glyphPalette — the
+        // style's own, or the scene's — because a palette-carrying mesh is
+        // guaranteed its own layer even at density 1, so the tone override
+        // can never silently fold into the base grid. Palette values are
+        // sanitized by the caller (ASCII-only policy, asciiGlyphPolicy.ts).
+        const transform = group.styleTag
+          ? {
+              ...(base ?? {}),
+              id: group.styleTag,
+              glyphPalette: style?.palette ?? options.glyphPalette ?? "detail",
+            }
+          : base;
+        meshes.set(groupKey, scene.add(group.polys, transform));
+      }
     }
     // A group can empty out (its sprites' panel closed).
     for (const [groupKey, mesh] of meshes) {

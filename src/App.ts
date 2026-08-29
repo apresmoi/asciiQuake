@@ -1346,14 +1346,17 @@ const quakeUiGlyphTuning = readQuakeGlyphTuningValues(QUAKE_GLYPH_UI_TUNING_KNOB
 // ASCII-only sanitized; mutable so the `?debug` panel's palette select can
 // swap it live (the UI scene remounts per adjustment anyway).
 let quakeUiGlyphPalette = sanitizeQuakeGlyphPalette(quakeStartupUrlParams.get("glyphImagePalette"));
-// The corner logo's useful density follows the display: cells below one
-// DEVICE pixel blur to grey, so a high-DPI screen resolves twice the density
-// a 1x screen does (measured: legible from 8 at DPR 1, best at 16 at DPR 2).
-// The spec literal is the 1x value; lift it on high-DPI unless the URL pins one.
-const quakeLogoDensityDefault = (window.devicePixelRatio || 1) >= 2 ? 16 : 8;
-if (!quakeStartupUrlParams.has("glyphImageLogoDensity")) {
-  quakeUiGlyphTuning.logoDensity = quakeLogoDensityDefault;
-}
+// Corner-logo glyph ramp, `?glyphImageLogoPalette=` — the LOGO's own per-mesh
+// palette (glyphcss per-mesh glyphPalette via the overlay's meshStyles),
+// default "dense": the user-tuned logo look (glyph lab, 2026-08) alongside the
+// logo tone knobs in glyphTuningSpec.ts. Same ASCII-only sanitizer as every
+// other palette path; mutable so the `?debug` panel can swap it live. (The old
+// DPR-based logo DENSITY lift is gone with the retune — see the spec's
+// logoDensity entry: the tuned look is deliberately coarse on every display.)
+const QUAKE_LOGO_PALETTE_DEFAULT = "dense";
+let quakeUiLogoPalette = quakeStartupUrlParams.get("glyphImageLogoPalette")
+  ? sanitizeQuakeGlyphPalette(quakeStartupUrlParams.get("glyphImageLogoPalette"))
+  : QUAKE_LOGO_PALETTE_DEFAULT;
 
 // glyphcss world overlay (Phase 3 milestone): when the ASCII backend is
 // selected, polycss still drives all game logic/camera/controls while this
@@ -1520,6 +1523,19 @@ function mountQuakeGlyphUiOverlay(t: QuakeGlyphTuningValues): void {
     maxCells: t.maxCells,
     minCellPx: t.minCellPx,
     glyphPalette: quakeUiGlyphPalette,
+    // The corner logo's OWN palette + tone (per-mesh, never the other art):
+    // the user-tuned look — dense ramp, ambient 1.65, gamma 1 (no lift),
+    // saturation 1.1 — scoped to the logo mesh via its manifest styleTag.
+    // `?glyphImageLogoPalette=` / `?glyphImageLogoAmbient=` /
+    // `?glyphImageLogoGamma=` / `?glyphImageLogoSaturation=`.
+    meshStyles: {
+      logo: {
+        palette: quakeUiLogoPalette,
+        ambient: t.logoAmbient,
+        gamma: t.logoGamma,
+        saturation: t.logoSaturation,
+      },
+    },
     // Measured against the cssquake.wtf reference menu (perceived-luminance
     // region stats, 2026-08): 3.0 + the 0.6px glyph stroke + gamma 0.4 +
     // backdropGamma 0.6 lands the banner/plaque within ~70% of the
@@ -1606,7 +1622,10 @@ mountQuakeGlyphUiOverlay(quakeUiGlyphTuning);
 // Live select-values for the panel's palette dropdowns (mutated in place by
 // the panel, read by each section's `apply`). ASCII-legal values only — both
 // initial values are already sanitized, and `apply` re-sanitizes.
-const quakeUiGlyphPanelSelects: Record<string, string> = { palette: quakeUiGlyphPalette };
+const quakeUiGlyphPanelSelects: Record<string, string> = {
+  palette: quakeUiGlyphPalette,
+  logoPalette: quakeUiLogoPalette,
+};
 const quakeWorldGlyphPanelSelects: Record<string, string> = {
   palette: quakeGlyphOverlay?.getGlyphPalette() ?? resolveQuakeGlyphPalette(),
 };
@@ -1626,16 +1645,20 @@ if (quakeStartupUrlParams.has("debug")) {
           label: "ramp palette",
           options: asciiOnlyGlyphPaletteNames(),
           def: "detail",
+        }, {
+          key: "logoPalette",
+          param: "glyphImageLogoPalette",
+          label: "logo ramp palette",
+          options: asciiOnlyGlyphPaletteNames(),
+          def: QUAKE_LOGO_PALETTE_DEFAULT,
         }],
         selectValues: quakeUiGlyphPanelSelects,
-        // The logo's real default is display-dependent (see above) — keep
-        // "copy URL" and reset honest about it.
-        defaults: { logoDensity: quakeLogoDensityDefault },
         // Recreating the UI scene re-probes textures + re-segments art; keep
         // it off the slider's every input event.
         debounceMs: 180,
         apply: (v) => {
           quakeUiGlyphPalette = sanitizeQuakeGlyphPalette(quakeUiGlyphPanelSelects.palette);
+          quakeUiLogoPalette = sanitizeQuakeGlyphPalette(quakeUiGlyphPanelSelects.logoPalette);
           mountQuakeGlyphUiOverlay(v);
         },
       },

@@ -188,7 +188,13 @@ test("App.ts routes every glyph source through the sanitizers (wiring)", async (
   // params must have the sanitizer within a few lines (same expression or the
   // immediately following return) — code comments never name the function, so
   // this only matches real calls.
-  for (const param of ["glyphPalette", "glyphImagePalette"]) {
+  // The corner logo's per-mesh ramp (?glyphImageLogoPalette=) reaches the
+  // overlay through meshStyles — and must be sanitized like every palette.
+  assert.ok(
+    source.includes("meshStyles"),
+    "the logo's per-mesh palette is wired through the overlay's meshStyles",
+  );
+  for (const param of ["glyphPalette", "glyphImagePalette", "glyphImageLogoPalette"]) {
     const raw = new RegExp(`\\.get\\("${param}"\\)`, "g");
     const matches = [...source.matchAll(raw)];
     assert.ok(matches.length >= 1, `App.ts reads ?${param}= somewhere`);

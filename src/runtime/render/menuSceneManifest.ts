@@ -90,6 +90,15 @@ export interface QuakeMenuSceneSpriteDef {
   readonly brightness?: number;
   /** How the texture maps into the box (default "stretch"). */
   readonly fit?: "stretch" | "cover";
+  /**
+   * Per-mesh STYLE tag: quads carrying the same tag are grouped into their own
+   * glyphcss mesh (named by the tag), and the overlay's `meshStyles[tag]` can
+   * then give that mesh its own glyph palette and tone (ambient/gamma/
+   * saturation) without touching any other layer. The corner logo is the one
+   * user today — its retuned look (dense ramp, ambient 1.65, gamma 1,
+   * saturation 1.1) must not restyle the menu art rendered by the same scene.
+   */
+  readonly styleTag?: string;
 }
 
 export interface QuakeMenuSceneScreenDef {
@@ -579,8 +588,16 @@ export function createQuakeMenuSceneManifest(
         texture: asciiQuakeLogo,
         place: (hostW) => quakeMenuSceneLogoRect(hostW),
         layer: 3,
-        density: Math.max(1, Math.round(options.logoDensity ?? density)),
+        // NOT rounded: glyphcss densities are fractional (cell = base cell /
+        // density), and the shipped logo default is 1.472 — the user's tuned
+        // "density 2 on a 13000-cell grid" translated to the 24000-cell grid
+        // (see glyphTuningSpec.ts). Rounding it to 1 collapsed the logo into
+        // the base grid; to 2 rendered it a third finer than tuned.
+        density: Math.max(1, options.logoDensity ?? density),
         segment: true,
+        // The logo's own palette/tone — see `styleTag` and the overlay's
+        // `meshStyles`.
+        styleTag: "logo",
       },
     ],
     screens: {

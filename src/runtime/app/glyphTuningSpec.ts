@@ -48,7 +48,19 @@ export const QUAKE_GLYPH_UI_TUNING_KNOBS: readonly QuakeGlyphTuningKnob[] = [
   // literal is the DPR-1 value; App.ts raises it to 16 on high-DPI displays
   // when the URL doesn't pin one. The console plateaus at ~14 everywhere
   // (the 1024-cell cap coarsens a full-width console block to ~13 effective).
-  { key: "logoDensity", param: "glyphImageLogoDensity", label: "corner logo density", min: 1, max: 32, step: 1, def: 8, group: "Menu density" },
+  //
+  // 2026-08 retune (user, glyph lab): the shipped logo look is now the COARSE
+  // dense-ramp rendering tuned at `?glyphImageCells=13000&glyphImageLogoDensity=2`
+  // — logo cell = (13000-cell base grid)/2. glyphcss densities are fractional
+  // (cell = base cell / density, no rounding), so the same on-screen cell size
+  // is reproduced on the shipped 24000-cell grid by density
+  // 2·sqrt(13000/24000) = 1.472 — the def below — leaving the base grid (and
+  // with it the menu/console/backdrop cost and look) untouched. Verified
+  // in-game: logo layer font 6.919px both ways at a 1723×872 host. The old
+  // DPR-based default lift (8 → 16 on high-DPI) is gone: the tuned look is
+  // deliberately chunky (~14 device px cells at DPR 2), nowhere near the
+  // sub-device-pixel regime that lift existed to escape.
+  { key: "logoDensity", param: "glyphImageLogoDensity", label: "corner logo density", min: 1, max: 32, step: 0.01, def: 1.472, group: "Menu density" },
   { key: "textDensity", param: "glyphImageTextDensity", label: "menu text density", min: 1, max: 16, step: 1, def: 10, group: "Menu density" },
   { key: "consoleDensity", param: "glyphImageConsoleDensity", label: "boot console density", min: 1, max: 32, step: 1, def: 14, group: "Menu density" },
   { key: "maxCells", param: "glyphImageCells", label: "base grid budget", min: 2000, max: 120000, step: 1000, def: 24_000, group: "Menu density" },
@@ -69,6 +81,16 @@ export const QUAKE_GLYPH_UI_TUNING_KNOBS: readonly QuakeGlyphTuningKnob[] = [
   // ── Conchars text (menu rows, boot console, notify) ──
   { key: "textGamma", param: "glyphImageTextGamma", label: "text gamma (lower = brighter)", min: 0.2, max: 1, step: 0.01, def: 0.38, group: "Text tone" },
   { key: "textSaturation", param: "glyphImageTextSaturation", label: "text saturation", min: 0, max: 4, step: 0.05, def: 1.35, group: "Text tone" },
+  // ── Corner logo tone (logo detail layer ONLY — never the other art) ──
+  // The user-tuned logo look (glyph lab, 2026-08): ambient 1.65, gamma 1
+  // (no lift), saturation 1.1, on the `dense` ramp
+  // (`?glyphImageLogoPalette=`, default "dense"). These are the same values
+  // the user dialled in scene-wide (`?glyphImageAmbient=1.65&glyphImageGamma=1&
+  // glyphImageSaturation=1.1`) but scoped to the logo's own mesh, so the
+  // menu art, backdrop and console keep the shipped scene tone above.
+  { key: "logoAmbient", param: "glyphImageLogoAmbient", label: "logo ambient", min: 0.2, max: 6, step: 0.05, def: 1.65, group: "Logo tone" },
+  { key: "logoGamma", param: "glyphImageLogoGamma", label: "logo gamma (lower = brighter)", min: 0.2, max: 1, step: 0.01, def: 1, group: "Logo tone" },
+  { key: "logoSaturation", param: "glyphImageLogoSaturation", label: "logo saturation", min: 0, max: 4, step: 0.05, def: 1.1, group: "Logo tone" },
 ] as const;
 
 /** The world glyph scene (glyphWorldOverlay) — gameplay ASCII. */
