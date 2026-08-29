@@ -1639,15 +1639,21 @@ if (quakeRenderMode === "glyphcss" && quakeStartupUrlParams.get("glyphImage") !=
       // size text stays at the full cell: a 16px glyph only spans ~6 detail
       // rows, and shrinking it below that drops strokes and shatters the
       // letterforms (measured at 0.8).
+      // Text gets its OWN density, higher than the art's. A 16px conchars glyph
+      // spans only ~6 rows of a density-4 detail layer, which is what made the
+      // letterforms read soft and mushy — and made row brightness wobble with
+      // grid phase. Text quads cover a small fraction of the screen, so the
+      // extra resolution is cheap where the art's would not be.
+      // `?glyphImageTextDensity=`.
       textArt: [{
         selector: ".quake-bitmap-text--title .quake-bitmap-run",
         layer: 2,
-        density: quakeUrlNumberParam(quakeStartupUrlParams, "glyphImageDensity", 1, 8) ?? 4,
+        density: quakeUrlNumberParam(quakeStartupUrlParams, "glyphImageTextDensity", 1, 16) ?? 10,
         glyphScale: 0.75,
       }, {
         selector: ".quake-bitmap-run",
         layer: 2,
-        density: quakeUrlNumberParam(quakeStartupUrlParams, "glyphImageDensity", 1, 8) ?? 4,
+        density: quakeUrlNumberParam(quakeStartupUrlParams, "glyphImageTextDensity", 1, 16) ?? 10,
       }],
       // Ink-coverage compensation strength for the art/text detail layers —
       // `?glyphImageInkComp=` (0 disables, 1 full). See the overlay option.
