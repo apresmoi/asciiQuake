@@ -1059,6 +1059,36 @@ export function createQuakeGlyphUiOverlay(
     return grid.cols === opts.cols && grid.rows === opts.rows;
   }
 
+  /**
+   * The HUD bar's tone, as a per-mesh ambient. The bar ships dimmed so the
+   * readouts on top can separate from its busy texture — but the dim used to
+   * ride the quad's material colour (`brightness: 0.55`), and glyphcss's
+   * texture path folds ONLY texel luminance and the mesh's ambient into glyph
+   * choice (see the measured note on emitQuad), so the tint never reached the
+   * ramp. Measured (2026-08, isolated-mesh screenshots at 1280/1920/800):
+   * the bar rendered DENSE at the scene ambient (3.0) while the dark digit
+   * sheets rendered sparse — the exact inversion the dim was added to
+   * prevent, seen as the readouts sitting in bright noise ("the alpha doesn't
+   * seem right"). The dim now enters the raster as this mesh ambient, the
+   * same channel every style-table row uses, dimming glyph choice AND colours.
+   */
+  const HUD_BAR_AMBIENT = 0.55;
+
+  /**
+   * Built-in style rows for meshes the per-element style TABLE does not own
+   * (yet): the HUD draws its own sheets and its tone comes from code
+   * constants, not an approved lab session. A `meshStyles` row with the same
+   * tag (a future lab-tuned HUD profile) overrides the built-in wholesale.
+   */
+  const BUILTIN_MESH_STYLES: Readonly<Record<string, QuakeGlyphMeshStyle>> = {
+    "hud-bar": { ambient: HUD_BAR_AMBIENT },
+  };
+  /** The style for a tagged mesh: the style table's row, else the built-in. */
+  function meshStyle(tag: string | undefined): QuakeGlyphMeshStyle | undefined {
+    if (tag === undefined) return undefined;
+    return options.meshStyles?.[tag] ?? BUILTIN_MESH_STYLES[tag];
+  }
+
   const camera = createGlyphOrthographicCamera({ rotX: 0, rotY: 0, zoom: 1 });
   const scene = createGlyphScene(surface, {
     mode: "solid",
@@ -1083,7 +1113,7 @@ export function createQuakeGlyphUiOverlay(
       // stay the art layers' — only ambient overflow, gamma and saturation
       // are overridden (see `meshStyles`).
       const styledMesh = layer?.mesh;
-      const style = styledMesh !== undefined ? options.meshStyles?.[styledMesh] : undefined;
+      const style = meshStyle(styledMesh);
       if (style && styledMesh !== undefined) {
         // The raster already ran under the style's own ambient (glyphcss
         // per-mesh `ambientIntensity`). `colorBoost` is the only linear scale
@@ -1514,12 +1544,10 @@ export function createQuakeGlyphUiOverlay(
    *  The icons, digits and crosshair are small and must read: density 4. */
   const HUD_BAR_DENSITY = 2;
   const HUD_ART_DENSITY = 4;
-  /** The bar art dimmed, exactly the menu-backdrop trick: at full brightness
-   *  the busy dark sbar texture fills every cell with midtone glyphs and the
-   *  icons/digits on top cannot separate from it (measured: the readouts were
-   *  unreadable). Dimming pushes the bar down the ramp to sparse characters
-   *  while the full-brightness art on top keeps dense ones. */
-  const HUD_BAR_BRIGHTNESS = 0.55;
+  // The bar's dim itself lives in HUD_BAR_AMBIENT (a per-mesh ambient via the
+  // "hud-bar" built-in style): a material-colour dim never reaches glyph
+  // choice, so dimming through `brightness` left the bar dense — see the
+  // constant's doc for the measurements.
 
   /**
    * The gameplay HUD — the classic status bar and the crosshair — drawn from
@@ -1540,7 +1568,7 @@ export function createQuakeGlyphUiOverlay(
     const quad = (
       x: number, y: number, w: number, h: number,
       url: string, u0: number, u1: number, v0: number, v1: number,
-      layer: number, density: number, brightness = 1,
+      layer: number, density: number, styleTag?: string,
     ): void => {
       const tex = menuTexture(url, true);
       if (!tex.natural) return; // draws on the sync queued by the probe
@@ -1551,14 +1579,16 @@ export function createQuakeGlyphUiOverlay(
         url, u0, u1, v0, v1,
         regions: tex.regions,
         density,
-        brightness,
+        brightness: 1,
+        ...(styleTag ? { styleTag } : {}),
       });
     };
 
-    // The bar art (`hud-base.png`), the full 320x24 frame, dimmed as a ground.
+    // The bar art (`hud-base.png`), the full 320x24 frame, dimmed as a ground
+    // through its mesh's own ambient (the "hud-bar" built-in style row).
     quad(
       0, 0, QUAKE_HUD_SCENE_FRAME_W, QUAKE_HUD_SCENE_FRAME_H, QUAKE_HUD_BASE_URL,
-      0, 1, 0, 1, 1, HUD_BAR_DENSITY, HUD_BAR_BRIGHTNESS,
+      0, 1, 0, 1, 1, HUD_BAR_DENSITY, "hud-bar",
     );
 
     // Visible slots, from hud.ts's own definition table. The HTML frame is
@@ -2262,7 +2292,7 @@ export function createQuakeGlyphUiOverlay(
       // shares the base grid, where the rasterizer composites texture alpha
       // per cell and no cross-layer occlusion exists.
       else {
-        const style = group.styleTag ? options.meshStyles?.[group.styleTag] : undefined;
+        const style = meshStyle(group.styleTag);
         const base = group.density > 1
           ? (group.transparent
             ? { density: group.density, transparent: true as const }
