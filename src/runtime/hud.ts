@@ -1,3 +1,5 @@
+import { updateQuakeHudSceneState } from "./menuSceneState";
+
 export type QuakeKey = "silver" | "gold";
 export type QuakeAmmoField = "shells" | "nails" | "rockets" | "cells";
 export type QuakeWeaponId =
@@ -199,7 +201,7 @@ export interface QuakeHudElements {
   slots: Partial<Record<QuakeHudSlotId, HTMLElement>>;
 }
 
-const QUAKE_HUD_STATUS_ROW_Y = 24;
+export const QUAKE_HUD_STATUS_ROW_Y = 24;
 const QUAKE_HUD_ICON_SLOT_SIZE = 24;
 const QUAKE_HUD_POWERUP_FIELDS = {
   biosuit: "radsuit_finished",
@@ -286,6 +288,31 @@ export function syncQuakeHud(elements: QuakeHudElements, inventory: QuakePlayerI
     const label = `Quake status: armor ${Math.max(0, Math.round(inventory.armor))}, health ${Math.max(0, Math.round(inventory.health))}, ${inventory.activeWeapon} ammo ${Math.max(0, Math.round(quakeInventoryAmmoForWeapon(inventory, inventory.activeWeapon)))}`;
     if (elements.root.getAttribute("aria-label") !== label) elements.root.setAttribute("aria-label", label);
   }
+  // Mirror into the scene state: the glyph overlay draws the status bar from
+  // this data, not from the HTML slots' `hidden` flags or the digits' CSS vars.
+  updateQuakeHudSceneState({
+    slots: quakeHudSceneSlots(inventory),
+    armor,
+    health,
+    ammo,
+  });
+}
+
+/** The visible status-bar slots for an inventory — the same decisions the DOM
+ *  sync above applies via `hidden`, as data for the glyph HUD. */
+export function quakeHudSceneSlots(inventory: QuakePlayerInventory): QuakeHudSlotId[] {
+  const slots: QuakeHudSlotId[] = [];
+  if (inventory.armor > 0) slots.push(quakeHudArmorSlot(inventory.armorType));
+  slots.push(quakeHudFaceSlotForInventory(inventory));
+  const ammoSlot = quakeHudAmmoSlotForWeapon(inventory.activeWeapon);
+  if (ammoSlot) slots.push(ammoSlot);
+  if (inventory.keys.has("silver")) slots.push("key-silver");
+  if (inventory.keys.has("gold")) slots.push("key-gold");
+  if (quakeHudPowerupActive(inventory, QUAKE_HUD_POWERUP_FIELDS.invisibility)) slots.push("powerup-invisibility");
+  if (quakeHudPowerupActive(inventory, QUAKE_HUD_POWERUP_FIELDS.invulnerability)) slots.push("powerup-invulnerability");
+  if (quakeHudPowerupActive(inventory, QUAKE_HUD_POWERUP_FIELDS.biosuit)) slots.push("powerup-biosuit");
+  if (quakeHudPowerupActive(inventory, QUAKE_HUD_POWERUP_FIELDS.quad)) slots.push("powerup-quad");
+  return slots;
 }
 
 export function applyQuakeInventoryDelta(inventory: QuakePlayerInventory, delta: QuakeInventoryDelta): void {
@@ -513,10 +540,10 @@ function syncQuakeHudArmorSlot(elements: QuakeHudElements, inventory: QuakePlaye
   setExclusiveHudSlot(elements, ["armor-green", "armor-yellow", "armor-red"], activeSlot);
 }
 
-function syncQuakeHudFaceSlot(elements: QuakeHudElements, inventory: QuakePlayerInventory): void {
+function quakeHudFaceSlotForInventory(inventory: QuakePlayerInventory): QuakeHudSlotId {
   const invisible = quakeHudPowerupActive(inventory, QUAKE_HUD_POWERUP_FIELDS.invisibility);
   const invulnerable = quakeHudPowerupActive(inventory, QUAKE_HUD_POWERUP_FIELDS.invulnerability);
-  const activeSlot = invisible && invulnerable
+  return invisible && invulnerable
     ? "face-invisibility-invulnerability"
     : quakeHudPowerupActive(inventory, QUAKE_HUD_POWERUP_FIELDS.quad)
       ? "face-quad"
@@ -525,6 +552,10 @@ function syncQuakeHudFaceSlot(elements: QuakeHudElements, inventory: QuakePlayer
         : invisible
           ? "face-invisibility"
           : "face-normal";
+}
+
+function syncQuakeHudFaceSlot(elements: QuakeHudElements, inventory: QuakePlayerInventory): void {
+  const activeSlot = quakeHudFaceSlotForInventory(inventory);
   setExclusiveHudSlot(
     elements,
     ["face-normal", "face-invisibility", "face-invulnerability", "face-invisibility-invulnerability", "face-quad"],

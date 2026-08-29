@@ -1,3 +1,5 @@
+import { updateQuakeHudSceneState } from "../menuSceneState";
+
 export type QuakeCrosshairOption = "off" | "plus" | "dot" | "x" | "o" | "caret" | "vee";
 
 interface QuakeCrosshairDefinition {
@@ -136,6 +138,8 @@ export function createQuakeOptionsFlow(options: QuakeOptionsFlowOptions): QuakeO
       options.crosshair.dataset.quakeCrosshair = definition.value;
       options.crosshair.hidden = definition.value === "off";
     }
+    // The glyph HUD draws the crosshair from this data ("off" hides it).
+    updateQuakeHudSceneState({ crosshair: definition.value });
     if (options.crosshairOption) {
       options.crosshairOption.setAttribute("aria-label", `Crosshair ${definition.label}`);
     }

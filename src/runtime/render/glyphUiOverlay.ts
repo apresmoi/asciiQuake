@@ -8,6 +8,26 @@ import {
   type QuakeMenuSceneSpriteDef,
 } from "./menuSceneManifest";
 import { getQuakeMenuSceneState, subscribeQuakeMenuSceneState } from "../menuSceneState";
+import { QUAKE_HUD_SLOT_DEFINITIONS, QUAKE_HUD_STATUS_ROW_Y } from "../hud";
+import {
+  QUAKE_HUD_BACKGROUND,
+  QUAKE_HUD_BASE_URL,
+  QUAKE_HUD_CROSSHAIR_GRID,
+  QUAKE_HUD_CROSSHAIR_SHEET,
+  QUAKE_HUD_CROSSHAIR_VARIANTS,
+  QUAKE_HUD_DIGIT_FRAMES,
+  QUAKE_HUD_DIGIT_W,
+  QUAKE_HUD_ICONS_SHEET_H,
+  QUAKE_HUD_ICONS_SHEET_W,
+  QUAKE_HUD_ICONS_URL,
+  QUAKE_HUD_NUMBERS_DAMAGE_URL,
+  QUAKE_HUD_NUMBERS_URL,
+  QUAKE_HUD_READOUTS,
+  QUAKE_HUD_SCENE_FRAME_H,
+  QUAKE_HUD_SCENE_FRAME_W,
+  quakeHudCrosshairSize,
+  quakeHudSceneFrame,
+} from "./hudSceneManifest";
 
 /**
  * Renders a whole screen of sprite art as ONE ASCII image.
@@ -483,6 +503,20 @@ export function createQuakeGlyphUiOverlay(
   hostEl.insertBefore(surface, hostEl.firstChild);
 
   /**
+   * Opaque ground under the status bar. A glyph layer alone cannot be opaque —
+   * cells paint characters, and whatever sits behind the `<pre>` (during play,
+   * the world's own ASCII) shows between the strokes. The HTML bar solved this
+   * with `background: #050302` on `#quake-classic-hud`; this div is that same
+   * ground, sized to the HUD frame each sync and stacked before the scene's
+   * `<pre>`s so all glyphs draw above it.
+   */
+  const hudBacking = document.createElement("div");
+  hudBacking.className = "quake-glyph-ui-hud-backing";
+  hudBacking.style.cssText =
+    `position:absolute;display:none;pointer-events:none;background:${QUAKE_HUD_BACKGROUND}`;
+  hostEl.insertBefore(hudBacking, surface);
+
+  /**
    * Hue-preserving tone lift for the final cell grid — see the `gamma` option.
    *
    * Runs on hex strings, so results are memoized: a frame has tens of
@@ -892,9 +926,14 @@ export function createQuakeGlyphUiOverlay(
       });
     };
 
-    // Chrome: host-anchored, up whenever the overlay's host is.
-    for (const def of manifest.chrome) {
-      if (def.place) drawSprite(def, def.place(hostBox.width, hostBox.height));
+    // Chrome: host-anchored, up whenever the loading overlay is (the state's
+    // `chrome` flag mirrors it). NOT whenever the host is visible — the host is
+    // persistent now, and the in-game Esc menu draws its sprites straight over
+    // the world with no backdrop, exactly as the HTML menu painted.
+    if (st.chrome) {
+      for (const def of manifest.chrome) {
+        if (def.place) drawSprite(def, def.place(hostBox.width, hostBox.height));
+      }
     }
 
     const screenDef = st.screen && !st.deferred ? manifest.screens[st.screen] : undefined;
@@ -913,6 +952,145 @@ export function createQuakeGlyphUiOverlay(
         w: def.rect.w * sx,
         h: def.rect.h * sy,
       });
+    }
+  }
+
+  /**
+   * Whether the gameplay HUD may draw. The slot/readout/crosshair CONTENT is
+   * pure scene-state data, but overall visibility follows the same body
+   * classes that gated the HTML HUD (`quake.css` hides `#quake-classic-hud`
+   * under each of these) — they are toggled from half a dozen flows, so the
+   * overlay reads them directly rather than plumbing six more mirrors. The
+   * classes are folded into the frame watcher's signature below, so a flip
+   * redraws within its 100ms poll.
+   */
+  function hudBodyClassesAllow(): boolean {
+    const cl = document.body.classList;
+    return (
+      !cl.contains("quake-loading") &&
+      !cl.contains("quake-menu-unlocked") &&
+      !cl.contains("quake-dead") &&
+      !cl.contains("quake-level-complete")
+    );
+  }
+
+  /** HUD densities, per element as the elements need them. The BAR art spans
+   *  most of the viewport width — density 2 keeps its detail layer inside a
+   *  sane cell count where 4 would not, and its role is a dark ground anyway.
+   *  The icons, digits and crosshair are small and must read: density 4. */
+  const HUD_BAR_DENSITY = 2;
+  const HUD_ART_DENSITY = 4;
+  /** The bar art dimmed, exactly the menu-backdrop trick: at full brightness
+   *  the busy dark sbar texture fills every cell with midtone glyphs and the
+   *  icons/digits on top cannot separate from it (measured: the readouts were
+   *  unreadable). Dimming pushes the bar down the ramp to sparse characters
+   *  while the full-brightness art on top keeps dense ones. */
+  const HUD_BAR_BRIGHTNESS = 0.55;
+
+  /**
+   * The gameplay HUD — the classic status bar and the crosshair — drawn from
+   * the scene state's `hud` slice and hud.ts's slot definition table, in the
+   * same glyph scene as everything else. Geometry comes from hudSceneManifest
+   * (the shipped CSS's sizing rules as data); no HUD DOM is read.
+   */
+  function emitHudScene(groups: Map<string, PolyGroup>, hostBox: DOMRect): void {
+    const st = getQuakeMenuSceneState();
+    if (st.chrome || !hudBodyClassesAllow()) return;
+    const hud = st.hud;
+    const cx = hostBox.width / 2;
+    const cy = hostBox.height / 2;
+    const frame = quakeHudSceneFrame(hostBox.width, hostBox.height);
+    const s = frame.w / QUAKE_HUD_SCENE_FRAME_W;
+
+    /** One quad in hud units (320x24 frame) with an explicit source window. */
+    const quad = (
+      x: number, y: number, w: number, h: number,
+      url: string, u0: number, u1: number, v0: number, v1: number,
+      layer: number, density: number, brightness = 1,
+    ): void => {
+      const tex = menuTexture(url, true);
+      if (!tex.natural) return; // draws on the sync queued by the probe
+      emitQuad(groups, {
+        x0: frame.y + y * s - cy, x1: frame.y + (y + h) * s - cy,
+        y0: frame.x + x * s - cx, y1: frame.x + (x + w) * s - cx,
+        z: layer * LAYER_STEP,
+        url, u0, u1, v0, v1,
+        regions: tex.regions,
+        density,
+        brightness,
+      });
+    };
+
+    // The bar art (`hud-base.png`), the full 320x24 frame, dimmed as a ground.
+    quad(
+      0, 0, QUAKE_HUD_SCENE_FRAME_W, QUAKE_HUD_SCENE_FRAME_H, QUAKE_HUD_BASE_URL,
+      0, 1, 0, 1, 1, HUD_BAR_DENSITY, HUD_BAR_BRIGHTNESS,
+    );
+
+    // Visible slots, from hud.ts's own definition table. The HTML frame is
+    // shifted up one row height and clipped by the bar's `overflow: hidden`,
+    // which today clips the inventory-row slots (keys/powerups) out entirely —
+    // reproduced here by skipping anything above the bar.
+    for (const id of hud.slots) {
+      const def = QUAKE_HUD_SLOT_DEFINITIONS.find((d) => d.id === id);
+      if (!def) continue;
+      const y = def.y - QUAKE_HUD_STATUS_ROW_Y;
+      if (y + def.height <= 0) continue;
+      quad(
+        def.x, y, def.width, def.height,
+        QUAKE_HUD_ICONS_URL,
+        def.sourceX / QUAKE_HUD_ICONS_SHEET_W,
+        (def.sourceX + def.width) / QUAKE_HUD_ICONS_SHEET_W,
+        def.sourceY / QUAKE_HUD_ICONS_SHEET_H,
+        (def.sourceY + def.height) / QUAKE_HUD_ICONS_SHEET_H,
+        2, HUD_ART_DENSITY,
+      );
+    }
+
+    // The readouts: three 24-wide digit cells each, sheet frame per digit.
+    // The health readout swaps to the damage sheet while the cue is active.
+    for (const readout of QUAKE_HUD_READOUTS) {
+      const value = readout.id === "armor" ? hud.armor : readout.id === "health" ? hud.health : hud.ammo;
+      const url = readout.id === "health" && hud.damage
+        ? QUAKE_HUD_NUMBERS_DAMAGE_URL
+        : QUAKE_HUD_NUMBERS_URL;
+      for (let i = 0; i < 3; i++) {
+        const char = value[i] ?? " ";
+        if (char < "0" || char > "9") continue;
+        const digit = char.charCodeAt(0) - 48;
+        quad(
+          readout.x + i * QUAKE_HUD_DIGIT_W, 0, QUAKE_HUD_DIGIT_W, QUAKE_HUD_SCENE_FRAME_H,
+          url,
+          digit / QUAKE_HUD_DIGIT_FRAMES, (digit + 1) / QUAKE_HUD_DIGIT_FRAMES,
+          0, 1,
+          3, HUD_ART_DENSITY,
+        );
+      }
+    }
+
+    // The crosshair: a conchars-sheet cell centred on the EXACT host centre,
+    // offset by the variant's own centring translate (from the CSS).
+    const variant = QUAKE_HUD_CROSSHAIR_VARIANTS[hud.crosshair];
+    if (variant) {
+      const size = quakeHudCrosshairSize(hostBox.height);
+      const tex = menuTexture(QUAKE_HUD_CROSSHAIR_SHEET, true);
+      if (tex.natural) {
+        const left = hostBox.width / 2 + variant.tx * size;
+        const top = hostBox.height / 2 + variant.ty * size;
+        emitQuad(groups, {
+          x0: top - cy, x1: top + size - cy,
+          y0: left - cx, y1: left + size - cx,
+          z: 4 * LAYER_STEP,
+          url: QUAKE_HUD_CROSSHAIR_SHEET,
+          u0: variant.col / QUAKE_HUD_CROSSHAIR_GRID,
+          u1: (variant.col + 1) / QUAKE_HUD_CROSSHAIR_GRID,
+          v0: variant.row / QUAKE_HUD_CROSSHAIR_GRID,
+          v1: (variant.row + 1) / QUAKE_HUD_CROSSHAIR_GRID,
+          regions: tex.regions,
+          density: HUD_ART_DENSITY,
+          brightness: 1,
+        });
+      }
     }
   }
 
@@ -969,6 +1147,7 @@ export function createQuakeGlyphUiOverlay(
   function buildPolygons(hostBox: DOMRect): Map<string, PolyGroup> {
     const groups = new Map<string, PolyGroup>();
     emitMenuScene(groups, hostBox);
+    emitHudScene(groups, hostBox);
     emitTextArt(groups, hostBox);
     // World units are CSS px (zoom is pinned to 1 below), with the origin at the
     // host's centre — so a sprite's screen box maps straight into world space.
@@ -1063,6 +1242,22 @@ export function createQuakeGlyphUiOverlay(
     // Stand-ins are sized from their host's live `::before`, which resolves
     // differently once a hidden panel opens — refresh before measuring anything.
     refreshPseudoGeometry();
+    // The surface's own ground follows the chrome: opaque black while the menu
+    // backdrop is up (the ground the loading overlay used to provide), fully
+    // transparent during play so the world's ASCII shows through. The status
+    // bar carries its own opaque backing, matching the HTML bar's background.
+    const sceneState = getQuakeMenuSceneState();
+    surface.style.background = sceneState.chrome ? "#000000" : "";
+    if (!sceneState.chrome && hudBodyClassesAllow()) {
+      const hudFrame = quakeHudSceneFrame(hostBox.width, hostBox.height);
+      hudBacking.style.display = "block";
+      hudBacking.style.left = `${hudFrame.x}px`;
+      hudBacking.style.top = `${hudFrame.y}px`;
+      hudBacking.style.width = `${hudFrame.w}px`;
+      hudBacking.style.height = `${hudFrame.h}px`;
+    } else {
+      hudBacking.style.display = "none";
+    }
     const now = performance.now();
     if (!force && !adoptedSinceDraw && now - lastBuildAt < REBUILD_INTERVAL_MS) {
       // DEFER, never drop. Returning here lost the update entirely: hovering a
@@ -1175,8 +1370,29 @@ export function createQuakeGlyphUiOverlay(
   //
   // `class`/`childList` only, never `style`: sync() writes inline styles inside
   // this subtree, so watching them would retrigger itself forever.
+  /**
+   * Whether a mutation happened somewhere this scene draws FROM. Every sprite
+   * rule, pseudo host, bitmap-text run and stamped word lives under the menu
+   * tree or the loading overlay; the world's own DOM (`#quake-scene`, entity
+   * meshes, projectiles) churns constantly during play and none of it feeds
+   * this scene. With the host persistent, reacting to that churn would force a
+   * full UI rasterize every throttle window through an entire firefight — so
+   * mutations outside the UI trees are ignored outright.
+   */
+  const mutationRoots = ["quake-menu", "quake-loading-overlay"]
+    .map((id) => document.getElementById(id))
+    .filter((el): el is HTMLElement => el !== null);
+  function mutationFeedsScene(record: MutationRecord): boolean {
+    const target = record.target;
+    if (!(target instanceof Node)) return false;
+    if (!mutationRoots.length) return true; // unknown page shape: stay safe
+    return mutationRoots.some((root) => root === target || root.contains(target));
+  }
+
   const domObserver = typeof MutationObserver !== "undefined"
-    ? new MutationObserver((records) => {
+    ? new MutationObserver((allRecords) => {
+        const records = allRecords.filter(mutationFeedsScene);
+        if (!records.length) return;
         // Adoption only matters when nodes were actually ADDED; a class flip on
         // an existing element cannot introduce a new sprite.
         if (records.some((r) => r.addedNodes.length > 0)) rescan();
@@ -1205,7 +1421,10 @@ export function createQuakeGlyphUiOverlay(
   let frameWatch: ReturnType<typeof setInterval> | null = null;
   let lastFrames = "";
   function watchSheetFrames(): void {
-    let signature = "";
+    // The HUD's overall visibility rides on body classes toggled outside any
+    // observed subtree — fold them into the poll signature so a flip (death,
+    // level complete, pause) redraws within one poll interval.
+    let signature = hudBodyClassesAllow() ? "H1|" : "H0|";
     for (const st of states.values()) {
       if (st.sprite.fit !== "css") continue;
       const cs = getComputedStyle(st.sprite.element);
@@ -1233,13 +1452,15 @@ export function createQuakeGlyphUiOverlay(
   }
   frameWatch = setInterval(watchSheetFrames, 100);
 
-  // Selection, screen changes and pending/deferred flips arrive as DATA — the
-  // shared menu scene state — not as DOM mutations. Redraw on the next frame;
-  // `adoptedSinceDraw` lifts the rebuild throttle so a keypress-driven
-  // selection never waits out the 100ms window.
-  const unsubscribeMenuState = options.menu
-    ? subscribeQuakeMenuSceneState(() => { adoptedSinceDraw = true; queueSync(); })
-    : null;
+  // Selection, screen changes, chrome flips and every HUD update arrive as
+  // DATA — the shared scene state — not as DOM mutations. Redraw on the next
+  // frame; `adoptedSinceDraw` lifts the rebuild throttle so a keypress-driven
+  // selection (or a health tick) never waits out the 100ms window.
+  // Unconditional: the HUD renders from this state even without a menu manifest.
+  const unsubscribeMenuState = subscribeQuakeMenuSceneState(() => {
+    adoptedSinceDraw = true;
+    queueSync();
+  });
 
   rescan();
   queueSync();
@@ -1264,6 +1485,7 @@ export function createQuakeGlyphUiOverlay(
       meshes.clear();
       scene.destroy();
       surface.remove();
+      hudBacking.remove();
       for (const s of states.values()) {
         if (s.isImg) s.sprite.element.style.visibility = "";
         else s.sprite.element.style.backgroundImage = "";

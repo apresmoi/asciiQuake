@@ -4,6 +4,7 @@ import {
   type QuakePlayerInventory,
 } from "../hud";
 import type { QuakePlayerDamageFeedback } from "../player";
+import { updateQuakeHudSceneState } from "../menuSceneState";
 
 const DEFAULT_QUAKE_HUD_DAMAGE_CUE_MS = 900;
 const DEFAULT_QUAKE_HUD_DAMAGE_FLASH_MS = 260;
@@ -72,6 +73,9 @@ export function createQuakeHudFlow(options: QuakeHudFlowOptions): QuakeHudFlow {
     } else {
       options.classicHud?.classList.remove("quake-hud-damage");
     }
+    // The glyph HUD swaps the health readout to the damage number sheet from
+    // this data, as the CSS class swap above does for the HTML digits.
+    updateQuakeHudSceneState({ damage: active });
   }
 
   function setDamageOverlay(active: boolean): void {

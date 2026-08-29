@@ -1335,8 +1335,12 @@ body.quake-menu-open:not(.quake-gameplay-started) .quake-menu-panel {
 .quake-bitmap-run-alt {
   color: #9a7550;
 }
-body.quake-glyph-render:has(#quake-loading-overlay:not([hidden])) .quake-bitmap-run,
-body.quake-glyph-render:has(#quake-loading-overlay:not([hidden])) .asciiquake-version {
+/* Unconditional (previously gated on the loading overlay being visible): the
+   glyph UI scene lives on a persistent host now, so its grid is ALWAYS the
+   painter of bitmap text — during gameplay too, where notify/center-print runs
+   are stamped into the same grid as the world sits under. */
+body.quake-glyph-render .quake-bitmap-run,
+body.quake-glyph-render .asciiquake-version {
   visibility: hidden;
 }
 .quake-bitmap-col-0 {
@@ -2899,6 +2903,20 @@ body.quake-menu-open .dn-stats-overlay {
    it here removed the art entirely and the landing menu rendered nothing. */
 .quake-glyph-render .quake-main-menu-label,
 .quake-glyph-render .quake-single-player-label,
-.quake-glyph-render .quake-intermission-label-art {
+.quake-glyph-render .quake-intermission-label-art,
+/* The gameplay HUD and crosshair render from the scene state in the glyph UI
+   scene (emitHudScene); the HTML versions stay as layout anchors only.
+   `visibility`, not `display` — other flows still read their geometry. */
+.quake-glyph-render #quake-classic-hud,
+.quake-glyph-render #quake-crosshair,
+/* The damage flash re-enables `visibility: visible` on the damage readout,
+   which would defeat the inherited hide above — pin it hidden too. */
+.quake-glyph-render #quake-classic-hud.quake-hud-damage .quake-hud-readout-health-damage {
   visibility: hidden;
+}
+/* The glyph UI host sits UNDER the overlay and carries the scene's own black
+   ground now — the overlay itself must stop painting one, or it would cover
+   the grid. Its interior (console text, progress bar) still paints above. */
+.quake-glyph-render #quake-loading-overlay {
+  background-color: transparent;
 }

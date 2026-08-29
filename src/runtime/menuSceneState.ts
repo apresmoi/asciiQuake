@@ -37,6 +37,36 @@ export interface QuakeMenuSceneState {
   readonly deferred: boolean;
   /** Multiplayer panel showing its failure card instead of the form. */
   readonly multiplayerFailure: boolean;
+  /**
+   * Whether the scene's CHROME (menu backdrop + corner logo) is up. Mirrors the
+   * loading overlay's visibility — the backdrop belongs to the pre-game menu
+   * and loading screens, never to gameplay: the in-game Esc menu draws its
+   * sprites straight over the world, exactly as the HTML menu painted over the
+   * scene. Owned by the loading flow, which owns the overlay's `hidden` flag.
+   */
+  readonly chrome: boolean;
+  /** The gameplay HUD's presentation state — see {@link QuakeHudSceneState}. */
+  readonly hud: QuakeHudSceneState;
+}
+
+/**
+ * The classic status bar and crosshair as DATA, pushed by the code that owns
+ * each piece (hud.ts computes slots/readouts from the inventory, the HUD flow
+ * owns the damage cue, the options flow owns the crosshair choice). The glyph
+ * overlay draws the HUD from this — the HTML HUD elements' `hidden` flags and
+ * CSS variables are no longer an input to rendering.
+ */
+export interface QuakeHudSceneState {
+  /** Ids of the visible status-bar slots (hud.ts's QuakeHudSlotId values). */
+  readonly slots: readonly string[];
+  /** 3-character right-aligned readouts, exactly as the digits render them. */
+  readonly armor: string;
+  readonly health: string;
+  readonly ammo: string;
+  /** Damage cue: the health readout uses the damage-flash number sheet. */
+  readonly damage: boolean;
+  /** Crosshair variant ("off" hides it). Matches the options flow's values. */
+  readonly crosshair: string;
 }
 
 type Listener = () => void;
@@ -50,6 +80,18 @@ let state: QuakeMenuSceneState = {
   pending: true,
   deferred: true,
   multiplayerFailure: false,
+  // The boot markup shows the loading overlay, so the chrome starts up.
+  chrome: true,
+  hud: {
+    slots: [],
+    armor: "",
+    health: "",
+    ammo: "",
+    damage: false,
+    // The options flow's default (index 1, "plus") — pushed properly the first
+    // time the crosshair option is applied.
+    crosshair: "plus",
+  },
 };
 
 const listeners = new Set<Listener>();
@@ -66,6 +108,8 @@ export function updateQuakeMenuSceneState(partial: Partial<QuakeMenuSceneState>)
     next.pending === state.pending &&
     next.deferred === state.deferred &&
     next.multiplayerFailure === state.multiplayerFailure &&
+    next.chrome === state.chrome &&
+    hudSceneStatesEqual(next.hud, state.hud) &&
     next.disabledItems.length === state.disabledItems.length &&
     next.disabledItems.every((id, i) => id === state.disabledItems[i])
   ) {
@@ -73,6 +117,22 @@ export function updateQuakeMenuSceneState(partial: Partial<QuakeMenuSceneState>)
   }
   state = next;
   for (const listener of listeners) listener();
+}
+
+export function updateQuakeHudSceneState(partial: Partial<QuakeHudSceneState>): void {
+  updateQuakeMenuSceneState({ hud: { ...state.hud, ...partial } });
+}
+
+function hudSceneStatesEqual(a: QuakeHudSceneState, b: QuakeHudSceneState): boolean {
+  return (
+    a.armor === b.armor &&
+    a.health === b.health &&
+    a.ammo === b.ammo &&
+    a.damage === b.damage &&
+    a.crosshair === b.crosshair &&
+    a.slots.length === b.slots.length &&
+    a.slots.every((id, i) => id === b.slots[i])
+  );
 }
 
 export function subscribeQuakeMenuSceneState(listener: Listener): () => void {

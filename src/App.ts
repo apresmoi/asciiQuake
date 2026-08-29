@@ -1546,8 +1546,26 @@ const quakeGlyphOverlay: QuakeGlyphWorldOverlay | null =
 // backdrop and the art on top of it share cells instead of being separate ASCII
 // patches at different scales. `?glyphImage=0` opts out.
 if (quakeRenderMode === "glyphcss" && quakeStartupUrlParams.get("glyphImage") !== "0") {
-  const uiHost = document.getElementById("quake-loading-overlay");
-  if (uiHost) {
+  // A DEDICATED, always-present host — not the loading overlay. Hosting the
+  // scene on `#quake-loading-overlay` tied its life to that overlay's `hidden`
+  // flag: the moment gameplay started the host collapsed to zero size, sync()
+  // bailed, and neither the in-game Esc menu nor the HUD could ever draw.
+  // Placement: immediately BEFORE the overlay at the overlay's own z-index (2),
+  // so during boot/loading the overlay's interior HTML (the progress bar) still
+  // paints above the glyph grid exactly as it did when the grid lived inside
+  // it, while `#quake-menu` (z-index 3) keeps its interactive HTML on top. The
+  // overlay's own black ground moves to the glyph surface (see the overlay's
+  // chrome handling) — quake.css makes the overlay itself transparent.
+  const uiHost = document.createElement("div");
+  uiHost.id = "quake-glyph-ui-host";
+  uiHost.setAttribute("aria-hidden", "true");
+  uiHost.style.cssText = "position:absolute;inset:0;z-index:2;pointer-events:none;overflow:hidden";
+  if (loadingOverlay?.parentElement) {
+    loadingOverlay.parentElement.insertBefore(uiHost, loadingOverlay);
+  } else {
+    quakeApp?.appendChild(uiHost);
+  }
+  if (uiHost.parentElement) {
     createQuakeGlyphUiOverlay({
       host: uiHost,
       // The declarative menu scene: the LANDING menu (plus the backdrop and
@@ -1630,7 +1648,8 @@ if (quakeRenderMode === "glyphcss" && quakeStartupUrlParams.get("glyphImage") !=
         // a black box around the art, so the overlay renders an unsegmented
         // density sprite `transparent` instead, and the bright backdrop then
         // leaks straight through the art's transparent texels.
-        { selector: "#quake-classic-hud-image", layer: 2, density: quakeUrlNumberParam(quakeStartupUrlParams, "glyphImageDensity", 1, 8) ?? 4, segment: true },
+        // The classic HUD renders from the scene state + hud.ts's slot table
+        // now (see the overlay's emitHudScene) — no HUD sprite rules here.
         { selector: ".quake-intermission-value-glyph", layer: 2, fit: "css" },
         { selector: ".quake-glyph-pseudo", layer: 2, fit: "css", density: quakeUrlNumberParam(quakeStartupUrlParams, "glyphImageDensity", 1, 8) ?? 4, segment: true },
       ],

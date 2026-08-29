@@ -163,6 +163,18 @@ export function createQuakeLoadingFlow(options: QuakeLoadingFlowOptions): QuakeL
     startup.syncRoutePresentation(startupRoute);
   }
 
+  /**
+   * The overlay's visibility doubles as the glyph UI scene's CHROME state (the
+   * menu backdrop + corner logo): the scene host is persistent now, so the
+   * overlay's `hidden` flag no longer kills the scene — instead every toggle is
+   * mirrored into the scene state, which the overlay cannot observe from the
+   * attribute itself (its DOM observer deliberately watches childList only).
+   */
+  function setLoadingOverlayHidden(hidden: boolean): void {
+    if (dom.loadingOverlay) dom.loadingOverlay.hidden = hidden;
+    updateQuakeMenuSceneState({ chrome: !hidden });
+  }
+
   function handleGameplayStarted(started: boolean): void {
     if (!started || !dom.loadingOverlay?.classList.contains("quake-loading-console-persisted")) return;
     if (!options.previewEnabled) {
@@ -170,14 +182,14 @@ export function createQuakeLoadingFlow(options: QuakeLoadingFlowOptions): QuakeL
       return;
     }
     removeQuakeBodyClasses("quake-loading");
-    dom.loadingOverlay.hidden = false;
+    setLoadingOverlayHidden(false);
     dom.loadingOverlay.setAttribute("aria-busy", "false");
   }
 
   function hidePersistedConsole(): void {
     if (!dom.loadingOverlay?.classList.contains("quake-loading-console-persisted")) return;
     removeQuakeBodyClasses("quake-loading");
-    dom.loadingOverlay.hidden = true;
+    setLoadingOverlayHidden(true);
     dom.loadingOverlay.removeAttribute("aria-busy");
     dom.loadingOverlay.classList.remove("quake-loading-console-persisted");
     loadingConsole.clearQueue();
@@ -211,7 +223,7 @@ export function createQuakeLoadingFlow(options: QuakeLoadingFlowOptions): QuakeL
       loadingConsole.hideAction();
       loadingConsole.showProgress();
       if (dom.loadingOverlay) {
-        dom.loadingOverlay.hidden = false;
+        setLoadingOverlayHidden(false);
         dom.loadingOverlay.setAttribute("aria-busy", "true");
       }
       options.setControlsLoading();
@@ -222,14 +234,14 @@ export function createQuakeLoadingFlow(options: QuakeLoadingFlowOptions): QuakeL
     if (options.previewEnabled || !options.isGameplayStarted()) {
       addQuakeBodyClasses("quake-loading");
       if (dom.loadingOverlay) {
-        dom.loadingOverlay.hidden = false;
+        setLoadingOverlayHidden(false);
         dom.loadingOverlay.setAttribute("aria-busy", "false");
         dom.loadingOverlay.classList.add("quake-loading-console-persisted");
       }
     } else {
       removeQuakeBodyClasses("quake-loading");
       if (dom.loadingOverlay) {
-        dom.loadingOverlay.hidden = true;
+        setLoadingOverlayHidden(true);
         dom.loadingOverlay.removeAttribute("aria-busy");
         dom.loadingOverlay.classList.remove("quake-loading-console-persisted");
       }
@@ -263,7 +275,7 @@ export function createQuakeLoadingFlow(options: QuakeLoadingFlowOptions): QuakeL
     addQuakeBodyClasses("quake-loading");
     hideMainMenuForLoadingError();
     if (dom.loadingOverlay) {
-      dom.loadingOverlay.hidden = false;
+      setLoadingOverlayHidden(false);
       dom.loadingOverlay.setAttribute("aria-busy", "false");
       dom.loadingOverlay.classList.add("quake-loading-console-persisted");
     }
@@ -285,7 +297,7 @@ export function createQuakeLoadingFlow(options: QuakeLoadingFlowOptions): QuakeL
     loadingConsole.updateDisplay(QUAKE_ASSETS_REGENERATING_STATUS, { completed: 0, total: 0 });
     loadingConsole.showAction(message);
     if (dom.loadingOverlay) {
-      dom.loadingOverlay.hidden = false;
+      setLoadingOverlayHidden(false);
       dom.loadingOverlay.setAttribute("aria-busy", "true");
     }
     options.setControlsLoading();
@@ -299,7 +311,7 @@ export function createQuakeLoadingFlow(options: QuakeLoadingFlowOptions): QuakeL
   function showDeathOverlay(): void {
     if (!dom.loadingOverlay) return;
     loadingConsole.clearQueue();
-    dom.loadingOverlay.hidden = false;
+    setLoadingOverlayHidden(false);
     dom.loadingOverlay.classList.add("quake-loading-death");
     dom.loadingOverlay.setAttribute("aria-busy", "false");
     loadingConsole.setLines(["you died"]);
@@ -313,7 +325,7 @@ export function createQuakeLoadingFlow(options: QuakeLoadingFlowOptions): QuakeL
     loadingConsole.hideAction();
     loadingConsole.showProgress();
     if (!loading && !options.previewEnabled) {
-      dom.loadingOverlay.hidden = true;
+      setLoadingOverlayHidden(true);
       dom.loadingOverlay.removeAttribute("aria-busy");
     }
   }
