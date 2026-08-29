@@ -107,10 +107,11 @@ export const QUAKE_GLYPH_UI_TUNING_KNOBS: readonly QuakeGlyphTuningKnob[] = [
   { key: "logoAmbient", param: "glyphImageLogoAmbient", label: "logo ambient", min: 0.2, max: 6, step: 0.05, def: 1.65, group: "Logo tone" },
   { key: "logoGamma", param: "glyphImageLogoGamma", label: "logo gamma (lower = brighter)", min: 0.2, max: 1, step: 0.01, def: 1, group: "Logo tone" },
   { key: "logoSaturation", param: "glyphImageLogoSaturation", label: "logo saturation", min: 0, max: 4, step: 0.05, def: 1.1, group: "Logo tone" },
-  // Occlusion pad (glyphcss `occlusionDilate` via the style table): id-map
-  // cells of claim dilation — the anti-theft fix plus a small letterform-
-  // shaped ground. 0 = alpha-tight claims.
-  { key: "logoOcclusionPad", param: "glyphImageLogoOcclusionPad", label: "logo occlusion pad", min: 0, max: 4, step: 1, def: 2, group: "Logo tone" },
+  // Occlusion margin (glyphcss contour claims via the style table): screen px
+  // of alpha-contour-following ground around the ink. Contour claims are also
+  // the anti-theft fix (every ink-bearing cell claims); the base-cell pad
+  // that preceded them read as a fat square halo and is gone.
+  { key: "logoOcclusionMargin", param: "glyphImageLogoOcclusionMargin", label: "logo occlusion margin px", min: 0, max: 8, step: 0.25, def: 2, group: "Logo tone" },
 
   // ── Per-element tone (2026-08 retune, glyph lab) ──
   // Each group reproduces one lab session the user signed off. The values are
@@ -141,7 +142,7 @@ export const QUAKE_GLYPH_UI_TUNING_KNOBS: readonly QuakeGlyphTuningKnob[] = [
   { key: "textSheetSaturation", param: "glyphImageTextSheetSaturation", label: "text sheet saturation", min: 0, max: 4, step: 0.05, def: 1.45, group: "Text profile" },
   { key: "textStroke", param: "glyphImageTextStroke", label: "text glyph stroke px", min: 0, max: 2, step: 0.05, def: 0.3, group: "Text profile" },
   { key: "textInkComp", param: "glyphImageTextInkComp", label: "text ink compensation", min: 0, max: 1, step: 0.05, def: 1, group: "Text profile" },
-  { key: "textOcclusionPad", param: "glyphImageTextOcclusionPad", label: "text occlusion pad", min: 0, max: 4, step: 1, def: 2, group: "Text profile" },
+  { key: "textOcclusionMargin", param: "glyphImageTextOcclusionMargin", label: "text occlusion margin px", min: 0, max: 8, step: 0.25, def: 2, group: "Text profile" },
 
   // Menu plaque — lab `?glyphImageCells=4000&glyphImageCell=4
   // &glyphImageAmbient=0.9&glyphImageBlack=0.01&glyphImageStroke=0.75
@@ -152,7 +153,7 @@ export const QUAKE_GLYPH_UI_TUNING_KNOBS: readonly QuakeGlyphTuningKnob[] = [
   { key: "plaqueBlack", param: "glyphImagePlaqueBlack", label: "plaque black point", min: 0, max: 0.5, step: 0.005, def: 0.01, group: "Plaque tone" },
   { key: "plaqueStroke", param: "glyphImagePlaqueStroke", label: "plaque glyph stroke px", min: 0, max: 2, step: 0.05, def: 0.75, group: "Plaque tone" },
   { key: "plaqueInkComp", param: "glyphImagePlaqueInkComp", label: "plaque ink compensation", min: 0, max: 1, step: 0.05, def: 1, group: "Plaque tone" },
-  { key: "plaqueOcclusionPad", param: "glyphImagePlaqueOcclusionPad", label: "plaque occlusion pad", min: 0, max: 4, step: 1, def: 2, group: "Plaque tone" },
+  { key: "plaqueOcclusionMargin", param: "glyphImagePlaqueOcclusionMargin", label: "plaque occlusion margin px", min: 0, max: 8, step: 0.25, def: 2, group: "Plaque tone" },
 
   // Menu title — lab `?glyphImageCells=3000&glyphImageCell=2
   // &glyphImageAmbient=0.55&glyphImageBlack=0.01&glyphImageInkComp=0.2
@@ -163,7 +164,7 @@ export const QUAKE_GLYPH_UI_TUNING_KNOBS: readonly QuakeGlyphTuningKnob[] = [
   { key: "titleBlack", param: "glyphImageTitleBlack", label: "title black point", min: 0, max: 0.5, step: 0.005, def: 0.01, group: "Title tone" },
   { key: "titleStroke", param: "glyphImageTitleStroke", label: "title glyph stroke px", min: 0, max: 2, step: 0.05, def: 0.75, group: "Title tone" },
   { key: "titleInkComp", param: "glyphImageTitleInkComp", label: "title ink compensation", min: 0, max: 1, step: 0.05, def: 0.2, group: "Title tone" },
-  { key: "titleOcclusionPad", param: "glyphImageTitleOcclusionPad", label: "title occlusion pad", min: 0, max: 4, step: 1, def: 2, group: "Title tone" },
+  { key: "titleOcclusionMargin", param: "glyphImageTitleOcclusionMargin", label: "title occlusion margin px", min: 0, max: 8, step: 0.25, def: 2, group: "Title tone" },
 
   // Menu label sheet — identical lab tone to the title (only its grid differs:
   // `?glyphImageCells=10000&glyphImageCell=2`), so the tone rows match and the
@@ -174,7 +175,7 @@ export const QUAKE_GLYPH_UI_TUNING_KNOBS: readonly QuakeGlyphTuningKnob[] = [
   { key: "labelBlack", param: "glyphImageLabelBlack", label: "label black point", min: 0, max: 0.5, step: 0.005, def: 0.01, group: "Label tone" },
   { key: "labelStroke", param: "glyphImageLabelStroke", label: "label glyph stroke px", min: 0, max: 2, step: 0.05, def: 0.75, group: "Label tone" },
   { key: "labelInkComp", param: "glyphImageLabelInkComp", label: "label ink compensation", min: 0, max: 1, step: 0.05, def: 0.2, group: "Label tone" },
-  { key: "labelOcclusionPad", param: "glyphImageLabelOcclusionPad", label: "label occlusion pad", min: 0, max: 4, step: 1, def: 2, group: "Label tone" },
+  { key: "labelOcclusionMargin", param: "glyphImageLabelOcclusionMargin", label: "label occlusion margin px", min: 0, max: 8, step: 0.25, def: 2, group: "Label tone" },
 ] as const;
 
 /** The world glyph scene (glyphWorldOverlay) — gameplay ASCII. */

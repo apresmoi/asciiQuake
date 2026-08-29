@@ -482,13 +482,19 @@ export interface QuakeGlyphMeshStyle {
    */
   readonly occlusionMode?: "alpha" | "plate" | "none";
   /**
-   * Dilation of the claim in id-map cells (glyphcss `occlusionDilate`,
-   * additive): with "alpha" claims, N > 0 grows the claim so the mesh keeps
-   * its partial-alpha boundary cells (the anti-theft fix) and each glyph sits
-   * on a small letterform-shaped ground — the middle ground between the two
-   * rejected extremes. Ignored by "none".
+   * Contour margin in SCREEN PX (glyphcss `occlusionContourPx`, additive).
+   * Any defined value — 0 included — switches the mesh to CONTOUR claims:
+   * the id-map is rastered at a finer internal resolution so every output
+   * cell containing this mesh's ink claims (the anti-theft guarantee), and
+   * the margin is stamped around the ink in that fine map, so the ground
+   * follows the artwork's alpha contour instead of growing whole ~10px base
+   * cells (the earlier `occlusionDilate` pad — measured as a fat square-
+   * kernel halo, rejected). The ground the backdrop actually loses is still
+   * quantized to base cells — the id-map's hard floor — so margins below one
+   * base cell differ only in which borderline cells claim. Ignored by
+   * "none".
    */
-  readonly occlusionPad?: number;
+  readonly occlusionMarginPx?: number;
 }
 
 export interface QuakeGlyphUiOverlay {
@@ -2281,8 +2287,8 @@ export function createQuakeGlyphUiOverlay(
               // partial-alpha boundary cells the backdrop was claiming.
               ...(style?.occlusionMode === "none" ? { transparent: true as const } : {}),
               ...(style?.occlusionMode === "plate" ? { occlusionClaim: "geometry" as const } : {}),
-              ...(style?.occlusionPad !== undefined && style.occlusionMode !== "none"
-                ? { occlusionDilate: style.occlusionPad }
+              ...(style?.occlusionMarginPx !== undefined && style.occlusionMode !== "none" && style.occlusionMode !== "plate"
+                ? { occlusionContourPx: style.occlusionMarginPx }
                 : {}),
             }
           : base;

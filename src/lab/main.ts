@@ -208,7 +208,7 @@ function remount(): void {
         gamma: values.logoGamma,
         saturation: values.logoSaturation,
         colorBoost: Math.max(1, 1.65 / values.logoAmbient),
-        occlusionPad: 2, // the game styles' shipped default
+        occlusionMarginPx: 0, // contour claims, the game styles' shipped default
       },
     },
     textArt:

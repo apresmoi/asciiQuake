@@ -1558,7 +1558,7 @@ function mountQuakeGlyphUiOverlay(t: QuakeGlyphTuningValues): void {
         gamma: t.logoGamma,
         saturation: t.logoSaturation,
         colorBoost: Math.max(1, 1.65 / t.logoAmbient),
-        occlusionPad: t.logoOcclusionPad,
+        occlusionMarginPx: t.logoOcclusionMargin,
       },
       // ONE profile for every conchars run — boot console AND menu row text
       // (same font, same path; see drawGlyphRun). Seeded from the user's
@@ -1572,7 +1572,7 @@ function mountQuakeGlyphUiOverlay(t: QuakeGlyphTuningValues): void {
         strokePx: t.textStroke,
         sheetGamma: t.textSheetGamma,
         sheetSaturation: t.textSheetSaturation,
-        occlusionPad: t.textOcclusionPad,
+        occlusionMarginPx: t.textOcclusionMargin,
       },
       plaque: {
         palette: quakeUiPlaquePalette,
@@ -1583,7 +1583,7 @@ function mountQuakeGlyphUiOverlay(t: QuakeGlyphTuningValues): void {
         inkComp: t.plaqueInkComp,
         strokePx: t.plaqueStroke,
         colorBoost: Math.max(1, 1.65 / t.plaqueAmbient),
-        occlusionPad: t.plaqueOcclusionPad,
+        occlusionMarginPx: t.plaqueOcclusionMargin,
       },
       title: {
         palette: quakeUiTitlePalette,
@@ -1594,7 +1594,7 @@ function mountQuakeGlyphUiOverlay(t: QuakeGlyphTuningValues): void {
         inkComp: t.titleInkComp,
         strokePx: t.titleStroke,
         colorBoost: Math.max(1, 1.65 / t.titleAmbient),
-        occlusionPad: t.titleOcclusionPad,
+        occlusionMarginPx: t.titleOcclusionMargin,
       },
       labels: {
         palette: quakeUiLabelPalette,
@@ -1605,7 +1605,7 @@ function mountQuakeGlyphUiOverlay(t: QuakeGlyphTuningValues): void {
         inkComp: t.labelInkComp,
         strokePx: t.labelStroke,
         colorBoost: Math.max(1, 1.65 / t.labelAmbient),
-        occlusionPad: t.labelOcclusionPad,
+        occlusionMarginPx: t.labelOcclusionMargin,
       },
     },
     // Measured against the cssquake.wtf reference menu (perceived-luminance

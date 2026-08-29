@@ -586,10 +586,13 @@ export function createQuakeMenuSceneManifest(
       // Every frame of the art is 20 q-units tall at the button's own width.
       rect: { x: LANDING_LIST_X, y: rowY, w: b.w, h: 20 },
       layer: 2,
-      density,
+      density: Math.max(1, options.labelDensity ?? density),
       segment: true,
       ...(b.frames > 1 ? { sheet: { frames: b.frames, axis: "y" as const }, frame: b.frame } : {}),
       item: b.id,
+      // Same element family as the landing label sheet — same style row
+      // (2026-08 sweep: the single-player panel must read like the landing).
+      styleTag: "labels",
     });
     singlePlayerSprites.push({
       id: `sp-cursor-${b.id}`,
