@@ -430,6 +430,15 @@ export interface QuakeMenuSceneManifestOptions {
   readonly density?: number;
   /** Backdrop brightness (the app's `?glyphImageBackdrop=`). */
   readonly backdropBrightness?: number;
+  /**
+   * Density for the corner logo alone (`?glyphImageLogoDensity=`), defaulting
+   * to `density`. The logo is a 1343x262 source drawn ~230x45 px — at the
+   * shared art density its strokes fall below one detail cell and the mark
+   * is illegible, while raising the SHARED density pays for every sprite.
+   * Each distinct density is one extra `<pre>` layer, so a logo-only bump is
+   * cheap.
+   */
+  readonly logoDensity?: number;
 }
 
 export function createQuakeMenuSceneManifest(
@@ -570,7 +579,7 @@ export function createQuakeMenuSceneManifest(
         texture: asciiQuakeLogo,
         place: (hostW) => quakeMenuSceneLogoRect(hostW),
         layer: 3,
-        density,
+        density: Math.max(1, Math.round(options.logoDensity ?? density)),
         segment: true,
       },
     ],

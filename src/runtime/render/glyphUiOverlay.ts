@@ -190,6 +190,23 @@ export interface QuakeGlyphUiOverlayOptions {
    */
   readonly backdropGamma?: number;
   /**
+   * Levels for the ART (detail) layers, applied to the tone curve's target
+   * luminance: `t' = (t - blackPoint) / (whitePoint - blackPoint)`, clamped.
+   * Raising the black point crushes near-black cells to true black; lowering
+   * the white point pushes the art's brights to full — together they are the
+   * dynamic-range stretch the gamma curve alone cannot express (a sub-1
+   * gamma only ever LIFTS, so the composite reads flat: nothing on screen is
+   * actually black and nothing is actually bright). Defaults 0/1 = off.
+   * `?glyphImageBlack=` / `?glyphImageWhite=`.
+   */
+  readonly blackPoint?: number;
+  readonly whitePoint?: number;
+  /** Same levels for the BACKDROP (base) layer — the lever for "the menu's
+   *  range is lost": the backdrop's midtone noise floor is what a black
+   *  point crushes. `?glyphImageBackdropBlack=` / `?glyphImageBackdropWhite=`. */
+  readonly backdropBlackPoint?: number;
+  readonly backdropWhitePoint?: number;
+  /**
    * Ink-coverage compensation strength, 0..1 (default 0 = off). Applied to
    * the ART/TEXT detail layers after their tone lift.
    *
@@ -343,6 +360,12 @@ export interface QuakeGlyphUiOverlayOptions {
   /** Detail density for MANIFEST text (`?glyphImageTextDensity=`), default 10 —
    *  same meaning as a textArt rule's `density`. */
   readonly manifestTextDensity?: number;
+  /** Detail density for the BOOT CONSOLE text alone
+   *  (`?glyphImageConsoleDensity=`), defaulting to `manifestTextDensity`.
+   *  The boot log is the largest text block on screen and the one the shared
+   *  density shortchanges most visibly; a separate knob lets it be raised
+   *  without paying for every menu row. */
+  readonly consoleTextDensity?: number;
 }
 
 /** Quake's console character sheet: a 16x16 grid of glyph cells; the high bit
@@ -481,6 +504,7 @@ export function createQuakeGlyphUiOverlay(
   const maxCells = Math.max(256, options.maxCells ?? DEFAULT_MAX_CELLS);
   const minCellPx = Math.max(2, options.minCellPx ?? DEFAULT_MIN_CELL_PX);
   const manifestTextDensity = Math.max(1, Math.round(options.manifestTextDensity ?? 10));
+  const consoleTextDensity = Math.max(1, Math.round(options.consoleTextDensity ?? manifestTextDensity));
 
   function readUrl(el: HTMLElement, isImg: boolean, declared?: string): string {
     if (el.dataset.glyphTexture) return el.dataset.glyphTexture;
@@ -658,6 +682,12 @@ export function createQuakeGlyphUiOverlay(
   // near-neutral concrete, so it stays un-saturated on purpose.
   // `?glyphImageSaturation=`.
   const artSaturation = Math.min(4, Math.max(0, options.saturation ?? 1.4));
+  // Levels (see the `blackPoint`/`whitePoint` option docs): applied to the
+  // curve's target luminance, per layer group like the gammas.
+  const artBlack = Math.min(0.5, Math.max(0, options.blackPoint ?? 0));
+  const artWhite = Math.min(1, Math.max(artBlack + 0.05, options.whitePoint ?? 1));
+  const backdropBlack = Math.min(0.5, Math.max(0, options.backdropBlackPoint ?? 0));
+  const backdropWhite = Math.min(1, Math.max(backdropBlack + 0.05, options.backdropWhitePoint ?? 1));
   const artLiftCache = new Map<string, string>();
   const backdropLiftCache = new Map<string, string>();
   function liftCellColors(
@@ -665,8 +695,10 @@ export function createQuakeGlyphUiOverlay(
     gamma: number,
     liftCache: Map<string, string>,
     saturation = 1,
+    black = 0,
+    white = 1,
   ): void {
-    if (gamma >= 1 && saturation === 1) return;
+    if (gamma >= 1 && saturation === 1 && black <= 0 && white >= 1) return;
     const colors = grid.color;
     for (let i = 0; i < colors.length; i++) {
       const hex = colors[i];
@@ -679,11 +711,15 @@ export function createQuakeGlyphUiOverlay(
         const luma = 0.2126 * r + 0.7152 * g + 0.0722 * b;
         if (luma <= 0) lifted = hex;
         else {
-          // Scale toward the curve's target luminance, but never past the point
-          // where the largest channel would clip — that cap is what keeps a
-          // bright bronze from washing to white.
-          const scale = gamma >= 1 ? 1 : Math.min(
-            (255 * Math.pow(luma / 255, gamma)) / luma,
+          // Target luminance: the gamma curve's output, then the levels
+          // stretch — black point crushes the floor to true black, white
+          // point pushes the top to full. Then scale toward that target, but
+          // never past the point where the largest channel would clip — that
+          // cap is what keeps a bright bronze from washing to white.
+          const t = Math.min(1, Math.max(0,
+            (Math.pow(luma / 255, gamma) - black) / (white - black)));
+          const scale = Math.min(
+            (255 * t) / luma,
             255 / Math.max(r, g, b),
           );
           let nr = r * scale, ng = g * scale, nb = b * scale;
@@ -875,10 +911,10 @@ export function createQuakeGlyphUiOverlay(
     // full-host grid — is stamped into the base grid only, AFTER its lift.
     transformCells: (grid) => {
       if (isBaseGrid(grid)) {
-        liftCellColors(grid, backdropGamma, backdropLiftCache);
+        liftCellColors(grid, backdropGamma, backdropLiftCache, 1, backdropBlack, backdropWhite);
         stampText(grid);
       } else {
-        liftCellColors(grid, artGamma, artLiftCache, artSaturation);
+        liftCellColors(grid, artGamma, artLiftCache, artSaturation, artBlack, artWhite);
         // Detail layers only: the backdrop's sparse glyphs are a deliberate
         // depth cue, so the base grid is never coverage-compensated.
         compensateInkCoverage(grid);
@@ -1578,7 +1614,7 @@ export function createQuakeGlyphUiOverlay(
     leftPx: number,
     topPx: number,
     glyphPx: number,
-    opts: { alt?: boolean; brightness?: number; layer?: number; align?: "left" | "center" | "right" } = {},
+    opts: { alt?: boolean; brightness?: number; layer?: number; align?: "left" | "center" | "right"; density?: number } = {},
   ): void {
     if (!text) return;
     const sheetUrl = ensureTextSheet();
@@ -1597,7 +1633,7 @@ export function createQuakeGlyphUiOverlay(
     const cy = hostBox.height / 2;
     const z = (opts.layer ?? MANIFEST_TEXT_LAYER) * LAYER_STEP;
     const cw = 1 / CONCHARS_GRID;
-    const density = manifestTextDensity;
+    const density = Math.max(1, Math.round(opts.density ?? manifestTextDensity));
     for (let i = 0; i < drawn.length; i++) {
       const char = drawn[i]!;
       if (char === " ") continue;
@@ -1754,7 +1790,7 @@ export function createQuakeGlyphUiOverlay(
     } else if (st.chrome) {
       let top = QUAKE_CONSOLE_TOP;
       for (const line of st.consoleLines) {
-        drawGlyphRun(groups, hostBox, line, QUAKE_CONSOLE_LEFT, top, QUAKE_CONSOLE_GLYPH);
+        drawGlyphRun(groups, hostBox, line, QUAKE_CONSOLE_LEFT, top, QUAKE_CONSOLE_GLYPH, { density: consoleTextDensity });
         top += QUAKE_CONSOLE_PITCH;
       }
       if (st.consoleProgress !== null) {
@@ -1772,7 +1808,7 @@ export function createQuakeGlyphUiOverlay(
       }
       if (st.consoleAction) {
         top += QUAKE_CONSOLE_GAP;
-        drawGlyphRun(groups, hostBox, st.consoleAction, QUAKE_CONSOLE_LEFT, top, QUAKE_CONSOLE_GLYPH, { alt: true });
+        drawGlyphRun(groups, hostBox, st.consoleAction, QUAKE_CONSOLE_LEFT, top, QUAKE_CONSOLE_GLYPH, { alt: true, density: consoleTextDensity });
       }
       // Version tag beside the logo (the old #asciiquake-version span).
       const version = st.texts["version"];

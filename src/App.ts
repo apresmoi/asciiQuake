@@ -11,8 +11,14 @@ import {
   QUAKE_DEFAULT_RENDER_MODE,
   type QuakeRenderMode,
 } from "./runtime/render/engine";
-import { createQuakeGlyphUiOverlay } from "./runtime/render/glyphUiOverlay";
+import { createQuakeGlyphUiOverlay, type QuakeGlyphUiOverlay } from "./runtime/render/glyphUiOverlay";
 import { createQuakeMenuSceneManifest } from "./runtime/render/menuSceneManifest";
+import {
+  QUAKE_GLYPH_UI_TUNING_KNOBS,
+  QUAKE_GLYPH_WORLD_TUNING_KNOBS,
+  readQuakeGlyphTuningValues,
+  type QuakeGlyphTuningValues,
+} from "./runtime/app/glyphTuningSpec";
 import { getQuakeMenuSceneState, updateQuakeMenuSceneState, updateQuakeMenuSceneTexts } from "./runtime/menuSceneState";
 import { GLYPH_FONT_ATLAS_ASCII } from "glyphcss";
 import {
@@ -1332,6 +1338,20 @@ const quakeGlyphFontAtlas = quakeStartupUrlParams.get("glyphAtlas") === "univers
   ? undefined
   : GLYPH_FONT_ATLAS_ASCII;
 
+// The tuning-panel knobs' startup values: URL param when present, shipped
+// default otherwise — resolved through the same spec table the `?debug`
+// tuning panel builds its sliders from (see glyphTuningSpec.ts).
+const quakeWorldGlyphTuning = readQuakeGlyphTuningValues(QUAKE_GLYPH_WORLD_TUNING_KNOBS, quakeStartupUrlParams);
+const quakeUiGlyphTuning = readQuakeGlyphTuningValues(QUAKE_GLYPH_UI_TUNING_KNOBS, quakeStartupUrlParams);
+// The corner logo's useful density follows the display: cells below one
+// DEVICE pixel blur to grey, so a high-DPI screen resolves twice the density
+// a 1x screen does (measured: legible from 8 at DPR 1, best at 16 at DPR 2).
+// The spec literal is the 1x value; lift it on high-DPI unless the URL pins one.
+const quakeLogoDensityDefault = (window.devicePixelRatio || 1) >= 2 ? 16 : 8;
+if (!quakeStartupUrlParams.has("glyphImageLogoDensity")) {
+  quakeUiGlyphTuning.logoDensity = quakeLogoDensityDefault;
+}
+
 // glyphcss world overlay (Phase 3 milestone): when the ASCII backend is
 // selected, polycss still drives all game logic/camera/controls while this
 // overlay mirrors the world geometry as ASCII driven by the live camera.
@@ -1361,16 +1381,20 @@ const quakeGlyphOverlay: QuakeGlyphWorldOverlay | null =
         perspective: quakeUrlNumberParam(quakeStartupUrlParams, "glyphPersp", 100, 40000) ?? quakeCameraViewConfig.perspective,
         zoom: quakeUrlNumberParam(quakeStartupUrlParams, "glyphZoom", 0.01, 500) ?? quakeCameraViewConfig.zoom,
         fovScale: quakeUrlNumberParam(quakeStartupUrlParams, "glyphFovScale", 0.1, 10) ?? undefined,
-        flat: quakeUrlNumberParam(quakeStartupUrlParams, "glyphFlat", 0, 1) ?? undefined,
-        brighten: quakeUrlNumberParam(quakeStartupUrlParams, "glyphBright", 1, 12) ?? undefined,
+        flat: quakeWorldGlyphTuning.flat,
+        brighten: quakeWorldGlyphTuning.brighten,
         // Hue-preserving tone lift after the brighten multiply (below 1 lifts
         // mids/darks, clip guard holds highlights). `?glyphGamma=`.
-        gamma: quakeUrlNumberParam(quakeStartupUrlParams, "glyphGamma", 0.2, 1) ?? undefined,
+        gamma: quakeWorldGlyphTuning.gamma,
+        // Levels on the tone curve's target luminance (dynamic-range stretch;
+        // see the overlay option docs). `?glyphBlack=` / `?glyphWhite=`.
+        blackPoint: quakeWorldGlyphTuning.black,
+        whitePoint: quakeWorldGlyphTuning.white,
         // Sub-pixel glyph stroke — perceived-luminance coverage boost.
         // `?glyphStroke=` (0 disables).
-        strokePx: quakeUrlNumberParam(quakeStartupUrlParams, "glyphStroke", 0, 2) ?? undefined,
-        ambientLight: quakeUrlNumberParam(quakeStartupUrlParams, "glyphAmbient", 0, 1) ?? undefined,
-        directionalLight: quakeUrlNumberParam(quakeStartupUrlParams, "glyphDir", 0, 1) ?? undefined,
+        strokePx: quakeWorldGlyphTuning.stroke,
+        ambientLight: quakeWorldGlyphTuning.ambient,
+        directionalLight: quakeWorldGlyphTuning.dir,
         depthEpsilon: quakeUrlNumberParam(quakeStartupUrlParams, "glyphEps", 0, 0.1) ?? undefined,
         // Glyph ramp palette (intensity → char). Defaults to "blocks" (solid
         // block elements → walls read as surfaces, not letters).
@@ -1444,107 +1468,185 @@ const quakeGlyphOverlay: QuakeGlyphWorldOverlay | null =
 // to fall back to is gone, so the glyph UI scene is the ONLY menu renderer —
 // in polycss world-render mode too.
 const quakeMenuManifest = createQuakeMenuSceneManifest({
-  density: quakeUrlNumberParam(quakeStartupUrlParams, "glyphImageDensity", 1, 8) ?? 4,
-  backdropBrightness: quakeUrlNumberParam(quakeStartupUrlParams, "glyphImageBackdrop", 0, 1) ?? 0.6,
+  density: quakeUiGlyphTuning.density,
+  backdropBrightness: quakeUiGlyphTuning.backdrop,
+  logoDensity: quakeUiGlyphTuning.logoDensity,
 });
-{
-  // A DEDICATED, always-present host — not the loading overlay. Hosting the
-  // scene on `#quake-loading-overlay` tied its life to that overlay's `hidden`
-  // flag: the moment gameplay started the host collapsed to zero size, sync()
-  // bailed, and neither the in-game Esc menu nor the HUD could ever draw.
-  // Placement: immediately BEFORE the overlay at the overlay's own z-index (2),
-  // so during boot/loading the overlay's interior HTML (the progress bar) still
-  // paints above the glyph grid exactly as it did when the grid lived inside
-  // it, while `#quake-menu` (z-index 3) keeps its interactive HTML on top. The
-  // overlay's own black ground moves to the glyph surface (see the overlay's
-  // chrome handling) — quake.css makes the overlay itself transparent.
-  const uiHost = document.createElement("div");
-  uiHost.id = "quake-glyph-ui-host";
-  uiHost.setAttribute("aria-hidden", "true");
-  uiHost.style.cssText = "position:absolute;inset:0;z-index:2;pointer-events:none;overflow:hidden";
-  quakeApp.appendChild(uiHost);
-  if (uiHost.parentElement) {
-    createQuakeGlyphUiOverlay({
-      host: uiHost,
-      // ONE occlusion domain across the two stacked scenes: the UI scene
-      // publishes its opaque coverage (Esc menu art, HUD, crosshair) after
-      // every render, and the world scene blanks its cells under it — the
-      // same effect the landing gets from backdrop + art sharing a scene.
-      // The viewmodel yields too (it is part of the world scene).
-      onCoverage: (coverage) => quakeGlyphOverlay?.setUiOcclusion(coverage),
-      // The declarative menu scene: every screen, its text and the chrome
-      // render from this manifest + the shared menu scene state. No DOM reads.
-      menu: quakeMenuManifest,
-      maxCells: quakeUrlNumberParam(quakeStartupUrlParams, "glyphImageCells", 2000, 120_000) ?? undefined,
-      minCellPx: quakeUrlNumberParam(quakeStartupUrlParams, "glyphImageCell", 2, 24) ?? undefined,
-      glyphPalette: quakeStartupUrlParams.get("glyphImagePalette") ?? undefined,
-      // Measured against the cssquake.wtf reference menu (perceived-luminance
-      // region stats, 2026-08): 3.0 + the 0.6px glyph stroke + gamma 0.4 +
-      // backdropGamma 0.6 lands the banner/plaque within ~70% of the
-      // reference where the old 2.0/0.55/0.8 sat at ~35%. The earlier "3.0
-      // clips the bronze" observation predates the gamma clip guard, which
-      // now holds those channels. `?glyphImageAmbient=`.
-      ambient: quakeUrlNumberParam(quakeStartupUrlParams, "glyphImageAmbient", 0.2, 6) ?? 3.0,
-      // Hue-preserving tone lift (below 1 brightens; see the overlay's `gamma`
-      // doc). This carries the brightness the linear levers cannot: ambient
-      // past ~2.4 clips the art's bright channels and washes the bronze grey,
-      // while the curve spends its lift on the dark backdrop and midtones.
-      gamma: quakeUrlNumberParam(quakeStartupUrlParams, "glyphImageGamma", 0.2, 1) ?? 0.4,
-      // Art-layer vibrancy (see the overlay's `saturation` doc).
-      // `?glyphImageSaturation=`.
-      saturation: quakeUrlNumberParam(quakeStartupUrlParams, "glyphImageSaturation", 0, 4) ?? undefined,
-      // The backdrop's own, MILDER curve. One shared curve lifted the dark
-      // backdrop proportionally more than the art, which read as the
-      // background sitting in front of the menu. 0.6 keeps the backdrop's
-      // concrete texture visible (the reference backdrop reads ~50 perceived
-      // luma) while the art's stronger lift + ink compensation stays ahead.
-      // `?glyphImageBackdropGamma=`.
-      backdropGamma: quakeUrlNumberParam(quakeStartupUrlParams, "glyphImageBackdropGamma", 0.2, 1) ?? 0.6,
-      colorEncoding: quakeStartupUrlParams.get("glyphImageEncoding") === "spans" ? "spans" : "atlas",
-      fontAtlas: quakeGlyphFontAtlas,
-      // The INTERMISSION card is the one surface still built as DOM (it is
-      // gameplay-only and assembled at show time): its bitmap runs render as
-      // conchars quads exactly as all menu text used to. Everything else is
-      // manifest text now (see the overlay's emitManifestTexts).
-      textArt: [{
-        selector: "#quake-intermission .quake-bitmap-run",
-        layer: 2,
-        density: quakeUrlNumberParam(quakeStartupUrlParams, "glyphImageTextDensity", 1, 16) ?? 10,
-      }],
-      // Manifest text shares the text density knob. `?glyphImageTextDensity=`.
-      manifestTextDensity: quakeUrlNumberParam(quakeStartupUrlParams, "glyphImageTextDensity", 1, 16) ?? 10,
-      // Ink-coverage compensation strength for the art/text detail layers —
-      // `?glyphImageInkComp=` (0 disables, 1 full). See the overlay option.
-      inkCompensation: quakeUrlNumberParam(quakeStartupUrlParams, "glyphImageInkComp", 0, 1) ?? 1,
-      // Sub-pixel glyph stroke — perceived-luminance coverage boost for the
-      // whole UI scene. `?glyphImageStroke=` (0 disables).
-      strokePx: quakeUrlNumberParam(quakeStartupUrlParams, "glyphImageStroke", 0, 2) ?? undefined,
-      // Text-only brightness and vibrancy — both applied once to the conchars
-      // sheet the text quads sample, so neither can affect the art or backdrop.
-      textGamma: quakeUrlNumberParam(quakeStartupUrlParams, "glyphImageTextGamma", 0.2, 1) ?? 0.38,
-      textSaturation: quakeUrlNumberParam(quakeStartupUrlParams, "glyphImageTextSaturation", 0, 4) ?? 1.35,
-      //
-      // The LANDING screen, the backdrop and the corner logo are gone from
-      // this list: they render from the scene manifest above. What remains is
-      // the not-yet-migrated screens' art, still discovered by tracing.
-      sprites: [
-        // `?glyphImageDensity=` puts small art in its own higher-density detail
-        // layer, and `segment: true` makes that layer OCCLUDE correctly: the
-        // sprite is split into one tight quad per connected opaque region, so
-        // glyphcss's occlusion id-map blanks the base grid only under the
-        // artwork itself (the art sits on clean black, like a world entity)
-        // while the backdrop keeps painting between the letterforms. Without
-        // segment the quad is the sprite's whole rectangle — occluding punches
-        // a black box around the art, so the overlay renders an unsegmented
-        // density sprite `transparent` instead, and the bright backdrop then
-        // leaks straight through the art's transparent texels.
-        // The classic HUD renders from the scene state + hud.ts's slot table
-        // now (see the overlay's emitHudScene) — no HUD sprite rules here.
-        { selector: ".quake-intermission-value-glyph", layer: 2, fit: "css" },
-        { selector: ".quake-glyph-pseudo", layer: 2, fit: "css", density: quakeUrlNumberParam(quakeStartupUrlParams, "glyphImageDensity", 1, 8) ?? 4, segment: true },
-      ],
-    });
-  }
+// A DEDICATED, always-present host — not the loading overlay. Hosting the
+// scene on `#quake-loading-overlay` tied its life to that overlay's `hidden`
+// flag: the moment gameplay started the host collapsed to zero size, sync()
+// bailed, and neither the in-game Esc menu nor the HUD could ever draw.
+// Placement: immediately BEFORE the overlay at the overlay's own z-index (2),
+// so during boot/loading the overlay's interior HTML (the progress bar) still
+// paints above the glyph grid exactly as it did when the grid lived inside
+// it, while `#quake-menu` (z-index 3) keeps its interactive HTML on top. The
+// overlay's own black ground moves to the glyph surface (see the overlay's
+// chrome handling) — quake.css makes the overlay itself transparent.
+const quakeGlyphUiHost = document.createElement("div");
+quakeGlyphUiHost.id = "quake-glyph-ui-host";
+quakeGlyphUiHost.setAttribute("aria-hidden", "true");
+quakeGlyphUiHost.style.cssText = "position:absolute;inset:0;z-index:2;pointer-events:none;overflow:hidden";
+quakeApp.appendChild(quakeGlyphUiHost);
+
+let quakeGlyphUiOverlayHandle: QuakeGlyphUiOverlay | null = null;
+/**
+ * (Re)create the UI glyph scene with a tuning-values record (keys =
+ * glyphTuningSpec's UI knobs). Called once at startup with the URL-resolved
+ * values; the `?debug` tuning panel calls it again per adjustment — the
+ * overlay's options are baked at construction (tone caches, the pre-lifted
+ * conchars sheet, manifest densities), so a full dispose+recreate IS the
+ * live-update path, and the overlay was built to make that cheap.
+ *
+ * The overlay gets its OWN manifest instance per mount: `quakeMenuManifest`
+ * above stays with the menu controller (hit-map identity), and both are pure
+ * functions of the same layout constants, so the geometry cannot diverge —
+ * only density/brightness differ.
+ */
+function mountQuakeGlyphUiOverlay(t: QuakeGlyphTuningValues): void {
+  quakeGlyphUiOverlayHandle?.dispose();
+  quakeGlyphUiOverlayHandle = createQuakeGlyphUiOverlay({
+    host: quakeGlyphUiHost,
+    // ONE occlusion domain across the two stacked scenes: the UI scene
+    // publishes its opaque coverage (Esc menu art, HUD, crosshair) after
+    // every render, and the world scene blanks its cells under it — the
+    // same effect the landing gets from backdrop + art sharing a scene.
+    // The viewmodel yields too (it is part of the world scene).
+    onCoverage: (coverage) => quakeGlyphOverlay?.setUiOcclusion(coverage),
+    // The declarative menu scene: every screen, its text and the chrome
+    // render from this manifest + the shared menu scene state. No DOM reads.
+    menu: createQuakeMenuSceneManifest({
+      density: t.density,
+      backdropBrightness: t.backdrop,
+      logoDensity: t.logoDensity,
+    }),
+    maxCells: t.maxCells,
+    minCellPx: t.minCellPx,
+    glyphPalette: quakeStartupUrlParams.get("glyphImagePalette") ?? undefined,
+    // Measured against the cssquake.wtf reference menu (perceived-luminance
+    // region stats, 2026-08): 3.0 + the 0.6px glyph stroke + gamma 0.4 +
+    // backdropGamma 0.6 lands the banner/plaque within ~70% of the
+    // reference where the old 2.0/0.55/0.8 sat at ~35%. The earlier "3.0
+    // clips the bronze" observation predates the gamma clip guard, which
+    // now holds those channels. `?glyphImageAmbient=`.
+    ambient: t.ambient,
+    // Hue-preserving tone lift (below 1 brightens; see the overlay's `gamma`
+    // doc). This carries the brightness the linear levers cannot: ambient
+    // past ~2.4 clips the art's bright channels and washes the bronze grey,
+    // while the curve spends its lift on the dark backdrop and midtones.
+    gamma: t.gamma,
+    // Art-layer vibrancy (see the overlay's `saturation` doc).
+    // `?glyphImageSaturation=`.
+    saturation: t.saturation,
+    // Levels: dynamic-range stretch per layer group (see the overlay docs).
+    // `?glyphImageBlack=`/`?glyphImageWhite=` (art),
+    // `?glyphImageBackdropBlack=`/`?glyphImageBackdropWhite=` (backdrop).
+    blackPoint: t.black,
+    whitePoint: t.white,
+    backdropBlackPoint: t.backdropBlack,
+    backdropWhitePoint: t.backdropWhite,
+    // The backdrop's own, MILDER curve. One shared curve lifted the dark
+    // backdrop proportionally more than the art, which read as the
+    // background sitting in front of the menu. 0.6 keeps the backdrop's
+    // concrete texture visible (the reference backdrop reads ~50 perceived
+    // luma) while the art's stronger lift + ink compensation stays ahead.
+    // `?glyphImageBackdropGamma=`.
+    backdropGamma: t.backdropGamma,
+    colorEncoding: quakeStartupUrlParams.get("glyphImageEncoding") === "spans" ? "spans" : "atlas",
+    fontAtlas: quakeGlyphFontAtlas,
+    // The INTERMISSION card is the one surface still built as DOM (it is
+    // gameplay-only and assembled at show time): its bitmap runs render as
+    // conchars quads exactly as all menu text used to. Everything else is
+    // manifest text now (see the overlay's emitManifestTexts).
+    textArt: [{
+      selector: "#quake-intermission .quake-bitmap-run",
+      layer: 2,
+      density: t.textDensity,
+    }],
+    // Manifest text shares the text density knob (`?glyphImageTextDensity=`);
+    // the boot console alone can be pushed further (`?glyphImageConsoleDensity=`).
+    manifestTextDensity: t.textDensity,
+    consoleTextDensity: t.consoleDensity,
+    // Ink-coverage compensation strength for the art/text detail layers —
+    // `?glyphImageInkComp=` (0 disables, 1 full). See the overlay option.
+    inkCompensation: t.inkComp,
+    // Sub-pixel glyph stroke — perceived-luminance coverage boost for the
+    // whole UI scene. `?glyphImageStroke=` (0 disables).
+    strokePx: t.stroke,
+    // Text-only brightness and vibrancy — both applied once to the conchars
+    // sheet the text quads sample, so neither can affect the art or backdrop.
+    textGamma: t.textGamma,
+    textSaturation: t.textSaturation,
+    //
+    // The LANDING screen, the backdrop and the corner logo are gone from
+    // this list: they render from the scene manifest above. What remains is
+    // the not-yet-migrated screens' art, still discovered by tracing.
+    sprites: [
+      // `?glyphImageDensity=` puts small art in its own higher-density detail
+      // layer, and `segment: true` makes that layer OCCLUDE correctly: the
+      // sprite is split into one tight quad per connected opaque region, so
+      // glyphcss's occlusion id-map blanks the base grid only under the
+      // artwork itself (the art sits on clean black, like a world entity)
+      // while the backdrop keeps painting between the letterforms. Without
+      // segment the quad is the sprite's whole rectangle — occluding punches
+      // a black box around the art, so the overlay renders an unsegmented
+      // density sprite `transparent` instead, and the bright backdrop then
+      // leaks straight through the art's transparent texels.
+      // The classic HUD renders from the scene state + hud.ts's slot table
+      // now (see the overlay's emitHudScene) — no HUD sprite rules here.
+      { selector: ".quake-intermission-value-glyph", layer: 2, fit: "css" },
+      { selector: ".quake-glyph-pseudo", layer: 2, fit: "css", density: t.density, segment: true },
+    ],
+  });
+}
+mountQuakeGlyphUiOverlay(quakeUiGlyphTuning);
+
+// ── `?debug` live tuning panel ───────────────────────────────────────────────
+// A disposable, off-theme floating panel of sliders over every glyph tuning
+// knob (see glyphTuningSpec.ts), for finding better defaults by eye. Gated on
+// the URL param and loaded lazily so the normal path carries ZERO extra DOM
+// and no module cost.
+if (quakeStartupUrlParams.has("debug")) {
+  void import("./runtime/debug/glyphTuningPanel").then(({ installQuakeGlyphTuningPanel }) => {
+    installQuakeGlyphTuningPanel([
+      {
+        title: "Menu / UI scene",
+        knobs: QUAKE_GLYPH_UI_TUNING_KNOBS,
+        values: quakeUiGlyphTuning,
+        // The logo's real default is display-dependent (see above) — keep
+        // "copy URL" and reset honest about it.
+        defaults: { logoDensity: quakeLogoDensityDefault },
+        // Recreating the UI scene re-probes textures + re-segments art; keep
+        // it off the slider's every input event.
+        debounceMs: 180,
+        apply: (v) => mountQuakeGlyphUiOverlay(v),
+      },
+      ...(quakeGlyphOverlay
+        ? [{
+            title: "World scene",
+            knobs: QUAKE_GLYPH_WORLD_TUNING_KNOBS,
+            values: { ...quakeWorldGlyphTuning, cell: quakeGlyphOverlay.getCellPx() },
+            // The world's budget-derived cell is the real default; the spec's
+            // literal is only a fallback. Overriding keeps "copy URL" from
+            // pinning a cell the user never touched.
+            defaults: { cell: quakeGlyphOverlay.getCellPx() },
+            debounceMs: 120,
+            apply: (v: QuakeGlyphTuningValues) => {
+              quakeGlyphOverlay.setTuning({
+                brighten: v.brighten,
+                gamma: v.gamma,
+                blackPoint: v.black,
+                whitePoint: v.white,
+                flat: v.flat,
+                strokePx: v.stroke,
+                ambientLight: v.ambient,
+                directionalLight: v.dir,
+              });
+              quakeGlyphOverlay.setCellPx(v.cell);
+            },
+          }]
+        : []),
+    ]);
+  });
 }
 
 if (quakeGlyphOverlay) {
