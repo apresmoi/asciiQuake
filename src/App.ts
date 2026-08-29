@@ -1460,6 +1460,12 @@ const quakeMenuManifest = createQuakeMenuSceneManifest({
   if (uiHost.parentElement) {
     createQuakeGlyphUiOverlay({
       host: uiHost,
+      // ONE occlusion domain across the two stacked scenes: the UI scene
+      // publishes its opaque coverage (Esc menu art, HUD, crosshair) after
+      // every render, and the world scene blanks its cells under it — the
+      // same effect the landing gets from backdrop + art sharing a scene.
+      // The viewmodel yields too (it is part of the world scene).
+      onCoverage: (coverage) => quakeGlyphOverlay?.setUiOcclusion(coverage),
       // The declarative menu scene: every screen, its text and the chrome
       // render from this manifest + the shared menu scene state. No DOM reads.
       menu: quakeMenuManifest,

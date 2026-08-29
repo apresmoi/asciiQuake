@@ -135,6 +135,16 @@ export interface QuakeGlyphUiOverlayOptions {
   /** Element the shared grid covers — its box is the ASCII canvas. */
   readonly host: HTMLElement;
   /**
+   * Published after every render: the scene's opaque per-cell coverage (the
+   * segmented menu art, the HUD art, the crosshair — everything that owns the
+   * shared occlusion id-map; text and unsegmented sprites excluded), or `null`
+   * when nothing opaque is on screen. The app feeds it to the WORLD overlay's
+   * `setUiOcclusion`, joining the two stacked scenes into one occlusion
+   * domain: the world blanks under the Esc menu exactly the way the landing
+   * backdrop blanks under the same art.
+   */
+  readonly onCoverage?: (coverage: import("glyphcss").GlyphOcclusionCoverage | null) => void;
+  /**
    * Selector rules, rescanned as the DOM changes. Rules rather than resolved
    * elements because much of this UI is built after startup: the boot log alone
    * appends 808 sprite-sheet spans, none of which exist when this mounts.
@@ -1897,6 +1907,10 @@ export function createQuakeGlyphUiOverlay(
       if (!groups.has(groupKey)) { mesh.dispose(); meshes.delete(groupKey); }
     }
     scene.rerender();
+    // Publish this frame's opaque coverage so the world scene beneath can
+    // punch itself out under the menu/HUD art (see the option's doc). The
+    // optional call keeps a stale prebundled glyphcss (linked dev) harmless.
+    options.onCoverage?.(scene.getOpaqueCoverage?.() ?? null);
   }
 
   // A sprite draws only once its source size is known. Redraws are coalesced
@@ -2053,6 +2067,7 @@ export function createQuakeGlyphUiOverlay(
     element: surface,
     sync,
     dispose(): void {
+      options.onCoverage?.(null);
       window.removeEventListener("resize", onResize);
       unsubscribeMenuState?.();
       if (frameWatch) clearInterval(frameWatch);

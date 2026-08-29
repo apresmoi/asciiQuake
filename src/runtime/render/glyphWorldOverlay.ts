@@ -1,5 +1,5 @@
 import { createGlyphPerspectiveCamera, createGlyphScene, type GlyphFontAtlas } from "glyphcss";
-import type { GlyphMeshHandle, GlyphMeshTransform } from "glyphcss";
+import type { GlyphMeshHandle, GlyphMeshTransform, GlyphOcclusionCoverage } from "glyphcss";
 import { BASE_TILE, type Vec3 } from "@layoutit/polycss";
 
 /**
@@ -154,9 +154,15 @@ export interface QuakeGlyphEntityTransform {
   depthBias?: number;
   /** Per-entity glyph detail multiplier (overrides the overlay's default). */
   density?: number;
-  /** Never occluded by the world (glyphcss `transparent`). Quake draws the
-   *  viewmodel after a depth clear, so the gun is never swallowed by the wall
-   *  the player is standing against — mirror that here. */
+  /** Never occluded by the world — but OCCLUDING it. Quake draws the viewmodel
+   *  after a depth clear: the gun is never swallowed by the wall the player is
+   *  standing against, yet the world IS hidden behind the gun. Implemented via
+   *  glyphcss `occlusionPriority` (the mesh stays opaque and claims its cells
+   *  in the shared occlusion id-map regardless of depth), so the gun's real
+   *  triangle silhouette punches the world exactly like any entity — one
+   *  directional, unlike the old `transparent` mapping which removed the gun
+   *  from occlusion entirely and let the world show through it. Falls back to
+   *  `transparent` when the entity has no detail layer (entityDensity=1). */
   neverOccluded?: boolean;
 }
 
@@ -204,6 +210,17 @@ export interface QuakeGlyphWorldOverlay {
   setEntityTransform(id: string, transform: QuakeGlyphEntityTransform): boolean;
   /** Remove an entity mesh. */
   removeEntity(id: string): void;
+  /**
+   * Feed the UI overlay's opaque coverage (its `getOpaqueCoverage()` result)
+   * into this scene as a FOREIGN occluder: the world — base grid, entity
+   * detail layers and the viewmodel alike — blanks its cells under the Esc
+   * menu's segmented art, the HUD and the crosshair, exactly the way the
+   * landing backdrop blanks under the menu art. This is what joins the two
+   * stacked glyph scenes into ONE occlusion domain. `null` clears (menu/HUD
+   * gone). Schedules a render itself — the game may be paused under the menu,
+   * so waiting for the next camera sync would freeze a stale frame.
+   */
+  setUiOcclusion(coverage: GlyphOcclusionCoverage | null): void;
   /** Diagnostic: render an exact frozen view (used by the flicker probes). */
   setFixedView(eyeX: number, eyeY: number, eyeZ: number, rotX: number, rotY: number): void;
   setVisible(visible: boolean): void;
@@ -590,7 +607,15 @@ export function createQuakeGlyphWorldOverlay(
         : (transform.scale as number | undefined),
       ...(transform.depthBias ? { depthBias: transform.depthBias } : {}),
       ...(density ? { density } : {}),
-      ...(transform.neverOccluded || (density && entityTransparent) ? { transparent: true } : {}),
+      // DEBUG `?glyphEntityTransparent=1`: all density entities skip occlusion.
+      ...(density && entityTransparent ? { transparent: true } : {}),
+      // `neverOccluded` (the viewmodel): opaque + cross-layer priority — the
+      // mesh occludes the world but can never be occluded by it (see the
+      // option's doc). Only detail meshes participate in the shared id-map,
+      // so a density-1 config keeps the legacy `transparent` exclusion.
+      ...(transform.neverOccluded
+        ? (density && !entityTransparent ? { occlusionPriority: 1 } : { transparent: true })
+        : {}),
     };
   }
 
@@ -775,6 +800,17 @@ export function createQuakeGlyphWorldOverlay(
   function scheduleRender(): void {
     if (!pendingFrame) pendingFrame = window.requestAnimationFrame(renderFrame);
   }
+  function setUiOcclusion(coverage: GlyphOcclusionCoverage | null): void {
+    // Linked-dev version skew: a dev server whose prebundled glyphcss predates
+    // `setForeignOcclusion` degrades to the old no-punch compositing instead of
+    // throwing on every UI publish.
+    if (typeof scene.setForeignOcclusion !== "function") return;
+    scene.setForeignOcclusion(coverage);
+    // The Esc menu pauses the game — no camera syncs arrive, so this mutation
+    // must drive its own frame or the punched/unpunched world never repaints.
+    scheduleRender();
+  }
+
   function syncCamera(eye: Vec3, rotX: number, rotY: number, target?: Vec3): void {
     // In fixed-view mode the player camera is ignored; render the frozen view
     // once so the readout/output reflect exactly the requested coordinates.
@@ -907,7 +943,7 @@ export function createQuakeGlyphWorldOverlay(
   setComposite(composite);
 
   const overlay: QuakeGlyphWorldOverlay = {
-    element, setGeometry, syncCamera, setEntity, setEntityTransform, removeEntity, setFixedView,
+    element, setGeometry, syncCamera, setEntity, setEntityTransform, removeEntity, setUiOcclusion, setFixedView,
     setVisible, setComposite, getComposite, setGlyphPalette, getGlyphPalette,
     setCharMode, getCharMode, setSceneMode, getSceneMode, setCellPx, getCellPx, dispose,
   };
