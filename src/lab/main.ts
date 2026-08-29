@@ -192,14 +192,23 @@ function remount(): void {
             segment,
             styleTag: "logo",
           }],
-    // The logo's per-mesh style — identical wiring to App.ts, so the lab
-    // previews exactly what the game's corner logo will render.
+    // The previewed element's per-mesh style — identical wiring to App.ts's
+    // style table, so the lab previews exactly what a styled game element
+    // will render. `ambient` now reaches glyphcss as the mesh's own ambient
+    // light (chars follow it), and `colorBoost` mirrors the game's
+    // lab-session residual. NOTE the semantics shift (2026-08): the "logo
+    // ambient" slider genuinely drives glyph choice now — before the
+    // per-mesh ambient landed in glyphcss, chars followed the SCENE ambient
+    // slider instead; to reproduce a pre-change lab session, set this
+    // slider to that session's scene ambient value.
     meshStyles: {
       logo: {
         palette: logoPalette,
         ambient: values.logoAmbient,
         gamma: values.logoGamma,
         saturation: values.logoSaturation,
+        colorBoost: Math.max(1, 1.65 / values.logoAmbient),
+        occlusionPad: 2, // the game styles' shipped default
       },
     },
     textArt:

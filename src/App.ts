@@ -1357,6 +1357,18 @@ const QUAKE_LOGO_PALETTE_DEFAULT = "dense";
 let quakeUiLogoPalette = quakeStartupUrlParams.get("glyphImageLogoPalette")
   ? sanitizeQuakeGlyphPalette(quakeStartupUrlParams.get("glyphImageLogoPalette"))
   : QUAKE_LOGO_PALETTE_DEFAULT;
+// The other per-element ramps (2026-08 retune): boot console, menu plaque,
+// menu title, menu label sheet — all tuned to "dense" in the glyph lab, each
+// overridable per element. Same ASCII-only sanitizer as every palette path.
+const QUAKE_ELEMENT_PALETTE_DEFAULT = "dense";
+function quakeElementPalette(param: string): string {
+  const raw = quakeStartupUrlParams.get(param);
+  return raw ? sanitizeQuakeGlyphPalette(raw) : QUAKE_ELEMENT_PALETTE_DEFAULT;
+}
+let quakeUiTextPalette = quakeElementPalette("glyphImageTextPalette");
+let quakeUiPlaquePalette = quakeElementPalette("glyphImagePlaquePalette");
+let quakeUiTitlePalette = quakeElementPalette("glyphImageTitlePalette");
+let quakeUiLabelPalette = quakeElementPalette("glyphImageLabelPalette");
 
 // glyphcss world overlay (Phase 3 milestone): when the ASCII backend is
 // selected, polycss still drives all game logic/camera/controls while this
@@ -1519,21 +1531,81 @@ function mountQuakeGlyphUiOverlay(t: QuakeGlyphTuningValues): void {
       density: t.density,
       backdropBrightness: t.backdrop,
       logoDensity: t.logoDensity,
+      plaqueDensity: t.plaqueDensity,
+      titleDensity: t.titleDensity,
+      labelDensity: t.labelDensity,
     }),
     maxCells: t.maxCells,
     minCellPx: t.minCellPx,
     glyphPalette: quakeUiGlyphPalette,
-    // The corner logo's OWN palette + tone (per-mesh, never the other art):
-    // the user-tuned look — dense ramp, ambient 1.65, gamma 1 (no lift),
-    // saturation 1.1 — scoped to the logo mesh via its manifest styleTag.
-    // `?glyphImageLogoPalette=` / `?glyphImageLogoAmbient=` /
-    // `?glyphImageLogoGamma=` / `?glyphImageLogoSaturation=`.
+    // ── The per-element style table (2026-08 retune, glyph lab) ──
+    // One row per user-tuned element, keyed by its mesh styleTag. Each row
+    // reproduces that element's approved LAB SESSION (see the spec's tone
+    // groups): `ambient` reaches glyphcss as the mesh's own ambient light
+    // (glyph choice tracks it exactly), and `colorBoost` replays the lab's
+    // styled-branch residual — the lab composes colours ×(1.65/scene ambient)
+    // over every sprite it previews, so an element tuned there at ambient A
+    // was approved with colours ×max(1, 1.65/A). Sprite rows use it; the
+    // console row doesn't (its lab path had no residual). Styled meshes also
+    // opt OUT of occlusion (see QuakeGlyphMeshStyle.occlude): measured, the
+    // opaque backdrop stole their partial-alpha cells at base-cell
+    // granularity and eroded the art (corner logo: 215 of ~650 ink cells
+    // survived; the lab keeps them all).
     meshStyles: {
       logo: {
         palette: quakeUiLogoPalette,
         ambient: t.logoAmbient,
         gamma: t.logoGamma,
         saturation: t.logoSaturation,
+        colorBoost: Math.max(1, 1.65 / t.logoAmbient),
+        occlusionPad: t.logoOcclusionPad,
+      },
+      // ONE profile for every conchars run — boot console AND menu row text
+      // (same font, same path; see drawGlyphRun). Seeded from the user's
+      // console lab session; densities stay per element.
+      text: {
+        palette: quakeUiTextPalette,
+        ambient: t.textAmbient,
+        gamma: t.textCellGamma,
+        saturation: t.textCellSaturation,
+        inkComp: t.textInkComp,
+        strokePx: t.textStroke,
+        sheetGamma: t.textSheetGamma,
+        sheetSaturation: t.textSheetSaturation,
+        occlusionPad: t.textOcclusionPad,
+      },
+      plaque: {
+        palette: quakeUiPlaquePalette,
+        ambient: t.plaqueAmbient,
+        gamma: t.plaqueGamma,
+        saturation: t.plaqueSaturation,
+        black: t.plaqueBlack,
+        inkComp: t.plaqueInkComp,
+        strokePx: t.plaqueStroke,
+        colorBoost: Math.max(1, 1.65 / t.plaqueAmbient),
+        occlusionPad: t.plaqueOcclusionPad,
+      },
+      title: {
+        palette: quakeUiTitlePalette,
+        ambient: t.titleAmbient,
+        gamma: t.titleGamma,
+        saturation: t.titleSaturation,
+        black: t.titleBlack,
+        inkComp: t.titleInkComp,
+        strokePx: t.titleStroke,
+        colorBoost: Math.max(1, 1.65 / t.titleAmbient),
+        occlusionPad: t.titleOcclusionPad,
+      },
+      labels: {
+        palette: quakeUiLabelPalette,
+        ambient: t.labelAmbient,
+        gamma: t.labelGamma,
+        saturation: t.labelSaturation,
+        black: t.labelBlack,
+        inkComp: t.labelInkComp,
+        strokePx: t.labelStroke,
+        colorBoost: Math.max(1, 1.65 / t.labelAmbient),
+        occlusionPad: t.labelOcclusionPad,
       },
     },
     // Measured against the cssquake.wtf reference menu (perceived-luminance
@@ -1625,6 +1697,10 @@ mountQuakeGlyphUiOverlay(quakeUiGlyphTuning);
 const quakeUiGlyphPanelSelects: Record<string, string> = {
   palette: quakeUiGlyphPalette,
   logoPalette: quakeUiLogoPalette,
+  textPalette: quakeUiTextPalette,
+  plaquePalette: quakeUiPlaquePalette,
+  titlePalette: quakeUiTitlePalette,
+  labelPalette: quakeUiLabelPalette,
 };
 const quakeWorldGlyphPanelSelects: Record<string, string> = {
   palette: quakeGlyphOverlay?.getGlyphPalette() ?? resolveQuakeGlyphPalette(),
@@ -1651,6 +1727,30 @@ if (quakeStartupUrlParams.has("debug")) {
           label: "logo ramp palette",
           options: asciiOnlyGlyphPaletteNames(),
           def: QUAKE_LOGO_PALETTE_DEFAULT,
+        }, {
+          key: "textPalette",
+          param: "glyphImageTextPalette",
+          label: "text ramp palette",
+          options: asciiOnlyGlyphPaletteNames(),
+          def: QUAKE_ELEMENT_PALETTE_DEFAULT,
+        }, {
+          key: "plaquePalette",
+          param: "glyphImagePlaquePalette",
+          label: "plaque ramp palette",
+          options: asciiOnlyGlyphPaletteNames(),
+          def: QUAKE_ELEMENT_PALETTE_DEFAULT,
+        }, {
+          key: "titlePalette",
+          param: "glyphImageTitlePalette",
+          label: "title ramp palette",
+          options: asciiOnlyGlyphPaletteNames(),
+          def: QUAKE_ELEMENT_PALETTE_DEFAULT,
+        }, {
+          key: "labelPalette",
+          param: "glyphImageLabelPalette",
+          label: "label ramp palette",
+          options: asciiOnlyGlyphPaletteNames(),
+          def: QUAKE_ELEMENT_PALETTE_DEFAULT,
         }],
         selectValues: quakeUiGlyphPanelSelects,
         // Recreating the UI scene re-probes textures + re-segments art; keep
@@ -1659,6 +1759,10 @@ if (quakeStartupUrlParams.has("debug")) {
         apply: (v) => {
           quakeUiGlyphPalette = sanitizeQuakeGlyphPalette(quakeUiGlyphPanelSelects.palette);
           quakeUiLogoPalette = sanitizeQuakeGlyphPalette(quakeUiGlyphPanelSelects.logoPalette);
+          quakeUiTextPalette = sanitizeQuakeGlyphPalette(quakeUiGlyphPanelSelects.textPalette);
+          quakeUiPlaquePalette = sanitizeQuakeGlyphPalette(quakeUiGlyphPanelSelects.plaquePalette);
+          quakeUiTitlePalette = sanitizeQuakeGlyphPalette(quakeUiGlyphPanelSelects.titlePalette);
+          quakeUiLabelPalette = sanitizeQuakeGlyphPalette(quakeUiGlyphPanelSelects.labelPalette);
           mountQuakeGlyphUiOverlay(v);
         },
       },

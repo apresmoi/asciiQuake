@@ -260,20 +260,24 @@ export interface QuakeGlyphUiOverlayOptions {
    *    per-mesh `glyphPalette`, additive in the linked build). The scene's
    *    ramp is attached when the style declares none, which also guarantees
    *    the styled mesh gets its own layer even at density 1.
-   *  - `ambient` is the mesh's EFFECTIVE ambient: the quad's tint is scaled by
-   *    `ambient / scene ambient` (exact for ratios ≤ 1 — colour AND glyph
-   *    choice land exactly where a scene-wide ambient of that value would put
-   *    them, because shade = texel × tint × scene ambient). A ratio > 1 cannot
-   *    brighten the shade pre-raster, so the excess is applied to the cell
-   *    colours post-raster (clip-capped, hue-preserving) — colours right,
-   *    glyph choice up to one ramp step sparse.
-   *  - `gamma`/`saturation` replace the art-layer lift for that mesh's grid in
-   *    `transformCells` (identified by glyphcss's layer info), levels and ink
-   *    compensation unchanged.
+   *  - `ambient` is the mesh's EFFECTIVE ambient, passed to glyphcss as the
+   *    mesh's own `ambientIntensity` (additive in the linked build): glyph
+   *    choice AND raster colours land exactly where a scene-wide ambient of
+   *    that value would put them. (The old tint-ratio scheme is gone —
+   *    measured, the texture path never fed the material tint into glyph
+   *    choice.) `colorBoost` optionally rescales the colours post-raster to
+   *    replay the glyph lab's residual — see its doc.
+   *  - `gamma`/`saturation`/`black`/`white`/`inkComp` replace the art-layer
+   *    lift for that mesh's grid in `transformCells` (identified by
+   *    glyphcss's layer info); `strokePx` restyles the mesh's own `<pre>`;
+   *    `sheetGamma`/`sheetSaturation` pick a pre-lifted conchars variant for
+   *    the style's text runs; `occlusionMode`/`occlusionPad` shape its id-map
+   *    claim.
    *
-   * Shipped use: the corner logo (`styleTag: "logo"`) carries the user-tuned
-   * dense-ramp look (ambient 1.65, gamma 1, saturation 1.1) while the menu
-   * art, backdrop and text keep the scene-wide tone.
+   * Shipped use (2026-08 retune): the corner logo, the shared conchars "text"
+   * profile (boot console + menu rows), the menu plaque, the title art and
+   * the landing label sheets each carry one user-tuned row while the
+   * remaining art and the backdrop keep the scene-wide tone.
    */
   readonly meshStyles?: Readonly<Record<string, QuakeGlyphMeshStyle>>;
   /**
@@ -422,12 +426,69 @@ function spinnerGlyph(now: number): number {
 export interface QuakeGlyphMeshStyle {
   /** Glyph ramp palette name (sanitize upstream — ASCII-only policy). */
   readonly palette?: string;
-  /** Effective ambient for this mesh (scene ambient when omitted). */
+  /**
+   * Effective ambient for this mesh — passed to glyphcss as the mesh's OWN
+   * `ambientIntensity` (additive in the linked build), so glyph choice AND
+   * raster colours track it exactly as a scene-wide ambient of this value
+   * would. (The old tint-ratio mechanism is gone: measured, the texture
+   * path's tint never drove glyph choice — see emitQuad.) Scene ambient when
+   * omitted.
+   */
   readonly ambient?: number;
   /** Tone-curve exponent for this mesh's grid (art `gamma` when omitted). */
   readonly gamma?: number;
   /** Vibrancy for this mesh's grid (art `saturation` when omitted). */
   readonly saturation?: number;
+  /** Levels for this mesh's grid (art black/white points when omitted). */
+  readonly black?: number;
+  readonly white?: number;
+  /**
+   * Post-raster linear colour scale (clip-capped, hue-preserving; 1 = none).
+   * Exists to reproduce the glyph lab's styled-branch residual — the lab
+   * composes `logoAmbient(1.65) / scene ambient` over every sprite it
+   * previews, so a game element tuned there at scene ambient A was SEEN with
+   * colours ×(1.65/A). Set `max(1, 1.65/ambient)` to match that session.
+   */
+  readonly colorBoost?: number;
+  /** Ink-coverage compensation strength for this mesh's grid (the scene's
+   *  `inkCompensation` when omitted). */
+  readonly inkComp?: number;
+  /**
+   * `-webkit-text-stroke` width (px) for this mesh's OWN `<pre>` (overrides
+   * the inherited scene-wide `strokePx`). Applied via the layer's
+   * `data-glyph-mesh-id` attribute (additive in the linked glyphcss build).
+   */
+  readonly strokePx?: number;
+  /** Conchars-sheet tone for THIS style's text runs: the run samples a sheet
+   *  variant pre-lifted with these instead of the scene's `textGamma` /
+   *  `textSaturation`. Only meaningful for text-run styles (the boot
+   *  console); art sprites never sample the sheet. */
+  readonly sheetGamma?: number;
+  readonly sheetSaturation?: number;
+  /**
+   * How this mesh claims cells in the shared occlusion id-map. The history
+   * that shaped these modes (all user-adjudicated): rectangular plates around
+   * whole labels were rejected; fully alpha-tight claims were rejected too —
+   * they let the backdrop paint through every partial-alpha cell AND, at the
+   * id-map's base-cell granularity, let an opaque backdrop STEAL a fine
+   * mesh's boundary cells outright (measured on the corner logo: 215 of ~650
+   * ink cells survived; the lab, with no backdrop, keeps them all).
+   *
+   *  - "alpha" (default): today's alpha-aware claims.
+   *  - "plate": full triangle-footprint claims (glyphcss `occlusionClaim:
+   *    "geometry"`) — a solid ground under the artwork's segmented regions.
+   *  - "none": opt out entirely (`transparent: true`) — the backdrop paints
+   *    through everywhere; kept as a comparison mode.
+   */
+  readonly occlusionMode?: "alpha" | "plate" | "none";
+  /**
+   * Dilation of the claim in id-map cells (glyphcss `occlusionDilate`,
+   * additive): with "alpha" claims, N > 0 grows the claim so the mesh keeps
+   * its partial-alpha boundary cells (the anti-theft fix) and each glyph sits
+   * on a small letterform-shaped ground — the middle ground between the two
+   * rejected extremes. Ignored by "none".
+   */
+  readonly occlusionPad?: number;
 }
 
 export interface QuakeGlyphUiOverlay {
@@ -549,7 +610,11 @@ export function createQuakeGlyphUiOverlay(
   const maxCells = Math.max(256, options.maxCells ?? DEFAULT_MAX_CELLS);
   const minCellPx = Math.max(2, options.minCellPx ?? DEFAULT_MIN_CELL_PX);
   const manifestTextDensity = Math.max(1, Math.round(options.manifestTextDensity ?? 10));
-  const consoleTextDensity = Math.max(1, Math.round(options.consoleTextDensity ?? manifestTextDensity));
+  // Fractional on purpose (like the manifest densities): the console density
+  // is matched EMPIRICALLY to the user's lab session, and rounding it broke
+  // the match by up to 12% (glyphcss densities are fractional; see
+  // glyphTuningSpec.ts's consoleDensity row).
+  const consoleTextDensity = Math.max(1, options.consoleTextDensity ?? Math.round(manifestTextDensity));
 
   function readUrl(el: HTMLElement, isImg: boolean, declared?: string): string {
     if (el.dataset.glyphTexture) return el.dataset.glyphTexture;
@@ -924,28 +989,33 @@ export function createQuakeGlyphUiOverlay(
     return coverage;
   }
 
-  function inkCompFactor(glyph: string): number {
+  function inkCompFactor(glyph: string, strength: number): number {
     if (inkCoverageRef === null) {
       let ref = 0;
       for (const probe of INK_COMP_PROBE_GLYPHS) ref = Math.max(ref, glyphInkCoverage(probe));
       inkCoverageRef = Math.max(ref, 0.05);
     }
     const raw = Math.min(INK_COMP_MAX_BOOST, inkCoverageRef / glyphInkCoverage(glyph));
-    return 1 + inkCompStrength * (Math.max(1, raw) - 1);
+    return 1 + strength * (Math.max(1, raw) - 1);
   }
 
-  function compensateInkCoverage(grid: { char: string[]; color: (string | null)[] }): void {
-    if (inkCompStrength <= 0) return;
+  /** `strengthOverride`: a styled mesh's own strength (see `meshStyles`);
+   *  scene `inkCompensation` when omitted. */
+  function compensateInkCoverage(grid: { char: string[]; color: (string | null)[] }, strengthOverride?: number): void {
+    const strength = strengthOverride !== undefined
+      ? Math.max(0, Math.min(1, strengthOverride))
+      : inkCompStrength;
+    if (strength <= 0) return;
     const chars = grid.char;
     const colors = grid.color;
     for (let i = 0; i < colors.length; i++) {
       const hex = colors[i];
       const glyph = chars[i];
       if (!hex || !glyph || glyph === " ") continue;
-      const key = glyph + hex;
+      const key = strength === inkCompStrength ? glyph + hex : `${strength}\u0000${glyph}${hex}`;
       let compensated = inkCompCache.get(key);
       if (compensated === undefined) {
-        const factor = inkCompFactor(glyph);
+        const factor = inkCompFactor(glyph, strength);
         if (factor <= 1.001) compensated = hex;
         else {
           const r = parseInt(hex.slice(1, 3), 16);
@@ -1009,20 +1079,21 @@ export function createQuakeGlyphUiOverlay(
       const styledMesh = layer?.mesh;
       const style = styledMesh !== undefined ? options.meshStyles?.[styledMesh] : undefined;
       if (style && styledMesh !== undefined) {
-        // Ambient above the scene's: the 0..1 tint already carried
-        // min(1, ratio); apply the remainder linearly BEFORE the tone curve,
-        // like a true ambient would enter (hue-preserving, clip-capped).
-        const residual = style.ambient !== undefined ? style.ambient / sceneAmbient : 1;
-        if (residual > 1.001) scaleGridColors(grid, residual, styleLiftCache(styledMesh + "\u0000amb"));
+        // The raster already ran under the style's own ambient (glyphcss
+        // per-mesh `ambientIntensity`). `colorBoost` is the only linear scale
+        // left up here — the lab-session residual (see its doc), applied
+        // BEFORE the tone curve, hue-preserving and clip-capped.
+        const boost = style.colorBoost ?? 1;
+        if (boost > 1.001) scaleGridColors(grid, boost, styleLiftCache(styledMesh + "\u0000amb"));
         liftCellColors(
           grid,
           Math.min(1, Math.max(0.2, style.gamma ?? artGamma)),
           styleLiftCache(styledMesh),
           Math.min(4, Math.max(0, style.saturation ?? artSaturation)),
-          artBlack,
-          artWhite,
+          Math.min(0.5, Math.max(0, style.black ?? artBlack)),
+          Math.min(1, Math.max(0.05, style.white ?? artWhite)),
         );
-        compensateInkCoverage(grid);
+        compensateInkCoverage(grid, style.inkComp);
       } else if (isBaseGrid(grid)) {
         liftCellColors(grid, backdropGamma, backdropLiftCache, 1, backdropBlack, backdropWhite);
         stampText(grid);
@@ -1216,16 +1287,15 @@ export function createQuakeGlyphUiOverlay(
   }
 
   function emitQuad(groups: Map<string, PolyGroup>, q: QuadEmit): void {
-    // A style's `ambient` rides the tint: shade = texel × tint × scene
-    // ambient, so tint = styleAmbient/sceneAmbient reproduces exactly what a
-    // scene ambient of that value would render — colour AND glyph choice.
-    // Ratios above 1 can't be expressed in a 0..1 tint; the excess is applied
-    // post-raster in `transformCells` (see `meshStyles`' doc).
-    const styleAmbient = q.styleTag ? options.meshStyles?.[q.styleTag]?.ambient : undefined;
-    const ambientScale = styleAmbient !== undefined
-      ? Math.min(1, styleAmbient / sceneAmbient)
-      : 1;
-    const level = Math.max(0, Math.min(1, q.brightness * ambientScale));
+    // A style's `ambient` no longer rides the tint. MEASURED (2026-08, glyph
+    // histograms at 1600×900): glyphcss's texture path folds ONLY the texel's
+    // luminance into glyph choice — the quad's material colour tints the cell
+    // colour and never the character — so the old tint-ratio scheme silently
+    // did nothing to the ramp. Per-mesh ambient now enters the raster itself
+    // via glyphcss's per-mesh `ambientIntensity` (see the styled transform in
+    // sync()), which drives glyph choice AND colours exactly like a scene
+    // ambient of that value. The tint carries only the sprite's brightness.
+    const level = Math.max(0, Math.min(1, q.brightness));
     const channel = Math.round(255 * level).toString(16).padStart(2, "0");
     const tint = q.tint ?? `#${channel}${channel}${channel}`;
     const spanU = q.u1 - q.u0, spanV = q.v1 - q.v0;
@@ -1572,14 +1642,20 @@ export function createQuakeGlyphUiOverlay(
    */
   const TEXT_SHEET_GAMMA = Math.min(1, Math.max(0.2, options.textGamma ?? 0.5));
   const TEXT_SHEET_SATURATION = Math.min(4, Math.max(0, options.textSaturation ?? 1));
-  let textSheetUrl: string | null = null;
-  let textSheetRequested = false;
-  function ensureTextSheet(): string | null {
-    if (textSheetUrl || textSheetRequested) return textSheetUrl;
-    textSheetRequested = true;
+  /** Pre-lifted conchars variants, keyed `gamma/saturation` — the scene pair
+   *  plus one per styled text run that overrides the sheet tone (the boot
+   *  console). Each variant is built once; `null` = build in flight. */
+  const textSheetVariants = new Map<string, string | null>();
+  function ensureTextSheetVariant(gammaRaw: number, saturationRaw: number): string | null {
+    const gamma = Math.min(1, Math.max(0.2, gammaRaw));
+    const saturation = Math.min(4, Math.max(0, saturationRaw));
+    const key = `${gamma}/${saturation}`;
+    const existing = textSheetVariants.get(key);
+    if (existing !== undefined) return existing;
+    textSheetVariants.set(key, null);
     const img = new Image();
     const fallback = () => {
-      textSheetUrl = CONCHARS_URL;
+      textSheetVariants.set(key, CONCHARS_URL);
       adoptedSinceDraw = true;
       queueSync();
     };
@@ -1599,17 +1675,17 @@ export function createQuakeGlyphUiOverlay(
           const luma = 0.2126 * r + 0.7152 * g + 0.0722 * b;
           if (luma <= 0) continue;
           const scale = Math.min(
-            (255 * Math.pow(luma / 255, TEXT_SHEET_GAMMA)) / luma,
+            (255 * Math.pow(luma / 255, gamma)) / luma,
             255 / Math.max(r, g, b),
           );
           let nr = r * scale, ng = g * scale, nb = b * scale;
-          if (TEXT_SHEET_SATURATION !== 1) {
+          if (saturation !== 1) {
             // Push each channel away from the pixel's own luma. Done AFTER the
             // gamma lift so the two compose: brightness first, then vibrancy.
             const l = 0.2126 * nr + 0.7152 * ng + 0.0722 * nb;
-            nr = l + (nr - l) * TEXT_SHEET_SATURATION;
-            ng = l + (ng - l) * TEXT_SHEET_SATURATION;
-            nb = l + (nb - l) * TEXT_SHEET_SATURATION;
+            nr = l + (nr - l) * saturation;
+            ng = l + (ng - l) * saturation;
+            nb = l + (nb - l) * saturation;
           }
           const clamp = (v: number) => Math.max(0, Math.min(255, Math.round(v)));
           d[i] = clamp(nr);
@@ -1617,7 +1693,7 @@ export function createQuakeGlyphUiOverlay(
           d[i + 2] = clamp(nb);
         }
         ctx.putImageData(image, 0, 0);
-        textSheetUrl = canvas.toDataURL("image/png");
+        textSheetVariants.set(key, canvas.toDataURL("image/png"));
         adoptedSinceDraw = true;
         queueSync();
       } catch {
@@ -1627,6 +1703,11 @@ export function createQuakeGlyphUiOverlay(
     img.onerror = fallback;
     img.src = CONCHARS_URL;
     return null;
+  }
+  /** The scene-toned sheet (`textGamma`/`textSaturation`) — every text run
+   *  that carries no sheet-tone style. */
+  function ensureTextSheet(): string | null {
+    return ensureTextSheetVariant(TEXT_SHEET_GAMMA, TEXT_SHEET_SATURATION);
   }
 
   function emitTextArt(groups: Map<string, PolyGroup>, hostBox: DOMRect): void {
@@ -1753,10 +1834,25 @@ export function createQuakeGlyphUiOverlay(
     leftPx: number,
     topPx: number,
     glyphPx: number,
-    opts: { alt?: boolean; brightness?: number; layer?: number; align?: "left" | "center" | "right"; density?: number } = {},
+    opts: { alt?: boolean; brightness?: number; layer?: number; align?: "left" | "center" | "right"; density?: number; styleTag?: string } = {},
   ): void {
     if (!text) return;
-    const sheetUrl = ensureTextSheet();
+    // ONE conchars tone profile for every run this function draws — boot
+    // console, menu rows/values, help/level rows, the multiplayer form's
+    // labels, notify and centerprint are all the same 8x8 conchars font, so
+    // they share the "text" style row by design (user, 2026-08). A caller may
+    // still name a different style. HUD readouts draw from their own digit
+    // sheets in emitHudScene and are untouched.
+    const styleTag = opts.styleTag ?? "text";
+    // A styled run with its own sheet tone samples that variant — the tuned
+    // conchars lift, scoped so unstyled sheet users (textArt) keep the scene's.
+    const runStyle = options.meshStyles?.[styleTag];
+    const sheetUrl = runStyle && (runStyle.sheetGamma !== undefined || runStyle.sheetSaturation !== undefined)
+      ? ensureTextSheetVariant(
+          runStyle.sheetGamma ?? TEXT_SHEET_GAMMA,
+          runStyle.sheetSaturation ?? TEXT_SHEET_SATURATION,
+        )
+      : ensureTextSheet();
     if (!sheetUrl) return; // redraws on the sync queued when the sheet is ready
     const tex = menuTexture(sheetUrl, true);
     if (!tex.natural) return;
@@ -1791,6 +1887,7 @@ export function createQuakeGlyphUiOverlay(
         regions: tex.regions,
         density,
         brightness: opts.brightness ?? 1,
+        styleTag,
       });
     }
   }
@@ -1803,7 +1900,12 @@ export function createQuakeGlyphUiOverlay(
     topPx: number,
     glyphPx: number,
   ): void {
-    const sheetUrl = ensureTextSheet();
+    // Same conchars font as drawGlyphRun — same shared "text" profile (sheet
+    // variant included), so the ticking cursor matches the row it sits in.
+    const st = options.meshStyles?.["text"];
+    const sheetUrl = st && (st.sheetGamma !== undefined || st.sheetSaturation !== undefined)
+      ? ensureTextSheetVariant(st.sheetGamma ?? TEXT_SHEET_GAMMA, st.sheetSaturation ?? TEXT_SHEET_SATURATION)
+      : ensureTextSheet();
     if (!sheetUrl) return;
     const tex = menuTexture(sheetUrl, true);
     if (!tex.natural) return;
@@ -1823,6 +1925,7 @@ export function createQuakeGlyphUiOverlay(
       regions: tex.regions,
       density: manifestTextDensity,
       brightness: 1,
+      styleTag: "text",
     });
   }
 
@@ -2170,6 +2273,17 @@ export function createQuakeGlyphUiOverlay(
               ...(base ?? {}),
               id: group.styleTag,
               glyphPalette: style?.palette ?? options.glyphPalette ?? "detail",
+              // Per-mesh ambient — the raster-side carrier for the style's
+              // `ambient` (glyph choice AND colours; see QuakeGlyphMeshStyle).
+              ...(style?.ambient !== undefined ? { ambientIntensity: style.ambient } : {}),
+              // Per-mesh occlusion shaping — see `occlusionMode`/`occlusionPad`.
+              // The pad is THE anti-theft fix: it hands the mesh back the
+              // partial-alpha boundary cells the backdrop was claiming.
+              ...(style?.occlusionMode === "none" ? { transparent: true as const } : {}),
+              ...(style?.occlusionMode === "plate" ? { occlusionClaim: "geometry" as const } : {}),
+              ...(style?.occlusionPad !== undefined && style.occlusionMode !== "none"
+                ? { occlusionDilate: style.occlusionPad }
+                : {}),
             }
           : base;
         meshes.set(groupKey, scene.add(group.polys, transform));
@@ -2180,6 +2294,21 @@ export function createQuakeGlyphUiOverlay(
       if (!groups.has(groupKey)) { mesh.dispose(); meshes.delete(groupKey); }
     }
     scene.rerender();
+    // Per-style glyph stroke: a styled mesh's own `<pre>` (named by glyphcss's
+    // `data-glyph-mesh-id` stamp, additive in the linked build) overrides the
+    // scene-wide surface stroke. Idempotent inline-style writes; a handful of
+    // layers at most.
+    if (options.meshStyles) {
+      for (const [tag, style] of Object.entries(options.meshStyles)) {
+        if (style.strokePx === undefined) continue;
+        const px = Math.max(0, Math.min(2, style.strokePx));
+        // querySelectorAll: one tag can own several layers (the "text"
+        // profile renders at both the menu and console densities).
+        for (const layerPre of surface.querySelectorAll<HTMLPreElement>(`pre[data-glyph-mesh-id="${tag}"]`)) {
+          layerPre.style.setProperty("-webkit-text-stroke", `${px}px currentColor`);
+        }
+      }
+    }
     // Publish this frame's opaque coverage so the world scene beneath can
     // punch itself out under the menu/HUD art (see the option's doc). The
     // optional call keeps a stale prebundled glyphcss (linked dev) harmless.

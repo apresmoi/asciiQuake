@@ -65,7 +65,20 @@ export const QUAKE_GLYPH_UI_TUNING_KNOBS: readonly QuakeGlyphTuningKnob[] = [
   // deliberately chunky, nowhere near the sub-device-pixel regime it escaped.
   { key: "logoDensity", param: "glyphImageLogoDensity", label: "corner logo density", min: 1, max: 32, step: 0.01, def: 2.92, group: "Menu density" },
   { key: "textDensity", param: "glyphImageTextDensity", label: "menu text density", min: 1, max: 16, step: 1, def: 10, group: "Menu density" },
-  { key: "consoleDensity", param: "glyphImageConsoleDensity", label: "boot console density", min: 1, max: 32, step: 1, def: 14, group: "Menu density" },
+  // Per-element art densities (2026-08 retune, glyph lab): each element was
+  // tuned by the user on its OWN lab grid, so its density is matched
+  // EMPIRICALLY — cells-across-the-element in the game equal to the lab render
+  // at the user's URL — never derived from a budget ratio (`glyphImageCells`
+  // budgets the HOST area, and the lab host is not the game viewport; deriving
+  // the logo's density that way was a measured half-resolution bug).
+  { key: "plaqueDensity", param: "glyphImagePlaqueDensity", label: "menu plaque density", min: 1, max: 32, step: 0.01, def: 11.8, group: "Menu density" },
+  { key: "titleDensity", param: "glyphImageTitleDensity", label: "menu title density", min: 1, max: 32, step: 0.01, def: 3.34, group: "Menu density" },
+  { key: "labelDensity", param: "glyphImageLabelDensity", label: "menu label density", min: 1, max: 32, step: 0.01, def: 2.77, group: "Menu density" },
+  // Matched EMPIRICALLY (2026-08, user lab session `?glyphImageCells=2000&
+  // glyphImageConsoleDensity=7...`): equal cells-per-conchars-glyph, measured
+  // in both renders at 1600x900 — NOT derived from any budget ratio (the lab
+  // budget spans a different host). Fractional: rounding broke the match.
+  { key: "consoleDensity", param: "glyphImageConsoleDensity", label: "boot console density", min: 1, max: 32, step: 0.01, def: 4.06, group: "Menu density" },
   { key: "maxCells", param: "glyphImageCells", label: "base grid budget", min: 2000, max: 120000, step: 1000, def: 24_000, group: "Menu density" },
   { key: "minCellPx", param: "glyphImageCell", label: "min cell px", min: 2, max: 24, step: 1, def: 3, group: "Menu density" },
   // ── Art tone (the detail layers: plaque, titles, labels, logo) ──
@@ -94,6 +107,74 @@ export const QUAKE_GLYPH_UI_TUNING_KNOBS: readonly QuakeGlyphTuningKnob[] = [
   { key: "logoAmbient", param: "glyphImageLogoAmbient", label: "logo ambient", min: 0.2, max: 6, step: 0.05, def: 1.65, group: "Logo tone" },
   { key: "logoGamma", param: "glyphImageLogoGamma", label: "logo gamma (lower = brighter)", min: 0.2, max: 1, step: 0.01, def: 1, group: "Logo tone" },
   { key: "logoSaturation", param: "glyphImageLogoSaturation", label: "logo saturation", min: 0, max: 4, step: 0.05, def: 1.1, group: "Logo tone" },
+  // Occlusion pad (glyphcss `occlusionDilate` via the style table): id-map
+  // cells of claim dilation — the anti-theft fix plus a small letterform-
+  // shaped ground. 0 = alpha-tight claims.
+  { key: "logoOcclusionPad", param: "glyphImageLogoOcclusionPad", label: "logo occlusion pad", min: 0, max: 4, step: 1, def: 2, group: "Logo tone" },
+
+  // ── Per-element tone (2026-08 retune, glyph lab) ──
+  // Each group reproduces one lab session the user signed off. The values are
+  // the session's EFFECTIVE composite, not the raw URL: the lab's styled
+  // branch applies its own gamma/saturation defaults (1 / 1.1) over sprite
+  // sources regardless of the scene sliders, so that is what the user SAW —
+  // and matching the lab render is the contract. Ambients reach glyphcss as
+  // each mesh's own `ambientIntensity` (glyph choice follows them exactly);
+  // an element that leaves a knob at its shipped default inherits the scene.
+  //
+  // Conchars text — ONE tone profile for every menu-scene conchars run: the
+  // boot console AND the menu row text (options/help/level rows, the version
+  // tag). They are the same font drawn through the same `drawGlyphRun` path,
+  // so they share a profile by design (user, 2026-08: "the text of the menus
+  // like options should use the same as the boot sequence font"). Seeded from
+  // the user's console lab session `?glyphImageCells=2000
+  // &glyphImageConsoleDensity=7&glyphImageAmbient=0.8&glyphImageGamma=1
+  // &glyphImageSaturation=1.25&glyphImageStroke=0.3&glyphImageTextGamma=0.37
+  // &glyphImageTextSaturation=1.45&glyphImagePalette=dense`. Densities stay
+  // per element (`textDensity` / `consoleDensity` above). The pre-existing
+  // `textGamma`/`textSaturation` sheet knobs keep their meaning and defaults
+  // for UNstyled runs (intermission bitmap text); the styled profile carries
+  // its own sheet pair below.
+  { key: "textAmbient", param: "glyphImageTextAmbient", label: "text ambient", min: 0.2, max: 6, step: 0.05, def: 0.8, group: "Text profile" },
+  { key: "textCellGamma", param: "glyphImageTextCellGamma", label: "text cell gamma (lower = brighter)", min: 0.2, max: 1, step: 0.01, def: 1, group: "Text profile" },
+  { key: "textCellSaturation", param: "glyphImageTextCellSaturation", label: "text cell saturation", min: 0, max: 4, step: 0.05, def: 1.25, group: "Text profile" },
+  { key: "textSheetGamma", param: "glyphImageTextSheetGamma", label: "text sheet gamma", min: 0.2, max: 1, step: 0.01, def: 0.37, group: "Text profile" },
+  { key: "textSheetSaturation", param: "glyphImageTextSheetSaturation", label: "text sheet saturation", min: 0, max: 4, step: 0.05, def: 1.45, group: "Text profile" },
+  { key: "textStroke", param: "glyphImageTextStroke", label: "text glyph stroke px", min: 0, max: 2, step: 0.05, def: 0.3, group: "Text profile" },
+  { key: "textInkComp", param: "glyphImageTextInkComp", label: "text ink compensation", min: 0, max: 1, step: 0.05, def: 1, group: "Text profile" },
+  { key: "textOcclusionPad", param: "glyphImageTextOcclusionPad", label: "text occlusion pad", min: 0, max: 4, step: 1, def: 2, group: "Text profile" },
+
+  // Menu plaque — lab `?glyphImageCells=4000&glyphImageCell=4
+  // &glyphImageAmbient=0.9&glyphImageBlack=0.01&glyphImageStroke=0.75
+  // &glyphImagePalette=dense` (sprite source: styled branch, gamma 1 / sat 1.1).
+  { key: "plaqueAmbient", param: "glyphImagePlaqueAmbient", label: "plaque ambient", min: 0.2, max: 6, step: 0.05, def: 0.9, group: "Plaque tone" },
+  { key: "plaqueGamma", param: "glyphImagePlaqueGamma", label: "plaque gamma (lower = brighter)", min: 0.2, max: 1, step: 0.01, def: 1, group: "Plaque tone" },
+  { key: "plaqueSaturation", param: "glyphImagePlaqueSaturation", label: "plaque saturation", min: 0, max: 4, step: 0.05, def: 1.1, group: "Plaque tone" },
+  { key: "plaqueBlack", param: "glyphImagePlaqueBlack", label: "plaque black point", min: 0, max: 0.5, step: 0.005, def: 0.01, group: "Plaque tone" },
+  { key: "plaqueStroke", param: "glyphImagePlaqueStroke", label: "plaque glyph stroke px", min: 0, max: 2, step: 0.05, def: 0.75, group: "Plaque tone" },
+  { key: "plaqueInkComp", param: "glyphImagePlaqueInkComp", label: "plaque ink compensation", min: 0, max: 1, step: 0.05, def: 1, group: "Plaque tone" },
+  { key: "plaqueOcclusionPad", param: "glyphImagePlaqueOcclusionPad", label: "plaque occlusion pad", min: 0, max: 4, step: 1, def: 2, group: "Plaque tone" },
+
+  // Menu title — lab `?glyphImageCells=3000&glyphImageCell=2
+  // &glyphImageAmbient=0.55&glyphImageBlack=0.01&glyphImageInkComp=0.2
+  // &glyphImageStroke=0.75&glyphImagePalette=dense` (sprite source).
+  { key: "titleAmbient", param: "glyphImageTitleAmbient", label: "title ambient", min: 0.2, max: 6, step: 0.05, def: 0.55, group: "Title tone" },
+  { key: "titleGamma", param: "glyphImageTitleGamma", label: "title gamma (lower = brighter)", min: 0.2, max: 1, step: 0.01, def: 1, group: "Title tone" },
+  { key: "titleSaturation", param: "glyphImageTitleSaturation", label: "title saturation", min: 0, max: 4, step: 0.05, def: 1.1, group: "Title tone" },
+  { key: "titleBlack", param: "glyphImageTitleBlack", label: "title black point", min: 0, max: 0.5, step: 0.005, def: 0.01, group: "Title tone" },
+  { key: "titleStroke", param: "glyphImageTitleStroke", label: "title glyph stroke px", min: 0, max: 2, step: 0.05, def: 0.75, group: "Title tone" },
+  { key: "titleInkComp", param: "glyphImageTitleInkComp", label: "title ink compensation", min: 0, max: 1, step: 0.05, def: 0.2, group: "Title tone" },
+  { key: "titleOcclusionPad", param: "glyphImageTitleOcclusionPad", label: "title occlusion pad", min: 0, max: 4, step: 1, def: 2, group: "Title tone" },
+
+  // Menu label sheet — identical lab tone to the title (only its grid differs:
+  // `?glyphImageCells=10000&glyphImageCell=2`), so the tone rows match and the
+  // density above is its own.
+  { key: "labelAmbient", param: "glyphImageLabelAmbient", label: "label ambient", min: 0.2, max: 6, step: 0.05, def: 0.55, group: "Label tone" },
+  { key: "labelGamma", param: "glyphImageLabelGamma", label: "label gamma (lower = brighter)", min: 0.2, max: 1, step: 0.01, def: 1, group: "Label tone" },
+  { key: "labelSaturation", param: "glyphImageLabelSaturation", label: "label saturation", min: 0, max: 4, step: 0.05, def: 1.1, group: "Label tone" },
+  { key: "labelBlack", param: "glyphImageLabelBlack", label: "label black point", min: 0, max: 0.5, step: 0.005, def: 0.01, group: "Label tone" },
+  { key: "labelStroke", param: "glyphImageLabelStroke", label: "label glyph stroke px", min: 0, max: 2, step: 0.05, def: 0.75, group: "Label tone" },
+  { key: "labelInkComp", param: "glyphImageLabelInkComp", label: "label ink compensation", min: 0, max: 1, step: 0.05, def: 0.2, group: "Label tone" },
+  { key: "labelOcclusionPad", param: "glyphImageLabelOcclusionPad", label: "label occlusion pad", min: 0, max: 4, step: 1, def: 2, group: "Label tone" },
 ] as const;
 
 /** The world glyph scene (glyphWorldOverlay) — gameplay ASCII. */

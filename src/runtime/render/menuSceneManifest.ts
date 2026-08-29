@@ -24,6 +24,22 @@
 // `/q/` textures are prepared public assets addressed the same way App.ts
 // addresses them.
 import landingSinglePlayerSheet from "../../assets/main-menu-single-player-sprite.png";
+// The BAKED plaque/title art — the exact images the glyph lab previews and
+// the user tuned against (2026-08): ~1.55x brighter than the raw `/q/`
+// textures, which rendered the tuned elements ~3 dense-ramp steps too dark
+// (measured by glyph histogram). Landing AND panels both draw these same
+// files, so the cross-page colour consistency that motivated the raw
+// textures is preserved.
+import bakedMenuPlaque from "../../assets/main-menu-plaque-baked.png";
+import bakedMenuTitle from "../../assets/main-menu-title-baked.png";
+// Panel titles, baked with the SAME per-channel lift measured between the raw
+// and baked main title (R x1.474, G x1.545, B x1.657) so every "title"-styled
+// mesh reads at the brightness the user tuned. Generated 2026-08 from the
+// `/q/` sources.
+import bakedTitleSinglePlayer from "../../assets/menu-title-single-player-baked.png";
+import bakedTitleOptions from "../../assets/menu-title-options-baked.png";
+import bakedTitleHelp from "../../assets/menu-title-help-baked.png";
+import bakedTitleLevelSelect from "../../assets/menu-title-level-select-baked.png";
 import landingMultiplayerSheet from "../../assets/main-menu-multiplayer-sprite.png";
 import landingOptionsSheet from "../../assets/main-menu-options-sprite.png";
 import landingHelpSheet from "../../assets/main-menu-help-sprite.png";
@@ -448,6 +464,14 @@ export interface QuakeMenuSceneManifestOptions {
    * cheap.
    */
   readonly logoDensity?: number;
+  /** Per-element densities for the other 2026-08 retuned elements — the menu
+   *  plaque, the panel/landing title art and the landing label sheets. Same
+   *  contract as `logoDensity`: matched EMPIRICALLY against the user's lab
+   *  render (cells across the element), never derived from a budget ratio.
+   *  Defaults to `density`. */
+  readonly plaqueDensity?: number;
+  readonly titleDensity?: number;
+  readonly labelDensity?: number;
 }
 
 export function createQuakeMenuSceneManifest(
@@ -462,19 +486,23 @@ export function createQuakeMenuSceneManifest(
     // variants; sampling those was the measured cross-page colour shift).
     {
       id: "landing-plaque",
-      texture: "/q/main-menu-plaque.png",
+      texture: bakedMenuPlaque,
       rect: { x: 16, y: 4, w: 32, h: 144 },
       layer: 1,
-      density,
+      density: Math.max(1, options.plaqueDensity ?? density),
       segment: true,
+      // The plaque's own palette/tone — see the overlay's `meshStyles`.
+      styleTag: "plaque",
     },
     {
       id: "landing-title",
-      texture: "/q/main-menu-title.png",
+      texture: bakedMenuTitle,
       rect: { x: 112, y: 4, w: 96, h: 24 },
       layer: 1,
-      density,
+      density: Math.max(1, options.titleDensity ?? density),
       segment: true,
+      // The title art's own palette/tone — see the overlay's `meshStyles`.
+      styleTag: "title",
     },
   ];
   LANDING_ITEMS.forEach((item, row) => {
@@ -484,11 +512,15 @@ export function createQuakeMenuSceneManifest(
       texture: item.sheet,
       rect: { x: LANDING_LIST_X, y: rowY + item.offsetY, w: item.w, h: item.h },
       layer: 2,
-      density,
+      density: Math.max(1, options.labelDensity ?? density),
       segment: true,
       sheet: { frames: 2, axis: "y" },
       item: item.id,
       role: "label",
+      // The landing label sheet's own palette/tone — see `meshStyles`. The
+      // cursor art below stays UNstyled on purpose: the user's tuned element
+      // is the label art alone.
+      styleTag: "labels",
     });
     landingSprites.push({
       id: `landing-cursor-${item.id}`,
@@ -520,14 +552,20 @@ export function createQuakeMenuSceneManifest(
    */
   const panelPlaque: QuakeMenuSceneSpriteDef = {
     id: "panel-plaque",
-    texture: "/q/main-menu-plaque.png",
+    texture: bakedMenuPlaque,
     rect: { x: 16, y: 4, w: 32, h: 144 },
     layer: 1,
-    density,
+    density: Math.max(1, options.plaqueDensity ?? density),
     segment: true,
+    // Same art as the landing plaque — same style row.
+    styleTag: "plaque",
   };
   const panelTitle = (id: string, texture: string, rect: QuakeMenuSceneRect): QuakeMenuSceneSpriteDef => ({
-    id, texture, rect, layer: 2, density, segment: true,
+    id, texture, rect, layer: 2,
+    density: Math.max(1, options.titleDensity ?? density),
+    segment: true,
+    // Panel titles are the same element family as the landing title.
+    styleTag: "title",
   });
 
   const SP_BUTTONS: readonly { id: string; texture: string; frames: number; frame: number; w: number }[] = [
@@ -538,7 +576,7 @@ export function createQuakeMenuSceneManifest(
   ];
   const singlePlayerSprites: QuakeMenuSceneSpriteDef[] = [
     panelPlaque,
-    panelTitle("sp-title", "/q/menu-title-single-player.png", { x: 96, y: 4, w: 128, h: 24 }),
+    panelTitle("sp-title", bakedTitleSinglePlayer, { x: 96, y: 4, w: 128, h: 24 }),
   ];
   SP_BUTTONS.forEach((b, row) => {
     const rowY = LANDING_LIST_Y + row * LANDING_ROW_H;
@@ -649,17 +687,17 @@ export function createQuakeMenuSceneManifest(
         hotspots: multiplayerHotspots(),
       },
       options: {
-        sprites: [panelPlaque, panelTitle("options-title", "/q/menu-title-options.png", { x: 88, y: 4, w: 144, h: 24 })],
+        sprites: [panelPlaque, panelTitle("options-title", bakedTitleOptions, { x: 88, y: 4, w: 144, h: 24 })],
         texts: optionsTexts(),
         hotspots: optionsHotspots(),
       },
       help: {
-        sprites: [panelPlaque, panelTitle("help-title", "/q/menu-title-help.png", { x: 112, y: 4, w: 96, h: 24 })],
+        sprites: [panelPlaque, panelTitle("help-title", bakedTitleHelp, { x: 112, y: 4, w: 96, h: 24 })],
         texts: helpTexts(),
         hotspots: [BACK_HOTSPOT],
       },
       "level-select": {
-        sprites: [panelPlaque, panelTitle("level-title", "/q/menu-title-level-select.png", { x: 54.5, y: 4, w: 211, h: 20 })],
+        sprites: [panelPlaque, panelTitle("level-title", bakedTitleLevelSelect, { x: 54.5, y: 4, w: 211, h: 20 })],
         texts: [BACK_TEXT],
         // Level-row hotspots are dynamic — quakeMenuLevelHotspots(levelCount).
       },
