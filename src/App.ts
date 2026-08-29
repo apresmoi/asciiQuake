@@ -19,15 +19,20 @@ import {
   readQuakeGlyphTuningValues,
   type QuakeGlyphTuningValues,
 } from "./runtime/app/glyphTuningSpec";
+import {
+  asciiOnlyGlyphPaletteNames,
+  QUAKE_ASCII_GLYPH_PALETTES,
+  sanitizeQuakeGlyphCharMode,
+  sanitizeQuakeGlyphPalette,
+  sanitizeQuakeGlyphSceneMode,
+} from "./runtime/app/asciiGlyphPolicy";
 import { getQuakeMenuSceneState, updateQuakeMenuSceneState, updateQuakeMenuSceneTexts } from "./runtime/menuSceneState";
 import { GLYPH_FONT_ATLAS_ASCII } from "glyphcss";
 import {
   createQuakeGlyphWorldOverlay,
   QUAKE_GLYPH_OVERLAY_CELL_PX,
-  type QuakeGlyphCharMode,
   type QuakeGlyphColorEncoding,
   type QuakeGlyphComposite,
-  type QuakeGlyphSceneMode,
   type QuakeGlyphWorldOverlay,
 } from "./runtime/render/glyphWorldOverlay";
 import { QUAKE_RENDER_SUPERSAMPLE } from "./prepare/scene";
@@ -730,25 +735,19 @@ const QUAKE_GLYPH_PALETTE_STORAGE_KEY = "cssquake.glyphPalette";
 // Glyph sets (glyphcss ramp palettes) offered in the options menu, in cycle
 // order. Each is an intensity ramp, so swapping one is a live scene option —
 // no reload, unlike the render-mode/detail switches which rebuild the engine.
-const QUAKE_GLYPH_PALETTES = [
-  { name: "Solid", palette: "solid" },
-  { name: "ASCII", palette: "detail" },
-  { name: "Blocks", palette: "blocks" },
-  { name: "Dots", palette: "dots" },
-  { name: "Lines", palette: "lines" },
-  { name: "Binary", palette: "binary" },
-  { name: "Hex", palette: "hex" },
-  { name: "Braille", palette: "braille" },
-  { name: "Runes", palette: "runes" },
-  { name: "Stars", palette: "stars" },
-] as const;
+// ASCII-ONLY by policy (see asciiGlyphPolicy.ts): the list lives there and is
+// filtered through the same checker the URL/storage sanitizer uses, so the
+// menu can never cycle onto a Unicode ramp.
+const QUAKE_GLYPH_PALETTES = QUAKE_ASCII_GLYPH_PALETTES;
 
 // `?glyphPalette=` wins (shareable/debug), then the persisted choice, then the
 // ASCII ramp — this is asciiQuake, so the default has to render as characters.
+// Both sources pass through the ASCII-only sanitizer: a non-ASCII or unknown
+// palette (an old persisted "solid"/"blocks" choice, a hand-typed URL) logs
+// and falls back instead of rendering Unicode.
 function resolveQuakeGlyphPalette(): string {
   const fromUrl = new URLSearchParams(window.location.search).get("glyphPalette");
-  if (fromUrl) return fromUrl;
-  return quakeStorageValue(QUAKE_GLYPH_PALETTE_STORAGE_KEY) ?? "detail";
+  return sanitizeQuakeGlyphPalette(fromUrl ?? quakeStorageValue(QUAKE_GLYPH_PALETTE_STORAGE_KEY));
 }
 
 // Render backend is picked once at startup: `?renderMode=` wins (shareable,
@@ -1343,6 +1342,10 @@ const quakeGlyphFontAtlas = quakeStartupUrlParams.get("glyphAtlas") === "univers
 // tuning panel builds its sliders from (see glyphTuningSpec.ts).
 const quakeWorldGlyphTuning = readQuakeGlyphTuningValues(QUAKE_GLYPH_WORLD_TUNING_KNOBS, quakeStartupUrlParams);
 const quakeUiGlyphTuning = readQuakeGlyphTuningValues(QUAKE_GLYPH_UI_TUNING_KNOBS, quakeStartupUrlParams);
+// UI (menu/console/HUD-art) scene ramp palette, `?glyphImagePalette=`.
+// ASCII-only sanitized; mutable so the `?debug` panel's palette select can
+// swap it live (the UI scene remounts per adjustment anyway).
+let quakeUiGlyphPalette = sanitizeQuakeGlyphPalette(quakeStartupUrlParams.get("glyphImagePalette"));
 // The corner logo's useful density follows the display: cells below one
 // DEVICE pixel blur to grey, so a high-DPI screen resolves twice the density
 // a 1x screen does (measured: legible from 8 at DPR 1, best at 16 at DPR 2).
@@ -1422,20 +1425,15 @@ const quakeGlyphOverlay: QuakeGlyphWorldOverlay | null =
         // exact, reproducible view (to pin a flicker spot to coordinates).
         debug: quakeStartupUrlParams.get("glyphDebug") === "1",
         fixedView: quakeParseGlyphView(quakeStartupUrlParams.get("glyphView")),
-        // Cell character encoding: `?glyphCharMode=braille` renders the world as
-        // Unicode Braille dot patterns (2x4 subcell mask per cell). Braille only
-        // applies to glyphcss's WIREFRAME output, so the overlay flips the scene
-        // mode along with it unless `?glyphSceneMode=` says otherwise.
-        // `halfblock`/`quadrant` are the solid-mode subcell encodings.
-        charMode: ((m): QuakeGlyphCharMode | undefined =>
-          m === "braille" || m === "halfblock" || m === "quadrant" || m === "ascii" ? m : undefined)(
-          quakeStartupUrlParams.get("glyphCharMode"),
-        ),
-        // Scene render mode: `?glyphSceneMode=wireframe|voxel|ink|solid`.
-        sceneMode: ((m): QuakeGlyphSceneMode | undefined =>
-          m === "wireframe" || m === "voxel" || m === "ink" || m === "solid" ? m : undefined)(
-          quakeStartupUrlParams.get("glyphSceneMode"),
-        ),
+        // Cell character encoding, `?glyphCharMode=`. ASCII-only policy: the
+        // sanitizer accepts "ascii" alone — glyphcss's braille (Unicode dot
+        // patterns) and halfblock/quadrant (block elements) encodings are
+        // rejected with a console warning (see asciiGlyphPolicy.ts).
+        charMode: sanitizeQuakeGlyphCharMode(quakeStartupUrlParams.get("glyphCharMode")),
+        // Scene render mode, `?glyphSceneMode=`. ASCII-only policy: "solid"
+        // alone — wireframe/voxel emit box-drawing junctions, ink a fixed
+        // non-ASCII oriented set (see asciiGlyphPolicy.ts).
+        sceneMode: sanitizeQuakeGlyphSceneMode(quakeStartupUrlParams.get("glyphSceneMode")),
         // Colour-run merge tolerance (redmean 0..765, 0 = off): fewer <span>s per
         // row at the cost of colour fidelity. `?glyphColorTolerance=24`.
         colorTolerance: quakeUrlNumberParam(quakeStartupUrlParams, "glyphColorTolerance", 0, 765) ?? undefined,
@@ -1521,7 +1519,7 @@ function mountQuakeGlyphUiOverlay(t: QuakeGlyphTuningValues): void {
     }),
     maxCells: t.maxCells,
     minCellPx: t.minCellPx,
-    glyphPalette: quakeStartupUrlParams.get("glyphImagePalette") ?? undefined,
+    glyphPalette: quakeUiGlyphPalette,
     // Measured against the cssquake.wtf reference menu (perceived-luminance
     // region stats, 2026-08): 3.0 + the 0.6px glyph stroke + gamma 0.4 +
     // backdropGamma 0.6 lands the banner/plaque within ~70% of the
@@ -1605,6 +1603,13 @@ mountQuakeGlyphUiOverlay(quakeUiGlyphTuning);
 // knob (see glyphTuningSpec.ts), for finding better defaults by eye. Gated on
 // the URL param and loaded lazily so the normal path carries ZERO extra DOM
 // and no module cost.
+// Live select-values for the panel's palette dropdowns (mutated in place by
+// the panel, read by each section's `apply`). ASCII-legal values only — both
+// initial values are already sanitized, and `apply` re-sanitizes.
+const quakeUiGlyphPanelSelects: Record<string, string> = { palette: quakeUiGlyphPalette };
+const quakeWorldGlyphPanelSelects: Record<string, string> = {
+  palette: quakeGlyphOverlay?.getGlyphPalette() ?? resolveQuakeGlyphPalette(),
+};
 if (quakeStartupUrlParams.has("debug")) {
   void import("./runtime/debug/glyphTuningPanel").then(({ installQuakeGlyphTuningPanel }) => {
     installQuakeGlyphTuningPanel([
@@ -1612,25 +1617,51 @@ if (quakeStartupUrlParams.has("debug")) {
         title: "Menu / UI scene",
         knobs: QUAKE_GLYPH_UI_TUNING_KNOBS,
         values: quakeUiGlyphTuning,
+        // Ramp palette dropdown — ASCII-legal palettes only (the policy
+        // module enumerates them, so a non-ASCII glyphcss palette can never
+        // appear here). `?glyphImagePalette=` pins it via "copy URL".
+        selects: [{
+          key: "palette",
+          param: "glyphImagePalette",
+          label: "ramp palette",
+          options: asciiOnlyGlyphPaletteNames(),
+          def: "detail",
+        }],
+        selectValues: quakeUiGlyphPanelSelects,
         // The logo's real default is display-dependent (see above) — keep
         // "copy URL" and reset honest about it.
         defaults: { logoDensity: quakeLogoDensityDefault },
         // Recreating the UI scene re-probes textures + re-segments art; keep
         // it off the slider's every input event.
         debounceMs: 180,
-        apply: (v) => mountQuakeGlyphUiOverlay(v),
+        apply: (v) => {
+          quakeUiGlyphPalette = sanitizeQuakeGlyphPalette(quakeUiGlyphPanelSelects.palette);
+          mountQuakeGlyphUiOverlay(v);
+        },
       },
       ...(quakeGlyphOverlay
         ? [{
             title: "World scene",
             knobs: QUAKE_GLYPH_WORLD_TUNING_KNOBS,
             values: { ...quakeWorldGlyphTuning, cell: quakeGlyphOverlay.getCellPx() },
+            // Same ASCII-legal palette dropdown for the world's ramp.
+            selects: [{
+              key: "palette",
+              param: "glyphPalette",
+              label: "ramp palette",
+              options: asciiOnlyGlyphPaletteNames(),
+              def: "detail",
+            }],
+            selectValues: quakeWorldGlyphPanelSelects,
             // The world's budget-derived cell is the real default; the spec's
             // literal is only a fallback. Overriding keeps "copy URL" from
             // pinning a cell the user never touched.
             defaults: { cell: quakeGlyphOverlay.getCellPx() },
             debounceMs: 120,
             apply: (v: QuakeGlyphTuningValues) => {
+              quakeGlyphOverlay.setGlyphPalette(
+                sanitizeQuakeGlyphPalette(quakeWorldGlyphPanelSelects.palette),
+              );
               quakeGlyphOverlay.setTuning({
                 brighten: v.brighten,
                 gamma: v.gamma,
@@ -1671,7 +1702,7 @@ if (quakeGlyphOverlay) {
       document.body.appendChild(quakeGlyphCompositeToast);
     }
     const label =
-      mode === "glyph" ? "glyphcss (ASCII)" : mode === "poly" ? "polycss" : "BOTH — glyph 50% over poly";
+      mode === "glyph" ? "glyphcss (ASCII)" : mode === "poly" ? "polycss" : "BOTH - glyph 50% over poly";
     quakeGlyphCompositeToast.textContent = `render: ${label}   [V]`;
     quakeGlyphCompositeToast.style.opacity = "1";
     window.clearTimeout(quakeGlyphCompositeToastTimer);

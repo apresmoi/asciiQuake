@@ -934,7 +934,7 @@ export function createQuakeGlyphWorldOverlay(
       readout.textContent =
         `eye  ${f(latestEye[0])}, ${f(latestEye[1])}, ${f(latestEye[2])}\n` +
         `rotX ${f(latestRotX)}  rotY ${f(latestRotY)}\n` +
-        `?glyphView=${lastGlyphView}   (click → copy full URL)`;
+        `?glyphView=${lastGlyphView}   (click -> copy full URL)`;
     }
   }
   // Coalesce renders to at most one per animation frame: the camera is applied

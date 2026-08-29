@@ -969,8 +969,12 @@ export function createQuakeGlyphUiOverlay(
       for (let i = 0; i < text.length; i++) {
         const c = col + i;
         if (c < 0 || c >= grid.cols) continue;
-        const glyph = text[i]!;
-        if (glyph === " ") continue;   // don't punch holes in the art behind
+        const raw = text[i]!;
+        if (raw === " ") continue;   // don't punch holes in the art behind
+        // ASCII-only policy (see asciiGlyphPolicy.ts): this is the ONE path
+        // that writes a DOM-sourced character straight into a cell, so a
+        // non-ASCII char must degrade here — "?" — never reach the grid.
+        const glyph = raw.codePointAt(0)! < 0x80 ? raw : "?";
         const idx = row * grid.cols + c;
         grid.char[idx] = glyph;
         grid.color[idx] = colour;

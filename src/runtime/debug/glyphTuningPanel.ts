@@ -10,12 +10,30 @@
  */
 import type { QuakeGlyphTuningKnob, QuakeGlyphTuningValues } from "../app/glyphTuningSpec";
 
+/** A non-numeric knob rendered as a dropdown (e.g. the glyph ramp palette). */
+export interface QuakeGlyphTuningSelect {
+  /** Key in the section's `selectValues` record. */
+  readonly key: string;
+  /** URL query parameter, e.g. `?glyphPalette=`. */
+  readonly param: string;
+  readonly label: string;
+  /** Choices, in listed order. Callers pass only ASCII-legal choices here —
+   *  the panel offers exactly what it is given (see asciiGlyphPolicy.ts). */
+  readonly options: readonly string[];
+  /** Shipped default — used by "changed?" detection and reset. */
+  readonly def: string;
+}
+
 export interface QuakeGlyphTuningSection {
   readonly title: string;
   readonly knobs: readonly QuakeGlyphTuningKnob[];
   /** Live values record — MUTATED in place as sliders move, so the caller's
    *  own reference stays current. */
   readonly values: QuakeGlyphTuningValues;
+  /** Dropdown knobs, rendered above the sliders. */
+  readonly selects?: readonly QuakeGlyphTuningSelect[];
+  /** Live values for `selects` — MUTATED in place, like `values`. */
+  readonly selectValues?: Record<string, string>;
   /** Per-key default overrides for "changed?" detection (e.g. the world cell
    *  size, whose real default is budget-derived, not the spec literal). */
   readonly defaults?: Readonly<Record<string, number>>;
@@ -79,6 +97,14 @@ export function installQuakeGlyphTuningPanel(sections: readonly QuakeGlyphTuning
           url.searchParams.delete(knob.param);
         }
       }
+      for (const sel of section.selects ?? []) {
+        const value = section.selectValues?.[sel.key] ?? sel.def;
+        if (value !== sel.def) {
+          url.searchParams.set(sel.param, value);
+        } else {
+          url.searchParams.delete(sel.param);
+        }
+      }
     }
     return url.toString();
   }
@@ -110,10 +136,11 @@ export function installQuakeGlyphTuningPanel(sections: readonly QuakeGlyphTuning
       for (const knob of section.knobs) {
         setValue(section, knob, section.defaults?.[knob.key] ?? knob.def);
       }
+      for (const sel of section.selects ?? []) setSelectValue(section, sel, sel.def);
       scheduleApply(section);
     }
   }));
-  header.appendChild(mkButton("✕", () => panel.remove()));
+  header.appendChild(mkButton("x", () => panel.remove()));
   panel.appendChild(header);
   panel.appendChild(copyOut);
 
@@ -143,11 +170,45 @@ export function installQuakeGlyphTuningPanel(sections: readonly QuakeGlyphTuning
     }
   }
 
+  const selectInputs = new Map<QuakeGlyphTuningSelect, HTMLSelectElement>();
+  function setSelectValue(section: QuakeGlyphTuningSection, sel: QuakeGlyphTuningSelect, value: string): void {
+    if (section.selectValues) section.selectValues[sel.key] = value;
+    const ui = selectInputs.get(sel);
+    if (ui) ui.value = value;
+  }
+
   for (const section of sections) {
     const sectionTitle = document.createElement("div");
-    sectionTitle.textContent = `── ${section.title} ──`;
+    sectionTitle.textContent = `-- ${section.title} --`;
     sectionTitle.style.cssText = "color:#7af;margin:8px 0 2px;font-weight:bold";
     panel.appendChild(sectionTitle);
+
+    for (const sel of section.selects ?? []) {
+      const row = document.createElement("div");
+      row.style.cssText = "display:flex;gap:4px;align-items:center;margin:2px 0 4px";
+      const name = document.createElement("span");
+      name.textContent = sel.label;
+      name.title = `?${sel.param}=  (default ${sel.def})`;
+      name.style.cssText = "flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap";
+      const select = document.createElement("select");
+      select.style.cssText =
+        "background:#111;color:#ddd;border:1px solid #555;border-radius:3px;" +
+        "font:10px Menlo,Consolas,monospace;padding:1px 2px;max-width:140px";
+      for (const option of sel.options) {
+        const o = document.createElement("option");
+        o.value = option;
+        o.textContent = option === sel.def ? `${option} (default)` : option;
+        select.appendChild(o);
+      }
+      select.value = section.selectValues?.[sel.key] ?? sel.def;
+      select.addEventListener("change", () => {
+        if (section.selectValues) section.selectValues[sel.key] = select.value;
+        scheduleApply(section);
+      });
+      selectInputs.set(sel, select);
+      row.append(name, select);
+      panel.appendChild(row);
+    }
 
     let lastGroup = "";
     for (const knob of section.knobs) {
@@ -170,7 +231,7 @@ export function installQuakeGlyphTuningPanel(sections: readonly QuakeGlyphTuning
       const readout = document.createElement("span");
       readout.style.cssText = "color:#ff8;min-width:44px;text-align:right";
       readout.textContent = trim(section.values[knob.key] ?? knob.def);
-      const reset = mkButton("↺", () => {
+      const reset = mkButton("<", () => {
         setValue(section, knob, section.defaults?.[knob.key] ?? knob.def);
         scheduleApply(section);
       });
@@ -200,7 +261,7 @@ export function installQuakeGlyphTuningPanel(sections: readonly QuakeGlyphTuning
 
   const note = document.createElement("div");
   note.style.cssText = "color:#777;margin-top:6px";
-  note.textContent = "disposable panel — copy URL pins the current values as query params";
+  note.textContent = "disposable panel - copy URL pins the current values as query params";
   panel.appendChild(note);
 
   document.body.appendChild(panel);

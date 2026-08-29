@@ -24,6 +24,7 @@ import {
   type QuakeGlyphTuningValues,
 } from "../runtime/app/glyphTuningSpec";
 import { GLYPH_FONT_ATLAS_ASCII, WIREFRAME_PALETTES } from "glyphcss";
+import { isAsciiOnlyGlyphPalette } from "../runtime/app/asciiGlyphPolicy";
 import logoUrl from "../assets/cssquake-logo.png";
 import plaqueUrl from "../assets/main-menu-plaque-baked.png";
 import titleUrl from "../assets/main-menu-title-baked.png";
@@ -335,7 +336,16 @@ function buildControls(): void {
   for (const name of Object.keys(WIREFRAME_PALETTES)) {
     const o = document.createElement("option");
     o.value = name;
-    o.textContent = name === "detail" ? "detail (game default)" : name;
+    // Non-ASCII palettes stay selectable HERE (the lab is the comparison
+    // tool) but are marked: the game itself rejects them and falls back to
+    // "detail" (see asciiGlyphPolicy.ts), so a copied game URL carrying one
+    // will not reproduce what the lab shows.
+    o.textContent =
+      name === "detail"
+        ? "detail (game default)"
+        : isAsciiOnlyGlyphPalette(name)
+          ? name
+          : `${name} (non-ASCII, lab only - game rejects)`;
     if (name === palette) o.selected = true;
     palSel.appendChild(o);
   }
