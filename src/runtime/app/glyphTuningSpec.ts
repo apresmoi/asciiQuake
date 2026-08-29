@@ -49,18 +49,21 @@ export const QUAKE_GLYPH_UI_TUNING_KNOBS: readonly QuakeGlyphTuningKnob[] = [
   // when the URL doesn't pin one. The console plateaus at ~14 everywhere
   // (the 1024-cell cap coarsens a full-width console block to ~13 effective).
   //
-  // 2026-08 retune (user, glyph lab): the shipped logo look is now the COARSE
-  // dense-ramp rendering tuned at `?glyphImageCells=13000&glyphImageLogoDensity=2`
-  // — logo cell = (13000-cell base grid)/2. glyphcss densities are fractional
-  // (cell = base cell / density, no rounding), so the same on-screen cell size
-  // is reproduced on the shipped 24000-cell grid by density
-  // 2·sqrt(13000/24000) = 1.472 — the def below — leaving the base grid (and
-  // with it the menu/console/backdrop cost and look) untouched. Verified
-  // in-game: logo layer font 6.919px both ways at a 1723×872 host. The old
-  // DPR-based default lift (8 → 16 on high-DPI) is gone: the tuned look is
-  // deliberately chunky (~14 device px cells at DPR 2), nowhere near the
-  // sub-device-pixel regime that lift existed to escape.
-  { key: "logoDensity", param: "glyphImageLogoDensity", label: "corner logo density", min: 1, max: 32, step: 0.01, def: 1.472, group: "Menu density" },
+  // 2026-08 retune (user, glyph lab): the shipped logo is the COARSE dense-ramp
+  // look the user tuned at `?glyphImageCells=13000&glyphImageLogoDensity=2` in
+  // the lab. The density below was matched EMPIRICALLY, by cells-across-the-logo
+  // in the running game, NOT by scaling the cell budget.
+  //
+  // A budget-ratio formula (2·sqrt(13000/24000) = 1.472) was tried first and is
+  // WRONG: `glyphImageCells` is a budget over the HOST AREA, and the lab's host
+  // is the ~267px preview box while the game's is the full viewport, so the two
+  // base cells are unrelated and no ratio transfers between them. Measured, that
+  // default rendered the logo at half the lab's resolution per axis — 60x10
+  // cells and 43 ink cells against the lab's 130x19 and 683.
+  //
+  // The old DPR-based lift (8 → 16 on high-DPI) is gone: this look is
+  // deliberately chunky, nowhere near the sub-device-pixel regime it escaped.
+  { key: "logoDensity", param: "glyphImageLogoDensity", label: "corner logo density", min: 1, max: 32, step: 0.01, def: 2.92, group: "Menu density" },
   { key: "textDensity", param: "glyphImageTextDensity", label: "menu text density", min: 1, max: 16, step: 1, def: 10, group: "Menu density" },
   { key: "consoleDensity", param: "glyphImageConsoleDensity", label: "boot console density", min: 1, max: 32, step: 1, def: 14, group: "Menu density" },
   { key: "maxCells", param: "glyphImageCells", label: "base grid budget", min: 2000, max: 120000, step: 1000, def: 24_000, group: "Menu density" },
