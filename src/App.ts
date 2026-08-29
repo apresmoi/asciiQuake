@@ -1620,19 +1620,38 @@ if (quakeRenderMode === "glyphcss" && quakeStartupUrlParams.get("glyphImage") !=
         ".quake-option-glyph-palette", "#quake-options-back", "#quake-about-back",
         "#quake-multiplayer-field", "#quake-multiplayer-create", "#quake-multiplayer-back",
       ],
-      // Words go INTO the grid, not on top of it. Bitmap text is authored as
-      // one `.quake-bitmap-run` element per word (see bitmapText.ts); the runs
-      // are visibility-hidden while this overlay's host is up and stamped into
-      // the shared character grid instead. The version tag is plain DOM text,
-      // stamped the same way.
-      textSelectors: [".quake-bitmap-run", ".asciiquake-version"],
-      // Display-size bitmap text (the multiplayer titles) keeps its SIZE by
-      // rendering as conchars sprite art rather than one grid cell per letter.
+      // ALL bitmap text renders as conchars sprite art (one textured quad per
+      // character, at the element's own layout box) in a density detail
+      // layer. Stamping the runs into the grid instead — one character per
+      // ~8px cell — was measured as the text regression: the boot log, the
+      // panel labels and the multiplayer form all shrank to a third of their
+      // CSS-authored `--quake-bitmap-glyph-size` and their alignment with
+      // the input art broke. The quads keep the exact boxes CSS laid out, so
+      // size, the console's left-edge column and the form's label/input
+      // rows all match the pre-grid rendering. The path reads dim by nature
+      // — thin glyph strokes land on sparse ramp characters — which the
+      // overlay's ink-coverage compensation (below) corrects; the rules
+      // themselves stay at full brightness. First-match-wins keeps the
+      // title rule from double-emitting through the catch-all.
+      // `glyphScale`: only the display TITLES are drawn inside their cells
+      // (0.75 — a conchars glyph inks its whole cell, so at 1.0 a 40px title
+      // reads far heavier than the ~26px caps the shipped title had). Copy-
+      // size text stays at the full cell: a 16px glyph only spans ~6 detail
+      // rows, and shrinking it below that drops strokes and shatters the
+      // letterforms (measured at 0.8).
       textArt: [{
         selector: ".quake-bitmap-text--title .quake-bitmap-run",
         layer: 2,
         density: quakeUrlNumberParam(quakeStartupUrlParams, "glyphImageDensity", 1, 8) ?? 4,
+        glyphScale: 0.75,
+      }, {
+        selector: ".quake-bitmap-run",
+        layer: 2,
+        density: quakeUrlNumberParam(quakeStartupUrlParams, "glyphImageDensity", 1, 8) ?? 4,
       }],
+      // Ink-coverage compensation strength for the art/text detail layers —
+      // `?glyphImageInkComp=` (0 disables, 1 full). See the overlay option.
+      inkCompensation: quakeUrlNumberParam(quakeStartupUrlParams, "glyphImageInkComp", 0, 1) ?? 0.7,
       //
       // The LANDING screen, the backdrop and the corner logo are gone from
       // this list: they render from the scene manifest above. What remains is

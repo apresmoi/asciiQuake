@@ -164,6 +164,27 @@ export interface QuakeGlyphUiOverlayOptions {
    * backdrop out of the murk. Defaults to `gamma` (uniform lift).
    */
   readonly backdropGamma?: number;
+  /**
+   * Ink-coverage compensation strength, 0..1 (default 0 = off). Applied to
+   * the ART/TEXT detail layers after their tone lift.
+   *
+   * An ASCII cell's perceived luminance is its colour TIMES its glyph's ink
+   * coverage: a sparse ramp character (`.`, `:`, `-`) inks a small fraction
+   * of its cell, so the eye averages that ink against the black ground and
+   * the cell reads far darker than its nominal colour — the measured reason
+   * the conchars text quads (thin 1px strokes → sparse glyphs) looked dim
+   * next to the dense-glyph art around them. Compensation scales each cell's
+   * RGB up in inverse proportion to its glyph's coverage (bounded, hue-
+   * preserving, capped so no channel clips), so perceived luminance tracks
+   * the intended colour; glyphs that already fill their cell get ~1.0 and
+   * dense areas do not blow out. Coverage per glyph is measured ONCE on a
+   * canvas and memoized — never per cell per frame.
+   *
+   * Deliberately NOT applied to the base (backdrop) layer: the backdrop's
+   * sparse glyphs are the art/backdrop depth cue, and compensating them
+   * would lift the backdrop back into the art's range.
+   */
+  readonly inkCompensation?: number;
   readonly glyphPalette?: string;
   /** Final-string encode strategy. Defaults to `atlas`, as the world does. */
   readonly colorEncoding?: "atlas" | "spans";
@@ -227,13 +248,40 @@ export interface QuakeGlyphUiOverlayOptions {
   /**
    * Text rendered as ART: each matched element's characters become textured
    * quads sampling Quake's conchars sheet (one 8x8 glyph cell per character),
-   * instead of being stamped as grid characters. For DISPLAY-size bitmap text
-   * — the multiplayer panel's title is 14 q-units tall — a stamped character
-   * occupies one grid cell and effectively vanishes; the conchars art keeps
-   * the size the layout gave it, exactly like the pre-ASCII HTML rendered it.
+   * instead of being stamped as grid characters.
+   *
+   * This is the SIZED text path — the fix for text whose size is authored by
+   * CSS (`--quake-bitmap-glyph-size`: 12..40px) rather than by the grid. A
+   * stamped character occupies exactly one grid cell (~8px), so stamping the
+   * boot log, the panel labels and the multiplayer form shrank them all to a
+   * third of their size and broke their alignment with the art around them
+   * (the measured regression). A conchars quad keeps the exact box layout
+   * gave the character, so size, alignment and wrapping all match the HTML
+   * rendering this replaces — while the paint stays in the glyph scene.
+   *
+   * Rules are matched FIRST WINS per element, so a specific rule (the
+   * display-size titles) can override the catch-all run rule without
+   * emitting the element twice. `brightness` scales the sheet's texels the
+   * same way sprite rules do; the element's own accumulated CSS `opacity`
+   * and `filter: brightness()` — the disabled-row dim and the hover lift —
+   * are folded in per element on top of it.
+   *
+   * `glyphScale` sizes the drawn glyph INSIDE its layout cell (default 1 =
+   * fill the cell). A conchars glyph inks nearly its whole 8x8 cell, while
+   * the character cells this path replaces held browser glyphs with real
+   * air around them (a ~10px cap in a 16px cell) — so at scale 1 the text
+   * reads optically LARGER than the shipped look and adjacent lines nearly
+   * touch (the measured "font is bigger than it should" break). ~0.8 draws
+   * each glyph centred at the size the shipped text inked.
    * Elements matched here are excluded from `textSelectors` stamping.
    */
-  readonly textArt?: readonly { selector: string; layer: number; density?: number }[];
+  readonly textArt?: readonly {
+    selector: string;
+    layer: number;
+    density?: number;
+    brightness?: number;
+    glyphScale?: number;
+  }[];
 }
 
 /** Quake's console character sheet: a 16x16 grid of glyph cells; the high bit
@@ -562,6 +610,104 @@ export function createQuakeGlyphUiOverlay(
   }
 
   /**
+   * Ink-coverage compensation — see the `inkCompensation` option.
+   *
+   * Coverage is measured by rasterizing each glyph once into a monospace
+   * cell (advance x font-size, the same aspect the `<pre>` renders) and
+   * summing alpha; the factor for a glyph is `refCoverage / coverage`,
+   * where the reference is the densest probe glyph, clamped to a bounded
+   * boost. Strength interpolates the factor toward 1. Results memoize per
+   * glyph and per (glyph, colour) pair, so a frame's cost is map lookups.
+   */
+  const inkCompStrength = Math.max(0, Math.min(1, options.inkCompensation ?? 0));
+  const INK_COMP_MAX_BOOST = 3.5;
+  const INK_COMP_PROBE_GLYPHS = "@#$%&MW80";
+  const inkCoverageByGlyph = new Map<string, number>();
+  const inkCompCache = new Map<string, string>();
+  let inkCanvas: { ctx: CanvasRenderingContext2D; w: number; h: number } | null | undefined;
+  let inkCoverageRef: number | null = null;
+
+  function inkCoverageCanvas(): { ctx: CanvasRenderingContext2D; w: number; h: number } | null {
+    if (inkCanvas !== undefined) return inkCanvas;
+    try {
+      const font = `32px ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace`;
+      const canvas = document.createElement("canvas");
+      const probe = canvas.getContext("2d", { willReadFrequently: true });
+      if (!probe) return (inkCanvas = null);
+      probe.font = font;
+      const w = Math.max(1, Math.ceil(probe.measureText("M").width));
+      canvas.width = w;
+      canvas.height = 32;
+      // Sizing the canvas resets context state — set the font again.
+      probe.font = font;
+      probe.fillStyle = "#ffffff";
+      probe.textBaseline = "alphabetic";
+      inkCanvas = { ctx: probe, w, h: 32 };
+    } catch {
+      inkCanvas = null;
+    }
+    return inkCanvas;
+  }
+
+  function glyphInkCoverage(glyph: string): number {
+    const cached = inkCoverageByGlyph.get(glyph);
+    if (cached !== undefined) return cached;
+    let coverage = 1;
+    const c = inkCoverageCanvas();
+    if (c) {
+      c.ctx.clearRect(0, 0, c.w, c.h);
+      c.ctx.fillText(glyph, 0, Math.round(c.h * 0.8));
+      const data = c.ctx.getImageData(0, 0, c.w, c.h).data;
+      let ink = 0;
+      for (let i = 3; i < data.length; i += 4) ink += data[i]!;
+      coverage = ink / (255 * c.w * c.h);
+    }
+    coverage = Math.max(coverage, 0.01);
+    inkCoverageByGlyph.set(glyph, coverage);
+    return coverage;
+  }
+
+  function inkCompFactor(glyph: string): number {
+    if (inkCoverageRef === null) {
+      let ref = 0;
+      for (const probe of INK_COMP_PROBE_GLYPHS) ref = Math.max(ref, glyphInkCoverage(probe));
+      inkCoverageRef = Math.max(ref, 0.05);
+    }
+    const raw = Math.min(INK_COMP_MAX_BOOST, inkCoverageRef / glyphInkCoverage(glyph));
+    return 1 + inkCompStrength * (Math.max(1, raw) - 1);
+  }
+
+  function compensateInkCoverage(grid: { char: string[]; color: (string | null)[] }): void {
+    if (inkCompStrength <= 0) return;
+    const chars = grid.char;
+    const colors = grid.color;
+    for (let i = 0; i < colors.length; i++) {
+      const hex = colors[i];
+      const glyph = chars[i];
+      if (!hex || !glyph || glyph === " ") continue;
+      const key = glyph + hex;
+      let compensated = inkCompCache.get(key);
+      if (compensated === undefined) {
+        const factor = inkCompFactor(glyph);
+        if (factor <= 1.001) compensated = hex;
+        else {
+          const r = parseInt(hex.slice(1, 3), 16);
+          const g = parseInt(hex.slice(3, 5), 16);
+          const b = parseInt(hex.slice(5, 7), 16);
+          const max = Math.max(r, g, b);
+          // Hue-preserving: one shared scale, capped so no channel clips —
+          // a boosted amber stays amber instead of washing to white.
+          const scale = max > 0 ? Math.min(factor, 255 / max) : 1;
+          const h = (v: number) => Math.round(v * scale).toString(16).padStart(2, "0");
+          compensated = `#${h(r)}${h(g)}${h(b)}`;
+        }
+        inkCompCache.set(key, compensated);
+      }
+      colors[i] = compensated;
+    }
+  }
+
+  /**
    * Whether a `transformCells` grid is the BASE layer's.
    *
    * glyphcss invokes the hook once per layer: the base render (the full-host
@@ -603,6 +749,9 @@ export function createQuakeGlyphUiOverlay(
         stampText(grid);
       } else {
         liftCellColors(grid, artGamma, artLiftCache);
+        // Detail layers only: the backdrop's sparse glyphs are a deliberate
+        // depth cue, so the base grid is never coverage-compensated.
+        compensateInkCoverage(grid);
       }
     },
     directionalLight: { direction: [0, 0, 1], intensity: 0 },
@@ -1100,25 +1249,137 @@ export function createQuakeGlyphUiOverlay(
    * The run elements are visibility-hidden like all stamped text; their boxes
    * still come from layout, so the art lands exactly where the HTML text was.
    */
+  /**
+   * The conchars sheet PRE-BRIGHTENED for text use (hue-preserving gamma
+   * lift per texel, capped so no channel clips), built once and served as a
+   * data URL.
+   *
+   * Measured: the sheet's glyph strokes average #5f5f5f (alt row #64331f) —
+   * the source is dim, so cells sampling it start low, and a low luminance
+   * ALSO buys a sparse ramp character, which is most of why the text quads
+   * read ghostly next to the art. Lifting the texels attacks both at once:
+   * brighter colour AND a denser glyph choice. Amber stays amber — the same
+   * clip-capped scale `liftCellColors` uses.
+   */
+  const TEXT_SHEET_GAMMA = 0.5;
+  let textSheetUrl: string | null = null;
+  let textSheetRequested = false;
+  function ensureTextSheet(): string | null {
+    if (textSheetUrl || textSheetRequested) return textSheetUrl;
+    textSheetRequested = true;
+    const img = new Image();
+    const fallback = () => {
+      textSheetUrl = CONCHARS_URL;
+      adoptedSinceDraw = true;
+      queueSync();
+    };
+    img.onload = () => {
+      try {
+        const canvas = document.createElement("canvas");
+        canvas.width = img.naturalWidth;
+        canvas.height = img.naturalHeight;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) { fallback(); return; }
+        ctx.drawImage(img, 0, 0);
+        const image = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        const d = image.data;
+        for (let i = 0; i < d.length; i += 4) {
+          if (d[i + 3] === 0) continue;
+          const r = d[i]!, g = d[i + 1]!, b = d[i + 2]!;
+          const luma = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+          if (luma <= 0) continue;
+          const scale = Math.min(
+            (255 * Math.pow(luma / 255, TEXT_SHEET_GAMMA)) / luma,
+            255 / Math.max(r, g, b),
+          );
+          d[i] = Math.round(r * scale);
+          d[i + 1] = Math.round(g * scale);
+          d[i + 2] = Math.round(b * scale);
+        }
+        ctx.putImageData(image, 0, 0);
+        textSheetUrl = canvas.toDataURL("image/png");
+        adoptedSinceDraw = true;
+        queueSync();
+      } catch {
+        fallback(); // tainted canvas — draw the raw sheet rather than nothing
+      }
+    };
+    img.onerror = fallback;
+    img.src = CONCHARS_URL;
+    return null;
+  }
+
   function emitTextArt(groups: Map<string, PolyGroup>, hostBox: DOMRect): void {
     const rules = options.textArt;
     if (!rules?.length) return;
+    const sheetUrl = ensureTextSheet();
+    if (!sheetUrl) return; // draws on the sync queued when the sheet is ready
     const cx = hostBox.width / 2;
     const cy = hostBox.height / 2;
+
+    /** Accumulated CSS dimming for one run: its own and its ancestors'
+     *  `opacity` (the disabled-row dim) times any `filter: brightness()`
+     *  (the multiplayer rows' hover lift). The compositor applied these to
+     *  the HTML text; a textured quad must fold them into its tint. The
+     *  dimming classes sit on the row or its immediate wrappers, so a short
+     *  ancestor walk suffices — same depth the stamped path used. */
+    const nodeDim = (node: HTMLElement, style: CSSStyleDeclaration): number => {
+      let dim = parseFloat(style.opacity) || 1;
+      const fb = /brightness\(([\d.]+)\)/.exec(style.filter);
+      if (fb) dim *= parseFloat(fb[1]!);
+      let ancestor = node.parentElement;
+      for (let depth = 0; ancestor && depth < 6; depth++, ancestor = ancestor.parentElement) {
+        const cs = getComputedStyle(ancestor);
+        const o = parseFloat(cs.opacity);
+        if (o < 1) dim *= o;
+        const f = /brightness\(([\d.]+)\)/.exec(cs.filter);
+        if (f) dim *= parseFloat(f[1]!);
+      }
+      return dim;
+    };
+
+    // First matching rule wins: the catch-all run rule overlaps the
+    // display-size title rule, and emitting an element under both would
+    // double every title character.
+    const seen = new Set<Element>();
     for (const rule of rules) {
       let nodes: NodeListOf<Element>;
       try { nodes = document.querySelectorAll(rule.selector); } catch { continue; }
       for (const node of nodes) {
         if (!(node instanceof HTMLElement)) continue;
-        const text = node.textContent;
+        if (seen.has(node)) continue;
+        seen.add(node);
+        let text = node.textContent;
         if (!text || !text.trim()) continue;
         const box = node.getBoundingClientRect();
         if (!box.width || !box.height) continue;
-        if (getComputedStyle(node).display === "none") continue;
-        const tex = menuTexture(CONCHARS_URL, true);
+        const style = getComputedStyle(node);
+        if (style.display === "none") continue;
+        // The HTML text painted through `text-transform` — the quads must too.
+        if (style.textTransform === "uppercase") text = text.toUpperCase();
+        const tex = menuTexture(sheetUrl, true);
         if (!tex.natural) continue;
         const alt = node.classList.contains("quake-bitmap-run-alt");
+        const brightness = (rule.brightness ?? 1) * nodeDim(node, style);
+        // Honour the nearest clipping ancestor: the multiplayer value runs
+        // keep their full box (flex-shrink 0) and their `overflow: hidden`
+        // container clips the paint — quads that ignore that draw the value
+        // straight past the input's border (measured on the MAP row).
+        let clip: DOMRect | null = null;
+        for (let a = node.parentElement, d = 0; a && d < 4; d++, a = a.parentElement) {
+          const cs = getComputedStyle(a);
+          if (cs.overflowX !== "visible" || cs.overflowY !== "visible") {
+            clip = a.getBoundingClientRect();
+            break;
+          }
+        }
         const charW = box.width / text.length;
+        // The glyph draws centred INSIDE its layout cell at `glyphScale` —
+        // see the option doc. `min` keeps it square when a clamped run's
+        // cells are narrower than the row height.
+        const glyphSide = Math.min(box.height, charW) * Math.max(0.1, Math.min(1, rule.glyphScale ?? 1));
+        const padY = (box.height - glyphSide) / 2;
+        const padX = (charW - glyphSide) / 2;
         const top = box.top - hostBox.top;
         const z = rule.layer * LAYER_STEP;
         for (let i = 0; i < text.length; i++) {
@@ -1127,17 +1388,30 @@ export function createQuakeGlyphUiOverlay(
           const glyph = (char.charCodeAt(0) & 127) + (alt ? 128 : 0);
           const gu = glyph & (CONCHARS_GRID - 1);
           const gv = glyph >> 4;
-          const left = box.left - hostBox.left + i * charW;
+          const left = box.left - hostBox.left + i * charW + padX;
+          const cellTop = top + padY;
+          // Visible portion after ancestor clipping; a partially clipped
+          // glyph shrinks its quad AND its sheet window together.
+          let visL = left, visR = left + glyphSide;
+          let visT = cellTop, visB = cellTop + glyphSide;
+          if (clip) {
+            visL = Math.max(visL, clip.left - hostBox.left);
+            visR = Math.min(visR, clip.right - hostBox.left);
+            visT = Math.max(visT, clip.top - hostBox.top);
+            visB = Math.min(visB, clip.bottom - hostBox.top);
+            if (visL >= visR || visT >= visB) continue;
+          }
+          const cw = 1 / CONCHARS_GRID;
           emitQuad(groups, {
-            x0: top - cy, x1: top + box.height - cy,
-            y0: left - cx, y1: left + charW - cx,
+            x0: visT - cy, x1: visB - cy,
+            y0: visL - cx, y1: visR - cx,
             z,
-            url: CONCHARS_URL,
-            u0: gu / CONCHARS_GRID, u1: (gu + 1) / CONCHARS_GRID,
-            v0: gv / CONCHARS_GRID, v1: (gv + 1) / CONCHARS_GRID,
+            url: sheetUrl,
+            u0: (gu + (visL - left) / glyphSide) * cw, u1: (gu + (visR - left) / glyphSide) * cw,
+            v0: (gv + (visT - cellTop) / glyphSide) * cw, v1: (gv + (visB - cellTop) / glyphSide) * cw,
             regions: tex.regions,
             density: Math.max(1, Math.round(rule.density ?? 1)),
-            brightness: 1,
+            brightness,
           });
         }
       }

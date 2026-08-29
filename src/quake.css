@@ -1339,10 +1339,13 @@ body.quake-menu-open:not(.quake-gameplay-started) .quake-menu-panel {
    glyph UI scene lives on a persistent host now, so its grid is ALWAYS the
    painter of bitmap text — during gameplay too, where notify/center-print runs
    are stamped into the same grid as the world sits under. */
-body.quake-glyph-render .quake-bitmap-run,
-body.quake-glyph-render .asciiquake-version {
+body.quake-glyph-render .quake-bitmap-run {
   visibility: hidden;
 }
+/* The version tag stays ORDINARY HTML: it is viewport chrome (12px system
+   monospace beside the logo, like the GitHub badge), not scene text. Routing
+   it through the grid rendered it as one dim ~8px cell floating beside the
+   logo — the measured regression — so it paints itself again. */
 .quake-bitmap-col-0 {
   background-position-x: 0;
 }
