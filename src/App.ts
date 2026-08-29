@@ -13,7 +13,7 @@ import {
 } from "./runtime/render/engine";
 import { createQuakeGlyphUiOverlay } from "./runtime/render/glyphUiOverlay";
 import { createQuakeMenuSceneManifest } from "./runtime/render/menuSceneManifest";
-import { updateQuakeMenuSceneState } from "./runtime/menuSceneState";
+import { getQuakeMenuSceneState, updateQuakeMenuSceneState, updateQuakeMenuSceneTexts } from "./runtime/menuSceneState";
 import { GLYPH_FONT_ATLAS_ASCII } from "glyphcss";
 import {
   createQuakeGlyphWorldOverlay,
@@ -293,87 +293,39 @@ const quakeDom = queryQuakeAppDom();
 const {
   app: quakeApp,
   scene: quakeSceneRoot,
-  menu: quakeMenu,
   weapon,
-  mainMenu,
-  mainMenuArt,
-  versionLabel,
-  singlePlayerPanel,
-  multiplayerPanel,
-  multiplayerForm,
+  impactParticlesLayer,
+  hud: quakeHud,
+  bonusOverlay,
+  damageOverlay,
+  intermission: quakeIntermissionRoot,
   multiplayerNameInput,
   multiplayerColorInput,
   multiplayerMapSelect,
   multiplayerFragLimitInput,
   multiplayerMaxPlayersInput,
-  levelPanel,
-  levelList,
-  aboutPanel,
-  optionsPanel,
-  disableSoundOption,
-  disableEnemiesOption,
-  disableDamageOption,
-  invertMouseOption,
-  alwaysRunOption,
-  showGunOption,
-  dynamicLightingOption,
-  renderModeOption,
-  glyphDetailOption,
-  glyphDetailOptionValue,
-  glyphPaletteOption,
-  glyphPaletteOptionValue,
-  impactParticlesOption,
-  impactParticlesLayer,
-  crosshair,
-  crosshairOption,
-  crosshairOptionValue,
-  debugStack,
-  debugPanel,
-  debugShowMenuOption,
-  debugEnabledOption,
-  debugShowFpsOption,
-  debugEnableAnimationsOption,
-  debugFreezeEnemiesOption,
-  debugDisableAttacksOption,
-  debugShowTexturesOption,
-  debugFlyModeOption,
-  debugShowOutlinesOption,
-  debugShowLabelsOption,
-  debugRecordingRow,
-  debugRecordingButton,
-  debugStatElements,
-  loadingOverlay,
-  loadingStatus,
-  loadingProgress,
-  loadingProgressFill,
-  loadingAction,
-  hudArmorValue,
-  hudHealthValue,
-  hudHealthDamageValue,
-  hudAmmoValue,
-  classicHud,
-  hud: quakeHud,
-  bonusOverlay,
-  damageOverlay,
-  notify: quakeNotify,
-  centerPrint: quakeCenterPrint,
-  intermission: quakeIntermissionRoot,
 } = quakeDom;
-const quakeText = createQuakeTextController({
-  centerPrintRoot: quakeCenterPrint,
-  notifyRoot: quakeNotify,
-});
+// Deleted with the HTML shell — typed nulls/empties keep the guarded debug
+// code paths compiling until those tools grow scene-drawn equivalents.
+const classicHud: HTMLElement | null = null;
+const debugRecordingButton: HTMLButtonElement | null = null;
+const debugRecordingRow: HTMLElement | null = null;
+const debugFlyModeOption: HTMLInputElement | null = null;
+const debugStatElements = new Map<string, HTMLElement>();
+const quakeText = createQuakeTextController();
 const quakeIntermission = createQuakeIntermissionFlow({
   renderBitmapText: mountQuakeBitmapText,
   root: quakeIntermissionRoot,
 });
 const quakeLevelStats = createQuakeLevelStatsFlow();
+// No HUD DOM exists: the glyph scene draws the status bar from the scene
+// state (emitHudScene); null sources keep hud.ts's sync a data-only push.
 const hudElements = createQuakeHudElements({
-  root: classicHud,
-  armor: hudArmorValue,
-  health: hudHealthValue,
-  healthDamage: hudHealthDamageValue,
-  ammo: hudAmmoValue,
+  root: null,
+  armor: null,
+  health: null,
+  healthDamage: null,
+  ammo: null,
 });
 const QUAKE_LOADING_PREVIEW_ENABLED = import.meta.env.DEV && new URLSearchParams(window.location.search).has("loading");
 
@@ -846,7 +798,8 @@ function defaultQuakeMultiplayerPartyHost(): string {
 const asciiQuakeVersionLabel = `v${__ASCIIQUAKE_VERSION__}`;
 const QUAKE_LOADING_CONSOLE_INITIALIZED_LINE = `=== asciiQuake ${asciiQuakeVersionLabel} initialized ===`;
 
-if (versionLabel) versionLabel.textContent = asciiQuakeVersionLabel;
+// Drawn by the glyph overlay beside the logo (quakeMenuVersionPos).
+updateQuakeMenuSceneTexts({ version: asciiQuakeVersionLabel });
 
 const QUAKE_JUMP_VELOCITY = 270 * QUAKE_COLLISION_UNIT_SCALE;
 const QUAKE_GRAVITY = 800 * QUAKE_COLLISION_UNIT_SCALE;
@@ -868,17 +821,14 @@ setQuakeLoadingRendererLine(quakeRenderMode);
 const quakeDebugMonsterMotionMaterial = quakeDebugMonsterMotionMaterialPolicy(quakeStartupUrlParams);
 const quakeDebugMonsterPlayerClearance = quakeDebugMonsterPlayerClearancePolicy(quakeStartupUrlParams);
 const quakeDebugMonsterCameraStandoff = quakeDebugMonsterCameraStandoffPolicy(quakeStartupUrlParams);
-const quakeAssetCatalog = createQuakeAssetCatalogFlow({
-  levelList,
-  mountBitmapText: mountQuakeBitmapText,
-});
-let quakeEnemiesDisabled = quakeUrlBoolean("disableEnemies") || (disableEnemiesOption?.checked ?? false);
-let quakeDamageDisabled = quakeUrlBoolean("disableDamage") || (disableDamageOption?.checked ?? false);
-let quakeEnemiesFrozen = quakeUrlBoolean("freezeEnemies") || (debugFreezeEnemiesOption?.checked ?? false);
-let quakeAttacksDisabled = quakeUrlBoolean("disableAttacks") || (debugDisableAttacksOption?.checked ?? false);
+const quakeAssetCatalog = createQuakeAssetCatalogFlow();
+let quakeEnemiesDisabled = quakeUrlBoolean("disableEnemies");
+let quakeDamageDisabled = quakeUrlBoolean("disableDamage");
+let quakeEnemiesFrozen = quakeUrlBoolean("freezeEnemies");
+let quakeAttacksDisabled = quakeUrlBoolean("disableAttacks");
 const quakeDebugPointerTraceConsole = quakeUrlBoolean("debugPointer");
 const quakeDebugRecordingPanelEnabled = quakeUrlBoolean("debugRecording");
-const quakeInitialDebugFlyMode = quakeUrlBoolean("debugFly") || (debugFlyModeOption?.checked ?? false);
+const quakeInitialDebugFlyMode = quakeUrlBoolean("debugFly");
 if (debugRecordingRow) debugRecordingRow.hidden = !quakeDebugRecordingPanelEnabled;
 const quakeMultiplayerCompactInvite = parseQuakeMultiplayerCompactInvite(
   quakeStartupUrlParams.get("room"),
@@ -967,11 +917,11 @@ const QUAKE_MULTIPLAYER_REMOTE_ATTACK_FRAME_NAMES_BY_WEAPON: Record<string, read
 const quakeMultiplayerScoreboard = QUAKE_MULTIPLAYER_ENABLED && quakeHud
   ? mountQuakeMultiplayerScoreboard(quakeHud)
   : null;
-let quakeInvertMouse = invertMouseOption?.checked ?? false;
-let quakeAlwaysRun = alwaysRunOption?.checked ?? true;
-let quakeShowGun = showGunOption?.checked ?? true;
-let quakeDynamicLighting = dynamicLightingOption?.checked ?? true;
-let quakeImpactParticles = impactParticlesOption?.checked ?? true;
+let quakeInvertMouse = false;
+let quakeAlwaysRun = true;
+let quakeShowGun = true;
+let quakeDynamicLighting = true;
+let quakeImpactParticles = true;
 let quakeMultiplayerSpectating = false;
 let quakeMultiplayerSpectatorFollowedPlayerId: string | null = null;
 let quakeMultiplayerSpectatorCenterPrint = "";
@@ -1059,9 +1009,8 @@ async function copyCurrentQuakeViewUrl(): Promise<string> {
 }
 
 function setQuakeAssetManifest(manifest: QuakeAssetManifest): void {
-  quakeAssetCatalog.setManifest(manifest, { renderBitmapText: true });
+  quakeAssetCatalog.setManifest(manifest);
   mountQuakeMultiplayerMapSelector();
-  syncQuakeMultiplayerControlGlyph(multiplayerMapSelect);
   menu.setCurrentLevel(currentMapName);
 }
 
@@ -1116,7 +1065,6 @@ function syncQuakeMultiplayerMenu(): void {
   if (multiplayerMapSelect) multiplayerMapSelect.value = quakeMultiplayerDefaultCreateMapName();
   if (multiplayerFragLimitInput) multiplayerFragLimitInput.value = String(QUAKE_MULTIPLAYER_FRAG_LIMIT);
   if (multiplayerMaxPlayersInput) multiplayerMaxPlayersInput.value = String(QUAKE_MULTIPLAYER_MAX_PLAYERS);
-  syncQuakeMultiplayerControlGlyphs();
 }
 
 let quakeMultiplayerGeneratedMenuRoom: {
@@ -1303,66 +1251,7 @@ function startQuakeMultiplayerFromMenu(): void {
   window.location.assign(url.toString());
 }
 
-type QuakeMultiplayerGlyphControl = HTMLInputElement | HTMLSelectElement;
-
-function quakeMultiplayerGlyphControls(): QuakeMultiplayerGlyphControl[] {
-  return [
-    multiplayerNameInput,
-    multiplayerMapSelect,
-    multiplayerFragLimitInput,
-    multiplayerMaxPlayersInput,
-  ].filter((control): control is QuakeMultiplayerGlyphControl => Boolean(control));
-}
-
-function syncQuakeMultiplayerControlGlyphs(): void {
-  for (const control of quakeMultiplayerGlyphControls()) syncQuakeMultiplayerControlGlyph(control);
-}
-
-function syncQuakeMultiplayerControlGlyph(control: QuakeMultiplayerGlyphControl | null): void {
-  if (!control) return;
-  const glyph = control.parentElement?.querySelector<HTMLElement>(".quake-multiplayer-control-glyph");
-  if (!glyph) return;
-  glyph.textContent = quakeMultiplayerControlGlyphText(control);
-  glyph.classList.add("quake-bm-label", "quake-bm-alt");
-  mountQuakeBitmapText(glyph);
-}
-
-function quakeMultiplayerControlGlyphText(control: QuakeMultiplayerGlyphControl): string {
-  if (control instanceof HTMLSelectElement) {
-    return control.selectedOptions[0]?.textContent?.trim() || control.value;
-  }
-  return control.value;
-}
-
-function handleQuakeMultiplayerControlGlyphInput(event: Event): void {
-  const control = event.currentTarget;
-  if (control instanceof HTMLInputElement || control instanceof HTMLSelectElement) {
-    syncQuakeMultiplayerControlGlyph(control);
-  }
-}
-
-function attachQuakeMultiplayerControlGlyphs(): void {
-  for (const control of quakeMultiplayerGlyphControls()) {
-    control.addEventListener("input", handleQuakeMultiplayerControlGlyphInput);
-    control.addEventListener("change", handleQuakeMultiplayerControlGlyphInput);
-  }
-}
-
-function disposeQuakeMultiplayerControlGlyphs(): void {
-  for (const control of quakeMultiplayerGlyphControls()) {
-    control.removeEventListener("input", handleQuakeMultiplayerControlGlyphInput);
-    control.removeEventListener("change", handleQuakeMultiplayerControlGlyphInput);
-  }
-}
-
-function handleQuakeMultiplayerFormSubmit(event: SubmitEvent): void {
-  event.preventDefault();
-  event.stopPropagation();
-  startQuakeMultiplayerFromMenu();
-}
-
 injectQuakeWorldAnimations();
-quakeAssetCatalog.mountLevelSelector();
 
 const quakeRenderEngine = createQuakeRenderEngine(quakeRenderMode, quakeApp, {
   camera: {
@@ -1421,7 +1310,7 @@ if (import.meta.env?.DEV) {
 if (quakeSceneRoot) {
   quakeSceneRoot.appendChild(host);
 } else {
-  quakeApp.insertBefore(host, weapon ?? quakeMenu);
+  quakeApp.insertBefore(host, weapon);
 }
 host.tabIndex = 0;
 installInspectableQuakePolycssCamera(scene, host);
@@ -1451,7 +1340,7 @@ const quakeGlyphOverlay: QuakeGlyphWorldOverlay | null =
     ? createQuakeGlyphWorldOverlay({
         host: quakeApp,
         fontAtlas: quakeGlyphFontAtlas,
-        insertBefore: weapon ?? quakeMenu,
+        insertBefore: weapon,
         // Skip the (fully hidden) polycss world render while the opaque ASCII is
         // up — polycss was still rasterizing every textured DOM polygon behind it.
         // Toggling composite to poly/both brings the layer straight back.
@@ -1540,12 +1429,19 @@ const quakeGlyphOverlay: QuakeGlyphWorldOverlay | null =
         ),
       })
     : null;
-// The menu's sprite art rendered as ONE ASCII image: every sprite is a textured
-// quad in a single glyphcss scene, layered along Z and composited by the
-// rasterizer's depth test. One `<pre>`, one character grid, one render — so the
-// backdrop and the art on top of it share cells instead of being separate ASCII
-// patches at different scales. `?glyphImage=0` opts out.
-if (quakeRenderMode === "glyphcss" && quakeStartupUrlParams.get("glyphImage") !== "0") {
+// The menu's sprite art AND text rendered as ONE ASCII image: every sprite is a
+// textured quad in a single glyphcss scene, layered along Z and composited by
+// the rasterizer's depth test. The scene manifest below is ALSO the menu
+// controller's hit-map, so it is created once and shared.
+//
+// Unconditional now (previously glyphcss-mode only): the HTML menu this used
+// to fall back to is gone, so the glyph UI scene is the ONLY menu renderer —
+// in polycss world-render mode too.
+const quakeMenuManifest = createQuakeMenuSceneManifest({
+  density: quakeUrlNumberParam(quakeStartupUrlParams, "glyphImageDensity", 1, 8) ?? 4,
+  backdropBrightness: quakeUrlNumberParam(quakeStartupUrlParams, "glyphImageBackdrop", 0, 1) ?? 0.6,
+});
+{
   // A DEDICATED, always-present host — not the loading overlay. Hosting the
   // scene on `#quake-loading-overlay` tied its life to that overlay's `hidden`
   // flag: the moment gameplay started the host collapsed to zero size, sync()
@@ -1560,22 +1456,13 @@ if (quakeRenderMode === "glyphcss" && quakeStartupUrlParams.get("glyphImage") !=
   uiHost.id = "quake-glyph-ui-host";
   uiHost.setAttribute("aria-hidden", "true");
   uiHost.style.cssText = "position:absolute;inset:0;z-index:2;pointer-events:none;overflow:hidden";
-  if (loadingOverlay?.parentElement) {
-    loadingOverlay.parentElement.insertBefore(uiHost, loadingOverlay);
-  } else {
-    quakeApp?.appendChild(uiHost);
-  }
+  quakeApp.appendChild(uiHost);
   if (uiHost.parentElement) {
     createQuakeGlyphUiOverlay({
       host: uiHost,
-      // The declarative menu scene: the LANDING menu (plus the backdrop and
-      // corner logo) renders from this manifest + the shared menu scene state,
-      // with no DOM reads. Screens not yet in the manifest still come from the
-      // selector rules below.
-      menu: createQuakeMenuSceneManifest({
-        density: quakeUrlNumberParam(quakeStartupUrlParams, "glyphImageDensity", 1, 8) ?? 4,
-        backdropBrightness: quakeUrlNumberParam(quakeStartupUrlParams, "glyphImageBackdrop", 0, 1) ?? 0.6,
-      }),
+      // The declarative menu scene: every screen, its text and the chrome
+      // render from this manifest + the shared menu scene state. No DOM reads.
+      menu: quakeMenuManifest,
       maxCells: quakeUrlNumberParam(quakeStartupUrlParams, "glyphImageCells", 2000, 120_000) ?? undefined,
       minCellPx: quakeUrlNumberParam(quakeStartupUrlParams, "glyphImageCell", 2, 24) ?? undefined,
       glyphPalette: quakeStartupUrlParams.get("glyphImagePalette") ?? undefined,
@@ -1595,66 +1482,17 @@ if (quakeRenderMode === "glyphcss" && quakeStartupUrlParams.get("glyphImage") !=
       backdropGamma: quakeUrlNumberParam(quakeStartupUrlParams, "glyphImageBackdropGamma", 0.2, 1) ?? 0.8,
       colorEncoding: quakeStartupUrlParams.get("glyphImageEncoding") === "spans" ? "spans" : "atlas",
       fontAtlas: quakeGlyphFontAtlas,
-      // Art authored as `::before` — the panel plaque (on every page) and each
-      // button's selection cursor. Materialized into real elements to convert.
-      // The suppressing CSS blanks these before the overlay can read them.
-      pseudoTextures: {
-        "#quake-debug-card": "/q/main-menu-plaque.png",
-        ".quake-option-toggle": "/q/main-menu-cursor.png",
-        ".quake-option-crosshair": "/q/main-menu-cursor.png",
-        ".quake-option-glyph-detail": "/q/main-menu-cursor.png",
-        ".quake-option-glyph-palette": "/q/main-menu-cursor.png",
-        "#quake-options-back": "/q/main-menu-cursor.png",
-        "#quake-about-back": "/q/main-menu-cursor.png",
-        "#quake-multiplayer-field": "/q/main-menu-cursor.png",
-        "#quake-multiplayer-create": "/q/main-menu-cursor.png",
-        "#quake-multiplayer-back": "/q/main-menu-cursor.png",
-      },
-      // The menu cards' plaques, the panel titles and the single-player labels
-      // (formerly SVG-defs art) are manifest sprites now — the pseudo and SVG
-      // machinery below only serves what the manifest does not yet cover: the
-      // debug card, and the focus cursors on still-HTML text rows.
-      pseudoSelectors: [
-        "#quake-debug-card",
-        ".quake-option-toggle", ".quake-option-crosshair", ".quake-option-glyph-detail",
-        ".quake-option-glyph-palette", "#quake-options-back", "#quake-about-back",
-        "#quake-multiplayer-field", "#quake-multiplayer-create", "#quake-multiplayer-back",
-      ],
-      // ALL bitmap text renders as conchars sprite art (one textured quad per
-      // character, at the element's own layout box) in a density detail
-      // layer. Stamping the runs into the grid instead — one character per
-      // ~8px cell — was measured as the text regression: the boot log, the
-      // panel labels and the multiplayer form all shrank to a third of their
-      // CSS-authored `--quake-bitmap-glyph-size` and their alignment with
-      // the input art broke. The quads keep the exact boxes CSS laid out, so
-      // size, the console's left-edge column and the form's label/input
-      // rows all match the pre-grid rendering. The path reads dim by nature
-      // — thin glyph strokes land on sparse ramp characters — which the
-      // overlay's ink-coverage compensation (below) corrects; the rules
-      // themselves stay at full brightness. First-match-wins keeps the
-      // title rule from double-emitting through the catch-all.
-      // `glyphScale`: only the display TITLES are drawn inside their cells
-      // (0.75 — a conchars glyph inks its whole cell, so at 1.0 a 40px title
-      // reads far heavier than the ~26px caps the shipped title had). Copy-
-      // size text stays at the full cell: a 16px glyph only spans ~6 detail
-      // rows, and shrinking it below that drops strokes and shatters the
-      // letterforms (measured at 0.8).
-      // Text gets its OWN density, higher than the art's. A 16px conchars glyph
-      // spans only ~6 rows of a density-4 detail layer, which is what made the
-      // letterforms read soft and mushy — and made row brightness wobble with
-      // grid phase. Text quads cover a small fraction of the screen, so the
-      // extra resolution is cheap where the art's would not be.
-      // `?glyphImageTextDensity=`.
+      // The INTERMISSION card is the one surface still built as DOM (it is
+      // gameplay-only and assembled at show time): its bitmap runs render as
+      // conchars quads exactly as all menu text used to. Everything else is
+      // manifest text now (see the overlay's emitManifestTexts).
       textArt: [{
-        selector: ".quake-bitmap-text--title .quake-bitmap-run",
-        layer: 2,
-        density: quakeUrlNumberParam(quakeStartupUrlParams, "glyphImageTextDensity", 1, 16) ?? 10,
-        glyphScale: 0.75,
-      }, {
-        selector: ".quake-bitmap-run",
+        selector: "#quake-intermission .quake-bitmap-run",
         layer: 2,
         density: quakeUrlNumberParam(quakeStartupUrlParams, "glyphImageTextDensity", 1, 16) ?? 10,
       }],
+      // Manifest text shares the text density knob. `?glyphImageTextDensity=`.
+      manifestTextDensity: quakeUrlNumberParam(quakeStartupUrlParams, "glyphImageTextDensity", 1, 16) ?? 10,
       // Ink-coverage compensation strength for the art/text detail layers —
       // `?glyphImageInkComp=` (0 disables, 1 full). See the overlay option.
       inkCompensation: quakeUrlNumberParam(quakeStartupUrlParams, "glyphImageInkComp", 0, 1) ?? 0.7,
@@ -2024,13 +1862,28 @@ const menu = createQuakeMenuController({
   enabled: QUAKE_MENU_ENABLED,
   host,
   controls,
-  mainMenu,
-  mainMenuArt,
-  singlePlayerPanel,
-  multiplayerPanel,
-  levelPanel,
-  aboutPanel,
-  optionsPanel,
+  // The same manifest the overlay draws from — hit-testing and rendering
+  // share one geometry source.
+  manifest: quakeMenuManifest,
+  optionRows: () => quakeOptions.rows(),
+  levels: () =>
+    quakeAssetCatalog.selectableLevels().map((level) => ({
+      map: level.mapName,
+      code: level.mapName.toUpperCase(),
+      title: quakeAssetCatalog.mapTitle(level),
+      current: level.mapName === currentMapName,
+    })),
+  multiplayerControls: () =>
+    ([
+      ["mp-name", multiplayerNameInput],
+      ["mp-color", multiplayerColorInput],
+      ["mp-map", multiplayerMapSelect],
+      ["mp-fraglimit", multiplayerFragLimitInput],
+      ["mp-maxplayers", multiplayerMaxPlayersInput],
+    ] as const)
+      .filter((entry): entry is [typeof entry[0], HTMLElement] => entry[1] !== null)
+      .map(([id, element]) => ({ id, element })),
+  onMultiplayerSubmit: startQuakeMultiplayerFromMenu,
   onSelectNewGame: startQuakeNewGame,
   onShowMultiplayer: syncQuakeMultiplayerMenu,
   onLoadGame: () => quakeSaveSession.load(),
@@ -2071,7 +1924,7 @@ const quakeRoute = createQuakeRouteFlow<QuakeCssView>({
   viewToUrlView: quakeCameraView.urlViewFromCssView,
 });
 let quakeStatsOverlay!: QuakeStatsOverlayFlow;
-let quakeEnemyAnimationsEnabled = debugEnableAnimationsOption?.checked ?? true;
+let quakeEnemyAnimationsEnabled = true;
 const quakeDebugPanelFlow = createQuakeDebugPanelFlow({
   clearDebugUrlParams: clearQuakeDebugUrlParams,
   currentMapName: () => currentMapName,
@@ -2080,24 +1933,24 @@ const quakeDebugPanelFlow = createQuakeDebugPanelFlow({
     rotX: scene.camera.state.rotX ?? 90,
     rotY: scene.camera.state.rotY ?? 270,
   }),
-  debugEnabledOption,
-  debugEnableAnimationsOption,
-  debugPanel,
-  debugShowFpsOption,
-  debugShowLabelsOption,
-  debugShowMenuOption,
-  debugShowOutlinesOption,
-  debugStack,
-  debugShowTexturesOption,
+  debugEnabledOption: null,
+  debugEnableAnimationsOption: null,
+  debugPanel: null,
+  debugShowFpsOption: null,
+  debugShowLabelsOption: null,
+  debugShowMenuOption: null,
+  debugShowOutlinesOption: null,
+  debugStack: null,
+  debugShowTexturesOption: null,
   debugStatElements,
   hideMainMenu: () => menu.hideMainMenu(),
-  initialHideTextures: debugShowTexturesOption ? !debugShowTexturesOption.checked : false,
+  initialHideTextures: false,
   initialAnimationsEnabled: quakeEnemyAnimationsEnabled,
   initialMode: quakeUrlBoolean("debugPolys"),
-  initialShowFps: debugShowFpsOption?.checked ?? false,
-  initialShowLabels: debugShowLabelsOption?.checked ?? false,
-  initialShowMenu: debugShowMenuOption?.checked ?? true,
-  initialShowOutlines: debugShowOutlinesOption?.checked ?? false,
+  initialShowFps: true,
+  initialShowLabels: false,
+  initialShowMenu: true,
+  initialShowOutlines: false,
   pickupMeshCounts: () => {
     const pickupMeshes = Array.from(document.querySelectorAll<HTMLElement>(".polycss-mesh.pickup"));
     return {
@@ -2176,7 +2029,7 @@ const quakeDebugRecordingSnapshot = createQuakeDebugRecordingSnapshotFlow({
     alwaysRun: quakeAlwaysRun,
     animationsEnabled: quakeEnemyAnimationsEnabled,
     attackDown: quakePointerGameplay.isAttackDown(),
-    crosshair: crosshairOption?.checked ?? true,
+    crosshair: getQuakeMenuSceneState().hud.crosshair !== "off",
     debugFly: document.body.classList.contains("quake-debug-fly"),
     invertMouse: quakeInvertMouse,
     mobileControls: quakePointerGameplay.isMobileAvailable(),
@@ -2296,49 +2149,36 @@ const quakeEffectSpriteFlow: QuakeEffectSpriteFlow = impactParticlesLayer
 quakeImpactParticleFlow.setEnabled(quakeImpactParticles);
 quakeEffectSpriteFlow.setEnabled(quakeImpactParticles);
 const quakeOptions = createQuakeOptionsFlow({
-  alwaysRun: () => quakeAlwaysRun,
-  alwaysRunOption,
   audioMuted: () => audio.isMuted(),
-  crosshair,
-  crosshairOption,
-  crosshairOptionValue,
   damageDisabled: () => quakeDamageDisabled,
-  disableDamageOption,
-  disableEnemiesOption,
-  disableSoundOption,
   dynamicLightingEnabled: () => quakeDynamicLighting,
-  dynamicLightingOption,
   renderModeIsGlyph: () => quakeRenderMode === "glyphcss",
-  renderModeOption,
-  glyphDetailOption,
-  glyphDetailOptionValue,
+  enemiesDisabled: () => quakeEnemiesDisabled,
+  enemiesFrozen: () => quakeEnemiesFrozen,
+  attacksDisabled: () => quakeAttacksDisabled,
+  impactParticlesEnabled: () => quakeImpactParticles,
+  invertMouse: () => quakeInvertMouse,
+  showOutlines: () => quakeDebugPanelFlow.showOutlinesEnabled(),
+  statsPanelEnabled: () => quakeDebugPanelFlow.isModeEnabled(),
+  showFps: () => quakeDebugPanelFlow.showFpsEnabled(),
   glyphDetailLabel: quakeGlyphDetailLabel,
   cycleGlyphDetail: cycleQuakeGlyphDetail,
-  glyphPaletteOption,
-  glyphPaletteOptionValue,
   glyphPaletteLabel: quakeGlyphPaletteLabel,
   cycleGlyphPalette: cycleQuakeGlyphPalette,
-  enemiesDisabled: () => quakeEnemiesDisabled,
-  impactParticlesEnabled: () => quakeImpactParticles,
-  impactParticlesOption,
-  invertMouse: () => quakeInvertMouse,
-  invertMouseOption,
-  mountBitmapText: mountQuakeBitmapText,
-  setAlwaysRun: setQuakeAlwaysRun,
+  unlockAudio: () => audio.unlock(),
   setAudioMuted: setQuakeAudioMuted,
   setDamageDisabled: setQuakeDamageDisabled,
   setDynamicLighting: setQuakeDynamicLighting,
   setRenderMode: setQuakeRenderMode,
   setEnemiesDisabled: setQuakeEnemiesDisabled,
+  setEnemiesFrozen: setQuakeEnemiesFrozen,
+  setAttacksDisabled: setQuakeAttacksDisabled,
   setImpactParticles: setQuakeImpactParticles,
   setInvertMouse: setQuakeInvertMouse,
-  setShowGun: setQuakeShowGun,
+  setShowOutlines: (enabled) => quakeDebugPanelFlow.setShowOutlines(enabled),
+  setStatsPanel: (enabled) => quakeDebugPanelFlow.setMode(enabled),
+  setShowFps: (enabled) => quakeDebugPanelFlow.setShowFps(enabled),
   setStaticLightingClass: (staticLighting) => setQuakeBodyClass("quake-static-lighting", staticLighting),
-  showGun: () => quakeShowGun,
-  showGunOption,
-  syncDebugControls: () => quakeDebugPanelFlow.syncControls(),
-  syncDebugFlyMode: syncQuakeDebugFlyMode,
-  unlockAudio: () => audio.unlock(),
 });
 const quakeHudFlow = createQuakeHudFlow({
   bonusOverlay,
@@ -2626,7 +2466,8 @@ quakePointerGameplay = createQuakePointerGameplayFlow({
   isDebugFlyModeActive: isQuakeDebugFlyModeActive,
   isDeathUnlockControlsEndTraceSuppressed: isQuakeDeathUnlockControlsEndTraceSuppressed,
   isDisposed: () => quakeAppDisposed,
-  isInteractiveOverlayTarget: (target) => target instanceof Node && debugPanel?.contains(target) === true,
+  isInteractiveOverlayTarget: (target) =>
+    target instanceof Node && document.getElementById("quake-debug-panel")?.contains(target) === true,
   isPlayerDead: () => quakePlayerDead,
   mobileRoot: quakeApp,
   onAvailabilityChange: () => quakeStatsOverlay.syncAvailability(),
@@ -2653,7 +2494,7 @@ quakeStatsOverlay = createQuakeStatsOverlayFlow({
   isDisposed: () => quakeAppDisposed,
   isLoading: () => quakeAppLoading,
   isMobileAvailable: quakePointerGameplay.isMobileAvailable,
-  root: quakeMenu ?? quakeApp,
+  root: quakeApp,
   showFpsEnabled: () => quakeDebugPanelFlow.showFpsEnabled(),
 });
 
@@ -2856,7 +2697,6 @@ const quakeLoading = createQuakeLoadingFlow({
   clearMoveInput: quakeGameplayInput.clearMoveInput,
   clearWeaponViewPunch: quakeCameraView.clearWeaponViewPunch,
   currentMapName: () => currentMapName,
-  dom: quakeDom,
   hasCurrentResult: () => currentResult !== null,
   hideStatsOverlay: quakeStatsOverlay.hide,
   initialLoading: quakeAppLoading,
@@ -2869,7 +2709,6 @@ const quakeLoading = createQuakeLoadingFlow({
     quakeAppLoading = loading;
   },
   previewEnabled: QUAKE_LOADING_PREVIEW_ENABLED,
-  renderBitmapText: mountQuakeBitmapText,
   setControlsLoading: () => controls.update({ moveEnabled: false, jumpEnabled: false, gravity: 0 }),
   syncCrosshairTarget: syncQuakeCrosshairTarget,
   syncDebugFlyMode: syncQuakeDebugFlyMode,
@@ -3203,7 +3042,7 @@ function resumeQuakeGameplayTimers(pausedForMs: number): void {
 
 function setQuakeAudioMuted(muted: boolean): void {
   audio.setMuted(muted);
-  quakeOptions.syncAudioToggle();
+  menu.syncOptionTexts();
   if (!muted) void quakeSoundManifest.ensureLoaded();
 }
 
@@ -3223,37 +3062,29 @@ function toggleQuakeAudioMutedShortcut(): void {
 function setQuakeEnemiesDisabled(disabled: boolean): void {
   quakeEnemiesDisabled = disabled;
   shootables.syncMonsterRuntime();
-  quakeOptions.syncControls();
+  menu.syncOptionTexts();
 }
 
 function setQuakeDamageDisabled(disabled: boolean): void {
   quakeDamageDisabled = disabled;
-  quakeOptions.syncControls();
+  menu.syncOptionTexts();
 }
 
 function setQuakeAttacksDisabled(disabled: boolean): void {
   quakeAttacksDisabled = disabled;
   shootables.syncMonsterRuntime();
-  syncQuakeDebugDisableAttacksOption();
+  menu.syncOptionTexts();
 }
 
 function setQuakeEnemiesFrozen(frozen: boolean): void {
   quakeEnemiesFrozen = frozen;
   shootables.syncMonsterRuntime();
-  syncQuakeDebugFreezeEnemiesOption();
-}
-
-function syncQuakeDebugFreezeEnemiesOption(): void {
-  if (debugFreezeEnemiesOption) debugFreezeEnemiesOption.checked = quakeEnemiesFrozen;
-}
-
-function syncQuakeDebugDisableAttacksOption(): void {
-  if (debugDisableAttacksOption) debugDisableAttacksOption.checked = quakeAttacksDisabled;
+  menu.syncOptionTexts();
 }
 
 function setQuakeDynamicLighting(enabled: boolean): void {
   quakeDynamicLighting = enabled;
-  quakeOptions.syncDynamicLightingOption();
+  menu.syncOptionTexts();
 }
 
 // ASCII (glyph) detail presets — cell size in px (smaller = finer + slower).
@@ -3357,13 +3188,12 @@ function setQuakeImpactParticles(enabled: boolean): void {
   quakeImpactParticles = enabled;
   quakeImpactParticleFlow.setEnabled(enabled);
   quakeEffectSpriteFlow.setEnabled(enabled);
-  quakeOptions.syncImpactParticlesOption();
+  menu.syncOptionTexts();
 }
 
 function setQuakeShowGun(enabled: boolean): void {
   quakeShowGun = enabled;
   syncQuakeViewmodelVisibility();
-  quakeOptions.syncControls();
 }
 
 function syncQuakeViewmodelVisibility(): void {
@@ -3484,13 +3314,7 @@ function syncQuakeClickToPlayCenterPrint(visible: boolean): void {
   if (!quakeMultiplayerSpectating) quakeTextPresentation.clearCenterPrint();
 }
 
-function handleQuakeDebugDisableAttacksOptionChange(event: Event): void {
-  setQuakeAttacksDisabled((event.currentTarget as HTMLInputElement).checked);
-}
 
-function handleQuakeDebugFreezeEnemiesOptionChange(event: Event): void {
-  setQuakeEnemiesFrozen((event.currentTarget as HTMLInputElement).checked);
-}
 
 function quitQuakeToMainMenu(): void {
   quakePlayerLifecycle.quitToMainMenu();
@@ -3515,18 +3339,16 @@ function respawnQuakePlayerFromFlyMode(): boolean {
 function setQuakeInvertMouse(invert: boolean): void {
   quakeInvertMouse = invert;
   controls.update({ invertY: invert });
-  quakeOptions.syncControls();
+  menu.syncOptionTexts();
 }
 
 function setQuakeAlwaysRun(alwaysRun: boolean): void {
   quakeAlwaysRun = alwaysRun;
-  quakeOptions.syncControls();
 }
 
 function syncQuakeOptionControls(): void {
   quakeOptions.syncControls();
-  syncQuakeDebugFreezeEnemiesOption();
-  syncQuakeDebugDisableAttacksOption();
+  menu.syncOptionTexts();
 }
 
 function clearQuakeLevelLoadTimer(): void {
@@ -5910,9 +5732,6 @@ function clearQuakeCrosshairTarget(): void {
   quakeCrosshairInteraction?.clear();
 }
 
-function handleQuakeDebugFlyModeOptionChange(event: Event): void {
-  setQuakeDebugFlyMode((event.currentTarget as HTMLInputElement).checked);
-}
 
 function syncQuakeHazards(
   origin = controls.getOrigin(),
@@ -6100,18 +5919,6 @@ function disposeQuakeApp(): void {
   quakeHudFlow.dispose();
   quakeCrosshairInteraction?.dispose();
   quakeOptions.dispose();
-  disposeQuakeMultiplayerControlGlyphs();
-  multiplayerForm?.removeEventListener("submit", handleQuakeMultiplayerFormSubmit);
-  debugShowMenuOption?.removeEventListener("change", quakeDebugPanelFlow.handleShowMenuOptionChange);
-  debugEnabledOption?.removeEventListener("change", quakeDebugPanelFlow.handleEnabledOptionChange);
-  debugEnableAnimationsOption?.removeEventListener("change", quakeDebugPanelFlow.handleEnableAnimationsOptionChange);
-  debugFreezeEnemiesOption?.removeEventListener("change", handleQuakeDebugFreezeEnemiesOptionChange);
-  debugDisableAttacksOption?.removeEventListener("change", handleQuakeDebugDisableAttacksOptionChange);
-  debugShowFpsOption?.removeEventListener("change", quakeDebugPanelFlow.handleShowFpsOptionChange);
-  debugShowTexturesOption?.removeEventListener("change", quakeDebugPanelFlow.handleShowTexturesOptionChange);
-  debugFlyModeOption?.removeEventListener("change", handleQuakeDebugFlyModeOptionChange);
-  debugShowOutlinesOption?.removeEventListener("change", quakeDebugPanelFlow.handleShowOutlinesOptionChange);
-  debugShowLabelsOption?.removeEventListener("change", quakeDebugPanelFlow.handleShowLabelsOptionChange);
   if (quakeDebugRecordingPanelEnabled) {
     debugRecordingButton?.removeEventListener("click", handleQuakeDebugRecordingButtonClick);
   }
@@ -6194,7 +6001,6 @@ const quakeMapLoader = createQuakeAppMapLoader<QuakeCssView, QuakeViewmodelModel
     currentMapName = mapName;
     menu.setCurrentLevel(mapName);
     if (multiplayerMapSelect) multiplayerMapSelect.value = mapName;
-    syncQuakeMultiplayerControlGlyph(multiplayerMapSelect);
   },
   preloadMapAssets: preloadQuakeMapModelRenderBundleAssets,
   preloadSceneAssets: preloadQuakeSceneModelRenderBundleAssets,
@@ -6287,19 +6093,6 @@ window.addEventListener("popstate", handleQuakePopState);
 window.addEventListener("resize", handleViewportResize);
 window.visualViewport?.addEventListener("resize", handleViewportResize);
 quakePointerGameplay.attach();
-quakeOptions.attach();
-attachQuakeMultiplayerControlGlyphs();
-multiplayerForm?.addEventListener("submit", handleQuakeMultiplayerFormSubmit);
-debugShowMenuOption?.addEventListener("change", quakeDebugPanelFlow.handleShowMenuOptionChange);
-debugEnabledOption?.addEventListener("change", quakeDebugPanelFlow.handleEnabledOptionChange);
-debugEnableAnimationsOption?.addEventListener("change", quakeDebugPanelFlow.handleEnableAnimationsOptionChange);
-debugFreezeEnemiesOption?.addEventListener("change", handleQuakeDebugFreezeEnemiesOptionChange);
-debugDisableAttacksOption?.addEventListener("change", handleQuakeDebugDisableAttacksOptionChange);
-debugShowFpsOption?.addEventListener("change", quakeDebugPanelFlow.handleShowFpsOptionChange);
-debugShowTexturesOption?.addEventListener("change", quakeDebugPanelFlow.handleShowTexturesOptionChange);
-debugFlyModeOption?.addEventListener("change", handleQuakeDebugFlyModeOptionChange);
-debugShowOutlinesOption?.addEventListener("change", quakeDebugPanelFlow.handleShowOutlinesOptionChange);
-debugShowLabelsOption?.addEventListener("change", quakeDebugPanelFlow.handleShowLabelsOptionChange);
 if (quakeDebugRecordingPanelEnabled) {
   debugRecordingButton?.addEventListener("click", handleQuakeDebugRecordingButtonClick);
 }
@@ -6308,8 +6101,6 @@ controls.addEventListener("end", quakeGameplayInput.clearCrouchInput);
 
 syncQuakeHud();
 syncQuakeOptionControls();
-if (multiplayerPanel) mountQuakeBitmapText(multiplayerPanel);
-if (debugPanel) mountQuakeBitmapText(debugPanel);
 installQuakeAppDebugHooks();
 
 (window as typeof window & { __cssQuakeShowLoadingError?: (error: unknown) => void })

@@ -6,40 +6,81 @@ import { Window } from "happy-dom";
 import { importTsModule } from "../importTsModule.mjs";
 
 const moduleGlobals = installWindowGlobals(new Window());
+// One bundle: the controller reads the module-singleton scene state, so the
+// manifest/state helpers must come from the SAME bundle instance.
 const {
   createQuakeMenuController,
-} = await importTsModule("src/runtime/menu.ts");
+  createQuakeMenuSceneManifest,
+  quakeMenuSceneFrame,
+  getQuakeMenuSceneState,
+  updateQuakeMenuSceneState,
+} = await importTsModule("test/runtime/menuTestEntry.ts");
 
 after(() => {
   moduleGlobals.restore();
 });
 
+/** Landing hotspot geometry, in host px, from the same manifest math the
+ *  controller hit-tests with. */
+function landingPx(qx, qy) {
+  const frame = quakeMenuSceneFrame(window.innerWidth, window.innerHeight);
+  return {
+    x: frame.x + (qx * frame.w) / 320,
+    y: frame.y + (qy * frame.h) / 200,
+  };
+}
+
 test("main menu background clicks keep the menu open", () => {
   const harness = createMenuHarness();
   try {
     harness.menu.showMainMenu();
+    assert.equal(harness.menu.isMainMenuOpen(), true);
 
-    harness.click(harness.mainMenu, 500, 500);
+    // Far right of the card — no landing hotspot there.
+    const point = landingPx(300, 180);
+    harness.pointerDown(point.x, point.y);
 
     assert.equal(harness.menu.isMainMenuOpen(), true);
-    assert.equal(harness.mainMenu.hidden, false);
+    assert.equal(getQuakeMenuSceneState().screen, "landing");
     assert.equal(document.body.classList.contains("quake-menu-open"), true);
   } finally {
     harness.restore();
   }
 });
 
-test("main menu item clicks still activate the selected row", () => {
+test("main menu item clicks activate the row's hotspot", () => {
   const harness = createMenuHarness();
   try {
     harness.menu.showMainMenu();
 
-    harness.click(harness.mainMenu, 40, 74);
+    // The HELP row: manifest rect y 92..112, x 54..129 (q-units).
+    const point = landingPx(80, 102);
+    harness.pointerDown(point.x, point.y);
 
     assert.equal(harness.menu.isMainMenuOpen(), false);
     assert.equal(harness.menu.isMenuPanelOpen(), true);
-    assert.equal(harness.aboutPanel.hidden, false);
+    assert.equal(getQuakeMenuSceneState().screen, "help");
     assert.equal(document.body.classList.contains("quake-menu-open"), true);
+  } finally {
+    harness.restore();
+  }
+});
+
+test("keyboard selection walks the hotspots and Enter activates", () => {
+  const harness = createMenuHarness();
+  try {
+    harness.menu.showMainMenu();
+    assert.equal(getQuakeMenuSceneState().activeItem, "single-player");
+
+    harness.key("ArrowDown");
+    harness.key("ArrowDown");
+    assert.equal(getQuakeMenuSceneState().activeItem, "options");
+
+    harness.key("Enter");
+    assert.equal(getQuakeMenuSceneState().screen, "options");
+
+    harness.key("Escape");
+    assert.equal(getQuakeMenuSceneState().screen, "landing");
   } finally {
     harness.restore();
   }
@@ -52,100 +93,43 @@ function createMenuHarness() {
   const controls = createControls();
   const host = document.createElement("div");
   host.tabIndex = 0;
-
-  const mainMenu = document.createElement("div");
-  mainMenu.id = "quake-main-menu";
-  mainMenu.tabIndex = -1;
-  mainMenu.hidden = true;
-
-  const mainMenuArt = document.createElement("div");
-  mainMenu.append(mainMenuArt);
-
-  mainMenuArt.append(
-    mainMenuItem("single-player", rect(20, 20, 180, 44)),
-    mainMenuItem("help", rect(20, 60, 180, 84)),
-  );
-
-  const singlePlayerPanel = panel("quake-single-player-panel");
-  const multiplayerPanel = panel("quake-multiplayer-panel");
-  const levelPanel = panel("quake-level-panel");
-  const aboutPanel = panel("quake-about-panel");
-  const optionsPanel = panel("quake-options-panel");
-
-  document.body.append(
-    host,
-    mainMenu,
-    singlePlayerPanel,
-    multiplayerPanel,
-    levelPanel,
-    aboutPanel,
-    optionsPanel,
-  );
+  document.body.append(host);
 
   const menu = createQuakeMenuController({
     enabled: true,
     host,
     controls,
-    mainMenu,
-    mainMenuArt,
-    singlePlayerPanel,
-    multiplayerPanel,
-    levelPanel,
-    aboutPanel,
-    optionsPanel,
+    manifest: createQuakeMenuSceneManifest(),
     isMultiplayerEnabled: () => true,
     isQuitEnabled: () => false,
     clearCrosshairTarget: () => undefined,
     syncCrosshairTarget: () => undefined,
   });
 
+  // The boot "pending" dim blocks pointer activation by design; the route
+  // flow clears it once startup settles — simulate that here.
+  menu.showMainMenu();
+  updateQuakeMenuSceneState({ pending: false, deferred: false });
+
   return {
-    aboutPanel,
-    click: (target, clientX, clientY) => {
-      target.dispatchEvent(new window.MouseEvent("click", {
+    menu,
+    pointerDown: (clientX, clientY) => {
+      document.body.dispatchEvent(new window.MouseEvent("pointerdown", {
         bubbles: true,
         cancelable: true,
+        button: 0,
         clientX,
         clientY,
       }));
     },
-    mainMenu,
-    menu,
+    key: (code) => {
+      menu.handleKeyDown(new window.KeyboardEvent("keydown", { code, cancelable: true }));
+    },
     restore: () => {
       menu.dispose();
       document.body.replaceChildren();
       document.body.className = "";
     },
-  };
-}
-
-function mainMenuItem(action, bounds) {
-  const item = document.createElement("div");
-  item.className = "quake-main-menu-item quake-main-menu-item-selectable";
-  item.setAttribute("data-quake-main-menu-action", action);
-  item.getBoundingClientRect = () => bounds;
-  return item;
-}
-
-function panel(id) {
-  const element = document.createElement("section");
-  element.id = id;
-  element.tabIndex = -1;
-  element.hidden = true;
-  return element;
-}
-
-function rect(left, top, right, bottom) {
-  return {
-    bottom,
-    height: bottom - top,
-    left,
-    right,
-    toJSON: () => undefined,
-    top,
-    width: right - left,
-    x: left,
-    y: top,
   };
 }
 
@@ -177,6 +161,7 @@ function installWindowGlobals(window) {
     ["HTMLAnchorElement", window.HTMLAnchorElement],
     ["HTMLButtonElement", window.HTMLButtonElement],
     ["HTMLElement", window.HTMLElement],
+    ["KeyboardEvent", window.KeyboardEvent],
     ["MouseEvent", window.MouseEvent],
     ["Node", window.Node],
     ["window", window],

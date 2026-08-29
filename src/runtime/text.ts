@@ -1,4 +1,4 @@
-import { mountQuakeBitmapText } from "./bitmapText";
+import { updateQuakeMenuSceneState } from "./menuSceneState";
 
 const QUAKE_NOTIFY_MAX_LINES = 4;
 const QUAKE_TEXT_LINE_CHARS = 40;
@@ -28,12 +28,14 @@ interface QuakeNotifyLine {
   text: string;
 }
 
-export function createQuakeTextController(options: {
-  centerPrintRoot: HTMLElement | null;
-  notifyRoot: HTMLElement | null;
-}): QuakeTextController {
-  const { centerPrintRoot, notifyRoot } = options;
+/**
+ * Notify/centerprint as DATA: lines land in the scene state and the glyph
+ * overlay draws them at the manifest's gameplay-text layout — the DOM roots
+ * (and the per-line bitmap spans they held) are gone.
+ */
+export function createQuakeTextController(): QuakeTextController {
   let notifyLines: QuakeNotifyLine[] = [];
+  let centerLines: string[] = [];
   let notifyTimer: number | null = null;
   let centerPrintTimer: number | null = null;
 
@@ -59,20 +61,13 @@ export function createQuakeTextController(options: {
   };
 
   const renderNotify = (): void => {
-    if (!notifyRoot) return;
-    notifyRoot.replaceChildren();
-    notifyRoot.hidden = notifyLines.length === 0;
-    for (const line of notifyLines) {
-      notifyRoot.append(createBitmapTextLine(line.text, "quake-notify-line"));
-    }
+    updateQuakeMenuSceneState({ notifyLines: notifyLines.map((line) => line.text) });
   };
 
   const clearNotify = (): void => {
     clearNotifyTimer();
     notifyLines = [];
-    if (!notifyRoot) return;
-    notifyRoot.replaceChildren();
-    notifyRoot.hidden = true;
+    renderNotify();
   };
 
   const setNotify = (text: string): void => {
@@ -89,19 +84,13 @@ export function createQuakeTextController(options: {
 
   const clearCenterPrint = (): void => {
     clearCenterPrintTimer();
-    if (!centerPrintRoot) return;
-    centerPrintRoot.replaceChildren();
-    centerPrintRoot.hidden = true;
+    centerLines = [];
+    updateQuakeMenuSceneState({ centerLines });
   };
 
   const setCenterPrint = (text: string): void => {
-    if (!centerPrintRoot) return;
-    const lines = quakeTextLines(text);
-    centerPrintRoot.replaceChildren();
-    centerPrintRoot.hidden = lines.length === 0;
-    for (const line of lines) {
-      centerPrintRoot.append(createBitmapTextLine(line, "quake-centerprint-line"));
-    }
+    centerLines = quakeTextLines(text);
+    updateQuakeMenuSceneState({ centerLines });
   };
 
   return {
@@ -124,7 +113,7 @@ export function createQuakeTextController(options: {
     centerPrint: (text, centerPrintOptions = {}) => {
       clearCenterPrintTimer();
       setCenterPrint(text);
-      if (!centerPrintRoot || centerPrintRoot.hidden) return;
+      if (!centerLines.length) return;
       const durationMs = quakePositiveDuration(centerPrintOptions.durationMs, QUAKE_CENTERPRINT_DEFAULT_MS);
       centerPrintTimer = window.setTimeout(clearCenterPrint, durationMs);
     },
@@ -134,14 +123,6 @@ export function createQuakeTextController(options: {
     },
     setNotify,
   };
-}
-
-function createBitmapTextLine(text: string, className: string): HTMLElement {
-  const line = document.createElement("span");
-  line.className = `${className} quake-bm-label quake-bm-anywhere`;
-  line.textContent = text;
-  mountQuakeBitmapText(line);
-  return line;
 }
 
 function quakeTextLines(text: string): string[] {

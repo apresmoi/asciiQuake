@@ -3,9 +3,24 @@ import type { Polygon } from "@layoutit/polycss";
 import {
   QUAKE_MENU_SCENE_FRAME_W,
   QUAKE_MENU_SCENE_FRAME_H,
+  QUAKE_CONSOLE_GAP,
+  QUAKE_CONSOLE_GLYPH,
+  QUAKE_CONSOLE_LEFT,
+  QUAKE_CONSOLE_PITCH,
+  QUAKE_CONSOLE_PROGRESS_H,
+  QUAKE_CONSOLE_TOP,
+  QUAKE_MENU_LEVEL_CODE_X,
+  QUAKE_MENU_LEVEL_TITLE_X,
+  QUAKE_MENU_MP_FAILURE_TEXTS,
+  quakeConsoleProgressWidth,
+  quakeMenuLevelRowY,
   quakeMenuSceneFrame,
+  quakeMenuSceneHotspotsFor,
+  quakeMenuVersionPos,
+  quakeNotifyLayout,
   type QuakeMenuSceneManifest,
   type QuakeMenuSceneSpriteDef,
+  type QuakeMenuSceneTextDef,
 } from "./menuSceneManifest";
 import { getQuakeMenuSceneState, subscribeQuakeMenuSceneState } from "../menuSceneState";
 import { QUAKE_HUD_SLOT_DEFINITIONS, QUAKE_HUD_STATUS_ROW_Y } from "../hud";
@@ -297,12 +312,27 @@ export interface QuakeGlyphUiOverlayOptions {
     brightness?: number;
     glyphScale?: number;
   }[];
+  /** Detail density for MANIFEST text (`?glyphImageTextDensity=`), default 10 —
+   *  same meaning as a textArt rule's `density`. */
+  readonly manifestTextDensity?: number;
 }
 
 /** Quake's console character sheet: a 16x16 grid of glyph cells; the high bit
  *  selects the brown "alt" variant baked into the lower half. */
 const CONCHARS_URL = "/q/conchars.png";
 const CONCHARS_GRID = 16;
+/** 1x1 opaque white PNG — the texture for SOLID quads (progress bar, input
+ *  borders): the rasterizer needs a texture, and a white texel times the
+ *  quad's tint IS the flat colour. */
+const SOLID_TEXTURE =
+  "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4//8/AwAI/AL+p5qgoAAAAABJRU5ErkJggg==";
+/** Spinner cursor frames: conchars cells 12 and 13, 250ms each — the CSS
+ *  `quake-menu-option-cursor-frame` animation as data. */
+const SPINNER_FRAME_MS = 250;
+const SPINNER_GLYPHS = [12, 13] as const;
+function spinnerGlyph(now: number): number {
+  return SPINNER_GLYPHS[Math.floor(now / SPINNER_FRAME_MS) % SPINNER_GLYPHS.length]!;
+}
 
 export interface QuakeGlyphUiOverlay {
   readonly element: HTMLElement;
@@ -422,6 +452,7 @@ export function createQuakeGlyphUiOverlay(
   const { host: hostEl } = options;
   const maxCells = Math.max(256, options.maxCells ?? DEFAULT_MAX_CELLS);
   const minCellPx = Math.max(2, options.minCellPx ?? DEFAULT_MIN_CELL_PX);
+  const manifestTextDensity = Math.max(1, Math.round(options.manifestTextDensity ?? 10));
 
   function readUrl(el: HTMLElement, isImg: boolean, declared?: string): string {
     if (el.dataset.glyphTexture) return el.dataset.glyphTexture;
@@ -939,12 +970,14 @@ export function createQuakeGlyphUiOverlay(
     regions: { u0: number; v0: number; u1: number; v1: number }[] | null;
     density: number;
     brightness: number;
+    /** Explicit tint (a SOLID quad's flat colour); overrides the grey. */
+    tint?: string;
   }
 
   function emitQuad(groups: Map<string, PolyGroup>, q: QuadEmit): void {
     const level = Math.max(0, Math.min(1, q.brightness));
     const channel = Math.round(255 * level).toString(16).padStart(2, "0");
-    const tint = `#${channel}${channel}${channel}`;
+    const tint = q.tint ?? `#${channel}${channel}${channel}`;
     const spanU = q.u1 - q.u0, spanV = q.v1 - q.v0;
     const segmented = !!q.regions && q.density > 1 && spanU > 0 && spanV > 0;
     const key = `d${q.density}${q.density > 1 && !segmented ? "t" : ""}`;
@@ -1444,9 +1477,245 @@ export function createQuakeGlyphUiOverlay(
     }
   }
 
+  /**
+   * Draw one uppercased run of conchars text at host-px coordinates — the
+   * manifest-text replacement for the DOM-traced `emitTextArt` path: the
+   * words and their geometry both arrive as DATA, no element is measured.
+   * `glyphScale` matches the old rules: display sizes (>=30px) draw at 0.75
+   * inside their cell, copy sizes fill it (see the `textArt` option doc).
+   */
+  const MANIFEST_TEXT_LAYER = 2;
+  function drawGlyphRun(
+    groups: Map<string, PolyGroup>,
+    hostBox: DOMRect,
+    text: string,
+    leftPx: number,
+    topPx: number,
+    glyphPx: number,
+    opts: { alt?: boolean; brightness?: number; layer?: number; align?: "left" | "center" | "right" } = {},
+  ): void {
+    if (!text) return;
+    const sheetUrl = ensureTextSheet();
+    if (!sheetUrl) return; // redraws on the sync queued when the sheet is ready
+    const tex = menuTexture(sheetUrl, true);
+    if (!tex.natural) return;
+    const drawn = text.toUpperCase();
+    const advance = glyphPx;
+    let left = leftPx;
+    if (opts.align === "center") left -= (drawn.length * advance) / 2;
+    else if (opts.align === "right") left -= drawn.length * advance;
+    const scale = glyphPx >= 30 ? 0.75 : 1;
+    const side = glyphPx * scale;
+    const pad = (glyphPx - side) / 2;
+    const cx = hostBox.width / 2;
+    const cy = hostBox.height / 2;
+    const z = (opts.layer ?? MANIFEST_TEXT_LAYER) * LAYER_STEP;
+    const cw = 1 / CONCHARS_GRID;
+    const density = manifestTextDensity;
+    for (let i = 0; i < drawn.length; i++) {
+      const char = drawn[i]!;
+      if (char === " ") continue;
+      const glyph = (char.charCodeAt(0) & 127) + (opts.alt ? 128 : 0);
+      const gu = glyph & (CONCHARS_GRID - 1);
+      const gv = glyph >> 4;
+      const gl = left + i * advance + pad;
+      const gt = topPx + pad;
+      emitQuad(groups, {
+        x0: gt - cy, x1: gt + side - cy,
+        y0: gl - cx, y1: gl + side - cx,
+        z,
+        url: sheetUrl,
+        u0: gu * cw, u1: (gu + 1) * cw,
+        v0: gv * cw, v1: (gv + 1) * cw,
+        regions: tex.regions,
+        density,
+        brightness: opts.brightness ?? 1,
+      });
+    }
+  }
+
+  /** A single spinner-cursor glyph (conchars 12/13 ticking at 250ms). */
+  function drawSpinner(
+    groups: Map<string, PolyGroup>,
+    hostBox: DOMRect,
+    leftPx: number,
+    topPx: number,
+    glyphPx: number,
+  ): void {
+    const sheetUrl = ensureTextSheet();
+    if (!sheetUrl) return;
+    const tex = menuTexture(sheetUrl, true);
+    if (!tex.natural) return;
+    const glyph = spinnerGlyph(performance.now());
+    const gu = glyph & (CONCHARS_GRID - 1);
+    const gv = glyph >> 4;
+    const cw = 1 / CONCHARS_GRID;
+    const cx = hostBox.width / 2;
+    const cy = hostBox.height / 2;
+    emitQuad(groups, {
+      x0: topPx - cy, x1: topPx + glyphPx - cy,
+      y0: leftPx - cx, y1: leftPx + glyphPx - cx,
+      z: 3 * LAYER_STEP,
+      url: sheetUrl,
+      u0: gu * cw, u1: (gu + 1) * cw,
+      v0: gv * cw, v1: (gv + 1) * cw,
+      regions: tex.regions,
+      density: manifestTextDensity,
+      brightness: 1,
+    });
+  }
+
+  /** Flat-colour rectangle (host px) — progress bar, control borders. Density 1:
+   *  it lands in the base grid, recolouring cells under it. */
+  function drawSolid(
+    groups: Map<string, PolyGroup>,
+    hostBox: DOMRect,
+    x: number, y: number, w: number, h: number,
+    color: string,
+    layer: number,
+  ): void {
+    const cx = hostBox.width / 2;
+    const cy = hostBox.height / 2;
+    emitQuad(groups, {
+      x0: y - cy, x1: y + h - cy,
+      y0: x - cx, y1: x + w - cx,
+      z: layer * LAYER_STEP,
+      url: SOLID_TEXTURE,
+      u0: 0, u1: 1, v0: 0, v1: 1,
+      regions: null,
+      density: 1,
+      brightness: 1,
+      tint: color,
+    });
+  }
+
+  /**
+   * All manifest-owned TEXT: the active screen's rows, the level list, the
+   * spinner cursor, the boot console (lines, progress bar, action line, the
+   * death card), the version tag, and gameplay notify/centerprint. Geometry
+   * comes from the manifest's baked literals + the scene state's words — the
+   * DOM contributes nothing (the `.quake-bitmap-run` tracing this replaces
+   * served only the intermission card afterwards).
+   */
+  function emitManifestTexts(groups: Map<string, PolyGroup>, hostBox: DOMRect): void {
+    const manifest = options.menu;
+    const st = getQuakeMenuSceneState();
+    const frame = quakeMenuSceneFrame(hostBox.width, hostBox.height);
+    const sx = frame.w / QUAKE_MENU_SCENE_FRAME_W;
+    const sy = frame.h / QUAKE_MENU_SCENE_FRAME_H;
+    const px = (qx: number) => frame.x + qx * sx;
+    const py = (qy: number) => frame.y + qy * sy;
+
+    const screenDef = manifest && st.screen && !st.deferred ? manifest.screens[st.screen] : undefined;
+    if (manifest && screenDef) {
+      const dimmed = manifest.dimmedBrightness;
+      const failure = st.screen === "multiplayer" && st.multiplayerFailure;
+      const texts: readonly QuakeMenuSceneTextDef[] = failure
+        ? QUAKE_MENU_MP_FAILURE_TEXTS
+        : screenDef.texts ?? [];
+      for (const def of texts) {
+        const disabled = !!def.item && st.disabledItems.includes(def.item);
+        if (def.showWhenDisabled && !disabled) continue;
+        const value = def.key ? st.texts[def.key] ?? "" : def.text ?? "";
+        if (!value) continue;
+        let brightness = def.brightness ?? 1;
+        if (st.pending || (disabled && !def.showWhenDisabled)) brightness *= dimmed;
+        else if (def.item && def.item === st.activeItem) brightness *= 1.28;
+        drawGlyphRun(groups, hostBox, value, px(def.x), py(def.y), def.h * sy, {
+          alt: def.alt,
+          brightness,
+          layer: def.layer,
+          align: def.align,
+        });
+      }
+
+      // Level list rows (dynamic — drawn from state, on the measured grid).
+      if (st.screen === "level-select") {
+        st.levels.forEach((level, i) => {
+          const y = py(quakeMenuLevelRowY(i));
+          const active = st.activeItem === `level:${i}`;
+          const brightness = (st.pending ? dimmed : 1) * (active ? 1.28 : 1) * (level.current ? 1 : 0.92);
+          drawGlyphRun(groups, hostBox, level.code, px(QUAKE_MENU_LEVEL_CODE_X), y, 8 * sy, { alt: true, brightness });
+          drawGlyphRun(groups, hostBox, level.title, px(QUAKE_MENU_LEVEL_TITLE_X), y, 8 * sy, { brightness });
+        });
+      }
+
+      // Spinner cursor on the active hotspot (screens without their own
+      // cursor art). Suppressed while a native control is being edited —
+      // matching the CSS that hid the hover cursor over a focused field.
+      if (!st.pending && st.activeItem && st.activeItem !== st.editingItem) {
+        const hotspots = quakeMenuSceneHotspotsFor(manifest, st.screen, st.levels.length, st.multiplayerFailure);
+        const active = hotspots.find((spot) => spot.id === st.activeItem);
+        if (active?.spinner) {
+          drawSpinner(groups, hostBox, px(active.spinner.x), py(active.spinner.y), active.spinner.h * sy);
+        }
+      }
+    }
+
+    // ── The boot console (chrome up) or the death card (gameplay) ──
+    if (st.consoleDeath && !st.chrome) {
+      // "you died": centred, display-size, over the live world (no backdrop).
+      const glyph = 40;
+      const total = st.consoleLines.length;
+      st.consoleLines.forEach((line, i) => {
+        drawGlyphRun(groups, hostBox,
+          line,
+          hostBox.width / 2,
+          hostBox.height / 2 + (i - total / 2) * (glyph + 4),
+          glyph,
+          { align: "center", alt: true });
+      });
+    } else if (st.chrome) {
+      let top = QUAKE_CONSOLE_TOP;
+      for (const line of st.consoleLines) {
+        drawGlyphRun(groups, hostBox, line, QUAKE_CONSOLE_LEFT, top, QUAKE_CONSOLE_GLYPH);
+        top += QUAKE_CONSOLE_PITCH;
+      }
+      if (st.consoleProgress !== null) {
+        // The shipped progress bar as SOLID quads: border, well, fill.
+        const w = quakeConsoleProgressWidth(hostBox.width);
+        const h = QUAKE_CONSOLE_PROGRESS_H;
+        top += QUAKE_CONSOLE_GAP - 2;
+        drawSolid(groups, hostBox, QUAKE_CONSOLE_LEFT, top, w, h, "#523821", 1.2);
+        drawSolid(groups, hostBox, QUAKE_CONSOLE_LEFT + 2, top + 2, w - 4, h - 4, "#120b07", 1.4);
+        const fill = Math.max(0, Math.min(1, st.consoleProgress));
+        if (fill > 0) {
+          drawSolid(groups, hostBox, QUAKE_CONSOLE_LEFT + 4, top + 4, (w - 8) * fill, h - 8, "#d8893f", 1.6);
+        }
+        top += h;
+      }
+      if (st.consoleAction) {
+        top += QUAKE_CONSOLE_GAP;
+        drawGlyphRun(groups, hostBox, st.consoleAction, QUAKE_CONSOLE_LEFT, top, QUAKE_CONSOLE_GLYPH, { alt: true });
+      }
+      // Version tag beside the logo (the old #asciiquake-version span).
+      const version = st.texts["version"];
+      if (version) {
+        const pos = quakeMenuVersionPos(hostBox.width);
+        drawGlyphRun(groups, hostBox, version, pos.x, pos.y, pos.h, { brightness: 0.45 });
+      }
+    }
+
+    // ── Gameplay text: notify (top-left) and centerprint (centred) ──
+    if (!st.chrome && (st.notifyLines.length || st.centerLines.length)) {
+      const layout = quakeNotifyLayout(hostBox.width, hostBox.height);
+      let ny = layout.notify.y;
+      for (const line of st.notifyLines) {
+        drawGlyphRun(groups, hostBox, line, layout.notify.x, ny, layout.notify.h);
+        ny += layout.notify.h;
+      }
+      let cyLine = layout.center.y;
+      for (const line of st.centerLines) {
+        drawGlyphRun(groups, hostBox, line, hostBox.width / 2, cyLine, layout.center.h, { align: "center" });
+        cyLine += layout.center.h;
+      }
+    }
+  }
+
   function buildPolygons(hostBox: DOMRect): Map<string, PolyGroup> {
     const groups = new Map<string, PolyGroup>();
     emitMenuScene(groups, hostBox);
+    emitManifestTexts(groups, hostBox);
     emitHudScene(groups, hostBox);
     emitTextArt(groups, hostBox);
     // World units are CSS px (zoom is pinned to 1 below), with the origin at the
@@ -1679,13 +1948,14 @@ export function createQuakeGlyphUiOverlay(
    * full UI rasterize every throttle window through an entire firefight — so
    * mutations outside the UI trees are ignored outright.
    */
-  const mutationRoots = ["quake-menu", "quake-loading-overlay"]
+  const mutationRoots = ["quake-intermission"]
     .map((id) => document.getElementById(id))
     .filter((el): el is HTMLElement => el !== null);
   function mutationFeedsScene(record: MutationRecord): boolean {
     const target = record.target;
     if (!(target instanceof Node)) return false;
-    if (!mutationRoots.length) return true; // unknown page shape: stay safe
+    // Everything else this scene draws is DATA now — only the intermission
+    // card still builds DOM the tracer reads. No roots: nothing to watch.
     return mutationRoots.some((root) => root === target || root.contains(target));
   }
 
@@ -1743,6 +2013,14 @@ export function createQuakeGlyphUiOverlay(
         for (const def of screenDef.sprites) {
           if (def.role !== "cursor" || def.item !== menuState.activeItem || !def.animate) continue;
           signature += `@${def.id}:${menuAnimationFrame(def, now)};`;
+        }
+        // The text screens' spinner cursor ticks on the same clock.
+        const hotspots = quakeMenuSceneHotspotsFor(
+          manifest, menuState.screen, menuState.levels.length, menuState.multiplayerFailure,
+        );
+        const active = hotspots.find((spot) => spot.id === menuState.activeItem);
+        if (active?.spinner && menuState.activeItem !== menuState.editingItem) {
+          signature += `~${spinnerGlyph(now)};`;
         }
       }
     }

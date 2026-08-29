@@ -94,6 +94,55 @@ export interface QuakeMenuSceneSpriteDef {
 
 export interface QuakeMenuSceneScreenDef {
   readonly sprites: readonly QuakeMenuSceneSpriteDef[];
+  /** Text rows drawn as conchars quads — geometry HERE, dynamic words in the
+   *  scene state's `texts` (looked up by `key`). */
+  readonly texts?: readonly QuakeMenuSceneTextDef[];
+  /** Interactive regions, in keyboard order. The controller hit-tests and
+   *  walks these; the overlay draws the spinner cursor on the active one. */
+  readonly hotspots?: readonly QuakeMenuSceneHotspot[];
+}
+
+/**
+ * One row of conchars text in the 320x200 frame. `h` is the glyph size AND
+ * the per-character advance (conchars glyphs are square, 8x8 on the classic
+ * screen). Text is drawn uppercased, exactly as the shipped CSS's
+ * `text-transform: uppercase` rendered the runs this replaces.
+ *
+ * The positions below were EXTRACTED from the live shipped DOM (one
+ * measurement pass, 1600x900, 2026-08-29): every `.quake-bitmap-run` box was
+ * read with getBoundingClientRect and converted to q-units of the same
+ * 320x200 frame the sprite rects use. They are baked literals, not
+ * hand-authored layout.
+ */
+export interface QuakeMenuSceneTextDef {
+  readonly id: string;
+  /** Anchor: left edge, or centre/right edge under `align`. */
+  readonly x: number;
+  readonly y: number;
+  /** Glyph size (height = advance), q-units. */
+  readonly h: number;
+  /** Static string (drawn as-is, uppercased). */
+  readonly text?: string;
+  /** Dynamic string: scene state `texts[key]`. */
+  readonly key?: string;
+  /** Sample the conchars ALT (bronze) row. */
+  readonly alt?: boolean;
+  /** Item id: dims with `disabledItems`, brightens while active. */
+  readonly item?: string;
+  /** Draw ONLY while `item` is in `disabledItems` (the coming-soon note). */
+  readonly showWhenDisabled?: boolean;
+  readonly align?: "left" | "center" | "right";
+  readonly brightness?: number;
+  readonly layer?: number;
+}
+
+export interface QuakeMenuSceneHotspot {
+  readonly id: string;
+  readonly rect: QuakeMenuSceneRect;
+  /** Spinner-cursor anchor (conchars cols 12/13 at 500ms — the CSS
+   *  `quake-menu-option-cursor-frame` animation as data). Absent = the screen
+   *  draws its own cursor art (the landing/single-player sheet cursor). */
+  readonly spinner?: { readonly x: number; readonly y: number; readonly h: number };
 }
 
 export interface QuakeMenuSceneManifest {
@@ -177,6 +226,204 @@ const LANDING_ITEMS: readonly LandingItemSpec[] = [
   { id: "help", sheet: landingHelpSheet, w: 75, h: 16, offsetY: 2 },
   { id: "quit", sheet: landingQuitSheet, w: 70, h: 20, offsetY: 3 },
 ];
+
+/* ── Panel row layout, extracted from the shipped DOM (see QuakeMenuSceneTextDef doc) ── */
+/** Panel rows: label column and value column, 8-q-unit glyphs. */
+export const QUAKE_MENU_ROW_LABEL_X = 56;
+export const QUAKE_MENU_ROW_VALUE_X = 220;
+export const QUAKE_MENU_ROW_H = 8;
+const ROW_HIT: (y: number) => QuakeMenuSceneRect = (y) => ({ x: 16, y, w: 288, h: 8 });
+const ROW_SPINNER = (y: number) => ({ x: QUAKE_MENU_ROW_LABEL_X - 10, y, h: 8 });
+/** Back button, options/help placement (measured 16, 166.4). */
+const BACK_TEXT: QuakeMenuSceneTextDef = { id: "back", x: 16, y: 166.4, h: 8, text: "Back", alt: true, item: "back" };
+const BACK_HOTSPOT: QuakeMenuSceneHotspot = { id: "back", rect: { x: 16, y: 166.4, w: 32, h: 8 }, spinner: { x: 6, y: 166.4, h: 8 } };
+
+/** OPTIONS rows: group titles at y 32/71, rows on the measured 8-unit grid.
+ *  Row ids match the option row model the controller builds. */
+export interface QuakeMenuOptionsRowLayout { readonly id: string; readonly label: string; readonly y: number; readonly group?: never }
+const OPTIONS_GROUPS: readonly { title: string; y: number }[] = [
+  { title: "Debug", y: 32 },
+  { title: "Gameplay", y: 71 },
+];
+export const QUAKE_MENU_OPTIONS_ROWS: readonly { id: string; label: string; y: number }[] = [
+  { id: "show-outlines", label: "Show outlines", y: 42 },
+  { id: "show-stats", label: "Show stats panel", y: 50 },
+  { id: "show-fps", label: "Show FPS panel", y: 58 },
+  { id: "crosshair", label: "Crosshair", y: 81 },
+  { id: "dynamic-lighting", label: "Dynamic lighting", y: 89 },
+  { id: "render-mode", label: "ASCII render", y: 97 },
+  { id: "glyph-detail", label: "ASCII detail", y: 105 },
+  { id: "glyph-palette", label: "ASCII glyphs", y: 113 },
+  { id: "mute-sounds", label: "Mute sounds", y: 121 },
+  { id: "show-particles", label: "Show particles", y: 129 },
+  { id: "show-enemies", label: "Show enemies", y: 137 },
+  { id: "disable-damage", label: "Disable damage", y: 145 },
+  { id: "disable-movement", label: "Disable movement", y: 153 },
+  { id: "disable-attacks", label: "Disable attacks", y: 161 },
+  { id: "invert-mouse", label: "Invert mouse", y: 169 },
+];
+
+function optionsTexts(): QuakeMenuSceneTextDef[] {
+  const texts: QuakeMenuSceneTextDef[] = OPTIONS_GROUPS.map((g) => ({
+    id: `options-group-${g.y}`, x: QUAKE_MENU_ROW_LABEL_X, y: g.y, h: 8, text: g.title, alt: true,
+  }));
+  for (const row of QUAKE_MENU_OPTIONS_ROWS) {
+    texts.push({ id: `opt-label-${row.id}`, x: QUAKE_MENU_ROW_LABEL_X, y: row.y, h: 8, text: row.label, item: row.id });
+    texts.push({ id: `opt-value-${row.id}`, x: QUAKE_MENU_ROW_VALUE_X, y: row.y, h: 8, key: `opt:${row.id}`, alt: true, item: row.id });
+  }
+  texts.push(BACK_TEXT);
+  return texts;
+}
+function optionsHotspots(): QuakeMenuSceneHotspot[] {
+  return [
+    ...QUAKE_MENU_OPTIONS_ROWS.map((row) => ({ id: row.id, rect: ROW_HIT(row.y), spinner: ROW_SPINNER(row.y) })),
+    BACK_HOTSPOT,
+  ];
+}
+
+/** HELP rows: static labels and key values on the same grid. */
+const HELP_ROWS: readonly { label: string; value: string; y: number }[] = [
+  { label: "Move", value: "WASD", y: 42 },
+  { label: "Look", value: "Mouse", y: 50 },
+  { label: "Fire", value: "Click", y: 58 },
+  { label: "Jump", value: "Space", y: 66 },
+  { label: "Run", value: "Shift", y: 74 },
+  { label: "Crouch", value: "Ctrl", y: 82 },
+  { label: "Navigate", value: "Arrows", y: 105 },
+  { label: "Select", value: "Enter", y: 113 },
+  { label: "Back", value: "Esc", y: 121 },
+];
+function helpTexts(): QuakeMenuSceneTextDef[] {
+  const texts: QuakeMenuSceneTextDef[] = [
+    { id: "help-group-gameplay", x: QUAKE_MENU_ROW_LABEL_X, y: 32, h: 8, text: "Gameplay", alt: true },
+    { id: "help-group-menu", x: QUAKE_MENU_ROW_LABEL_X, y: 95, h: 8, text: "Menu", alt: true },
+  ];
+  HELP_ROWS.forEach((row, i) => {
+    texts.push({ id: `help-label-${i}`, x: QUAKE_MENU_ROW_LABEL_X, y: row.y, h: 8, text: row.label });
+    texts.push({ id: `help-value-${i}`, x: QUAKE_MENU_ROW_VALUE_X, y: row.y, h: 8, text: row.value, alt: true });
+  });
+  texts.push(BACK_TEXT);
+  return texts;
+}
+
+/** LEVEL SELECT rows: dynamic (state.levels), on the measured grid. */
+export const QUAKE_MENU_LEVEL_LIST_Y = 32;
+export const QUAKE_MENU_LEVEL_ROW_H = 8;
+export const QUAKE_MENU_LEVEL_CODE_X = 56;
+export const QUAKE_MENU_LEVEL_TITLE_X = 112;
+export function quakeMenuLevelRowY(index: number): number {
+  return QUAKE_MENU_LEVEL_LIST_Y + index * QUAKE_MENU_LEVEL_ROW_H;
+}
+export function quakeMenuLevelHotspots(levelCount: number): QuakeMenuSceneHotspot[] {
+  const spots: QuakeMenuSceneHotspot[] = [];
+  for (let i = 0; i < levelCount; i++) {
+    const y = quakeMenuLevelRowY(i);
+    spots.push({ id: `level:${i}`, rect: { x: 16, y, w: 272, h: 8 }, spinner: { x: QUAKE_MENU_LEVEL_CODE_X - 10, y, h: 8 } });
+  }
+  spots.push(BACK_HOTSPOT);
+  return spots;
+}
+
+/** MULTIPLAYER form: measured rows every 16 q-units from y 38.4; labels at
+ *  x 72; the NATIVE controls (kept as real inputs — text entry, the colour
+ *  picker and the map dropdown are genuinely native) sit at x 166. */
+export const QUAKE_MENU_MP_FIELDS: readonly { id: string; label: string }[] = [
+  { id: "mp-name", label: "Name" },
+  { id: "mp-color", label: "Color" },
+  { id: "mp-map", label: "Map" },
+  { id: "mp-fraglimit", label: "Fraglimit" },
+  { id: "mp-maxplayers", label: "Max Players" },
+];
+export function quakeMenuMultiplayerFieldRowRect(index: number): QuakeMenuSceneRect {
+  return { x: 72, y: 38.4 + index * 16, w: 217.6, h: 13 };
+}
+/** Box of the native control on field row `index` (the color swatch is 20 wide). */
+export function quakeMenuMultiplayerControlRect(index: number): QuakeMenuSceneRect {
+  return { x: 166, y: 38.9 + index * 16, w: index === 1 ? 20 : 123.6, h: 12 };
+}
+const MP_CREATE_RECT: QuakeMenuSceneRect = { x: 74, y: 121.4, w: 97.5, h: 14 };
+const MP_BACK_RECT: QuakeMenuSceneRect = { x: 16, y: 179.2, w: 56, h: 8 };
+function multiplayerTexts(): QuakeMenuSceneTextDef[] {
+  const texts: QuakeMenuSceneTextDef[] = [
+    // The panel title is 14-unit bitmap TEXT (not an image), measured at (64, 4).
+    { id: "mp-title", x: 64, y: 4, h: 14, text: "Multiplayer", alt: true },
+  ];
+  QUAKE_MENU_MP_FIELDS.forEach((field, i) => {
+    texts.push({ id: `${field.id}-label`, x: 72, y: 41 + i * 16, h: 8, text: field.label, item: field.id });
+  });
+  texts.push({ id: "mp-create", x: 78.7, y: 124.4, h: 8, text: "Create Room", item: "mp-create" });
+  texts.push({ id: "mp-back", x: 16, y: 179.2, h: 8, text: "GO BACK", alt: true, item: "back" });
+  // Failure card: the dynamic title, centred like the shipped card.
+  return texts;
+}
+function multiplayerHotspots(): QuakeMenuSceneHotspot[] {
+  const spots: QuakeMenuSceneHotspot[] = QUAKE_MENU_MP_FIELDS.map((field, i) => ({
+    id: field.id,
+    rect: quakeMenuMultiplayerFieldRowRect(i),
+    spinner: { x: 60, y: 41 + i * 16, h: 8 },
+  }));
+  spots.push({ id: "mp-create", rect: MP_CREATE_RECT, spinner: { x: 62, y: 124.4, h: 8 } });
+  spots.push({ id: "back", rect: MP_BACK_RECT, spinner: { x: 4, y: 179.2, h: 8 } });
+  return spots;
+}
+/**
+ * The active screen's interactive regions — the ONE source both the overlay
+ * (spinner cursor placement) and the menu controller (pointer hit-testing,
+ * keyboard order) read, so hover, click and the drawn cursor can never
+ * disagree. Level rows are dynamic; the multiplayer failure card swaps the
+ * form's hotspots for a lone GO BACK.
+ */
+export function quakeMenuSceneHotspotsFor(
+  manifest: QuakeMenuSceneManifest,
+  screen: QuakeMenuSceneScreen | null,
+  levelCount: number,
+  multiplayerFailure = false,
+): readonly QuakeMenuSceneHotspot[] {
+  if (!screen) return [];
+  if (screen === "level-select") return quakeMenuLevelHotspots(levelCount);
+  if (screen === "multiplayer" && multiplayerFailure) return QUAKE_MENU_MP_FAILURE_HOTSPOTS;
+  return manifest.screens[screen]?.hotspots ?? [];
+}
+
+/** The failure card: dynamic title only ("ROOM FULL"), centred. */
+export const QUAKE_MENU_MP_FAILURE_TEXTS: readonly QuakeMenuSceneTextDef[] = [
+  { id: "mp-failure-title", x: 160, y: 80, h: 14, key: "mp:failure", alt: true, align: "center" },
+  { id: "mp-failure-back", x: 16, y: 179.2, h: 8, text: "GO BACK", alt: true, item: "back" },
+];
+export const QUAKE_MENU_MP_FAILURE_HOTSPOTS: readonly QuakeMenuSceneHotspot[] = [
+  { id: "back", rect: MP_BACK_RECT, spinner: { x: 4, y: 179.2, h: 8 } },
+];
+
+/* ── Viewport-anchored (host px) text layout: console, version, notify ── */
+/** Boot console: left 12px, top 64px, 16px glyphs on an 18px pitch. */
+export const QUAKE_CONSOLE_LEFT = 12;
+export const QUAKE_CONSOLE_TOP = 64;
+export const QUAKE_CONSOLE_GLYPH = 16;
+export const QUAKE_CONSOLE_PITCH = 18;
+/** Progress bar under the console (min(250px, 72vw) x 14, 8px gap). */
+export const QUAKE_CONSOLE_PROGRESS_H = 14;
+export const QUAKE_CONSOLE_GAP = 8;
+export function quakeConsoleProgressWidth(hostW: number): number {
+  return Math.min(250, hostW * 0.72);
+}
+/** Version tag: right of the logo (measured 247,30 at 1600w), 12px glyphs. */
+export function quakeMenuVersionPos(hostW: number): { x: number; y: number; h: number } {
+  const logo = quakeMenuSceneLogoRect(hostW);
+  return { x: logo.x + logo.w + 8, y: 30, h: 12 };
+}
+/** Notify: left 8px under the logo (+12), 24px glyphs. Centerprint: centred,
+ *  top clamped below the notify stack — the CSS custom properties as data. */
+export function quakeNotifyLayout(hostW: number, hostH: number): {
+  notify: { x: number; y: number; h: number };
+  center: { y: number; h: number };
+} {
+  const logoH = Math.max(0, Math.min(45, (hostW - 92) * 0.1951));
+  const notifyTop = 8 + logoH + 12;
+  return {
+    notify: { x: 8, y: notifyTop, h: 24 },
+    center: { y: Math.max(0.35 * hostH, notifyTop + 96 + 12), h: 28 },
+  };
+}
 
 export interface QuakeMenuSceneManifestOptions {
   /** Detail-layer density for the art (the app's `?glyphImageDensity=`). */
@@ -328,21 +575,67 @@ export function createQuakeMenuSceneManifest(
       },
     ],
     screens: {
-      landing: { sprites: landingSprites },
-      "single-player": { sprites: singlePlayerSprites },
-      // The multiplayer form and every option/help/level row is TEXT — still
-      // HTML until the text stage — so these screens' manifest art is the
-      // plaque and (where one exists) the title image. The multiplayer title
-      // is bitmap text, not an image.
-      multiplayer: { sprites: [panelPlaque] },
+      landing: {
+        sprites: landingSprites,
+        texts: [
+          // "coming soon!" beside the multiplayer row, shown only while the
+          // item is disabled — from the CSS note rule (left: 100% + 4q, 5q glyphs).
+          {
+            id: "landing-coming-soon",
+            x: LANDING_LIST_X + 190 + 4,
+            y: LANDING_LIST_Y + LANDING_ROW_H + 8,
+            h: 5,
+            text: "coming soon!",
+            alt: true,
+            item: "multiplayer",
+            showWhenDisabled: true,
+          },
+        ],
+        hotspots: LANDING_ITEMS.map((item, row) => ({
+          id: item.id,
+          rect: {
+            x: LANDING_LIST_X - LANDING_CURSOR_GAP - LANDING_CURSOR_W,
+            y: LANDING_LIST_Y + row * LANDING_ROW_H,
+            w: LANDING_CURSOR_GAP + LANDING_CURSOR_W + item.w,
+            h: LANDING_ROW_H,
+          },
+        })),
+      },
+      "single-player": {
+        sprites: singlePlayerSprites,
+        texts: [BACK_TEXT],
+        hotspots: [
+          ...SP_BUTTONS.map((b, row) => ({
+            id: b.id,
+            rect: {
+              x: LANDING_LIST_X - LANDING_CURSOR_GAP - LANDING_CURSOR_W,
+              y: LANDING_LIST_Y + row * LANDING_ROW_H,
+              w: LANDING_CURSOR_GAP + LANDING_CURSOR_W + b.w,
+              h: LANDING_ROW_H,
+            },
+          })),
+          BACK_HOTSPOT,
+        ],
+      },
+      multiplayer: {
+        sprites: [panelPlaque],
+        texts: multiplayerTexts(),
+        hotspots: multiplayerHotspots(),
+      },
       options: {
         sprites: [panelPlaque, panelTitle("options-title", "/q/menu-title-options.png", { x: 88, y: 4, w: 144, h: 24 })],
+        texts: optionsTexts(),
+        hotspots: optionsHotspots(),
       },
       help: {
         sprites: [panelPlaque, panelTitle("help-title", "/q/menu-title-help.png", { x: 112, y: 4, w: 96, h: 24 })],
+        texts: helpTexts(),
+        hotspots: [BACK_HOTSPOT],
       },
       "level-select": {
         sprites: [panelPlaque, panelTitle("level-title", "/q/menu-title-level-select.png", { x: 54.5, y: 4, w: 211, h: 20 })],
+        texts: [BACK_TEXT],
+        // Level-row hotspots are dynamic — quakeMenuLevelHotspots(levelCount).
       },
     },
     dimmedBrightness: 0.46,

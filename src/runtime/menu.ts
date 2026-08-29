@@ -1,11 +1,55 @@
-import { mountQuakeBitmapText } from "./bitmapText";
-import { updateQuakeMenuSceneState, type QuakeMenuSceneScreen } from "./menuSceneState";
+import {
+  getQuakeMenuSceneState,
+  updateQuakeMenuSceneState,
+  updateQuakeMenuSceneTexts,
+  type QuakeMenuSceneLevel,
+  type QuakeMenuSceneScreen,
+} from "./menuSceneState";
+import {
+  QUAKE_MENU_SCENE_FRAME_H,
+  QUAKE_MENU_SCENE_FRAME_W,
+  quakeMenuMultiplayerControlRect,
+  quakeMenuSceneFrame,
+  quakeMenuSceneHotspotsFor,
+  type QuakeMenuSceneHotspot,
+  type QuakeMenuSceneManifest,
+} from "./render/menuSceneManifest";
+
+/**
+ * The menu controller, DOM-free.
+ *
+ * The old controller owned a tree of panels, buttons, checkboxes and focus —
+ * the glyph overlay then traced that tree to know what to draw. This one owns
+ * only DATA: which screen is up, which item is active, what each option row's
+ * value reads. The overlay draws that state from the scene manifest, and this
+ * controller resolves pointer input against the SAME manifest hotspots the
+ * overlay uses for its cursor, so hit-testing and rendering cannot disagree.
+ *
+ * The only elements it touches are the multiplayer form's five NATIVE
+ * controls (text entry, the colour picker, the map dropdown — genuinely
+ * native behaviour), which it positions over their manifest rects while the
+ * multiplayer screen is up.
+ */
 
 interface QuakeMenuControls {
   update(partial: { moveEnabled?: boolean }): void;
   lock(): void;
   addEventListener(type: "start" | "end", listener: () => void): void;
   removeEventListener(type: "start" | "end", listener: () => void): void;
+}
+
+/** One options-screen row: id matches the manifest layout row, value/activate
+ *  bind it to the app state it controls. */
+export interface QuakeMenuOptionRow {
+  readonly id: string;
+  value(): string;
+  activate(direction: number): void;
+}
+
+export interface QuakeMenuMultiplayerControlBinding {
+  /** Hotspot/item id ("mp-name" … "mp-maxplayers"), in field-row order. */
+  readonly id: string;
+  readonly element: HTMLElement;
 }
 
 export interface QuakeMenuController {
@@ -17,6 +61,8 @@ export interface QuakeMenuController {
   setCurrentLevel(mapName: string): void;
   handleKeyDown(event: KeyboardEvent): boolean;
   focusCurrent(): void;
+  /** Re-push option row values into the scene state (a value changed). */
+  syncOptionTexts(): void;
   dispose(): void;
 }
 
@@ -24,13 +70,11 @@ export interface QuakeMenuControllerOptions {
   enabled: boolean;
   host: HTMLElement;
   controls: QuakeMenuControls;
-  mainMenu: HTMLElement | null;
-  mainMenuArt: HTMLElement | null;
-  singlePlayerPanel: HTMLElement | null;
-  multiplayerPanel: HTMLElement | null;
-  levelPanel: HTMLElement | null;
-  aboutPanel: HTMLElement | null;
-  optionsPanel: HTMLElement | null;
+  manifest: QuakeMenuSceneManifest;
+  optionRows?: () => readonly QuakeMenuOptionRow[];
+  levels?: () => readonly QuakeMenuSceneLevel[];
+  multiplayerControls?: () => readonly QuakeMenuMultiplayerControlBinding[];
+  onMultiplayerSubmit?(): void;
   onSelectNewGame?(): void | Promise<void>;
   onShowMultiplayer?(): void;
   onLoadGame?(): void | Promise<void>;
@@ -50,132 +94,141 @@ export interface QuakeMenuControllerOptions {
   syncCrosshairTarget(): void;
 }
 
-type QuakeMainMenuAction = "single-player" | "multiplayer" | "options" | "help" | "quit";
-type QuakeSinglePlayerAction = "new-game" | "level-select" | "load" | "save";
+export function createQuakeMenuController(options: QuakeMenuControllerOptions): QuakeMenuController {
+  const {
+    enabled,
+    host,
+    controls,
+    manifest,
+  } = options;
 
-const QUAKE_MAIN_MENU_ACTION_ATTRIBUTE = "data-quake-main-menu-action";
-const QUAKE_SINGLE_PLAYER_ACTION_ATTRIBUTE = "data-quake-single-player-action";
-const QUAKE_OPTION_CYCLE_EVENT = "quake-option-cycle";
-const QUAKE_MAIN_MENU_SELECTABLE_CLASS = "quake-main-menu-item-selectable";
-const QUAKE_MAIN_MENU_DISABLED_CLASS = "quake-main-menu-item-disabled";
-const QUAKE_MAIN_MENU_NOTE_CLASS = "quake-main-menu-note";
-const QUAKE_MAIN_MENU_COMING_SOON_CLASS = "quake-main-menu-note-coming-soon";
-const QUAKE_BITMAP_LABEL_CLASS = "quake-bm-label";
-const QUAKE_BITMAP_ALT_CLASS = "quake-bm-alt";
-const QUAKE_MAIN_MENU_PENDING_CLASS = "quake-main-menu-pending";
-const QUAKE_MAIN_MENU_DEFERRED_CLASS = "quake-main-menu-deferred";
-const QUAKE_MULTIPLAYER_PANEL_STATE_ATTRIBUTE = "data-quake-multiplayer-state";
-const QUAKE_MULTIPLAYER_FAILURE_STATE = "failure";
-
-export function createQuakeMenuController({
-  enabled,
-  host,
-  controls,
-  mainMenu,
-  mainMenuArt,
-  singlePlayerPanel,
-  multiplayerPanel,
-  levelPanel,
-  aboutPanel,
-  optionsPanel,
-  onSelectNewGame,
-  onShowMultiplayer,
-  onLoadGame,
-  onSaveGame,
-  onSelectLevel,
-  onSelectQuit,
-  canLoadGame,
-  canSaveGame,
-  isMultiplayerEnabled,
-  isQuitEnabled,
-  onMenuVisibilityChange,
-  onMenuPauseChange,
-  onResumeMainMenuFromEscape,
-  shouldResumeMainMenuOnEscape,
-  shouldOpenMainMenuOnControlsEnd,
-  clearCrosshairTarget,
-  syncCrosshairTarget,
-}: QuakeMenuControllerOptions): QuakeMenuController {
-  let mainMenuSelectionIndex = 0;
   let startingNewGame = false;
   let loadingGame = false;
   let savingGame = false;
   let loadingLevelMap: string | null = null;
+  /** Last active item per screen, so reopening a screen restores selection. */
+  const lastActiveByScreen = new Map<QuakeMenuSceneScreen, string>();
 
-  /**
-   * Which manifest screen a panel element is. The glyph overlay renders the
-   * menu from the scene manifest + shared scene state, so every visibility
-   * change here is mirrored into that state — the controller stays the single
-   * owner, the overlay just draws what it is told.
-   */
-  function sceneScreenFor(panel: HTMLElement): QuakeMenuSceneScreen | null {
-    if (panel === singlePlayerPanel) return "single-player";
-    if (panel === multiplayerPanel) return "multiplayer";
-    if (panel === levelPanel) return "level-select";
-    if (panel === aboutPanel) return "help";
-    if (panel === optionsPanel) return "options";
-    return null;
+  function state() {
+    return getQuakeMenuSceneState();
   }
 
-  function setMultiplayerPanelState(state: string | null): void {
-    if (!multiplayerPanel) return;
-    if (state) {
-      multiplayerPanel.setAttribute(QUAKE_MULTIPLAYER_PANEL_STATE_ATTRIBUTE, state);
-    } else {
-      multiplayerPanel.removeAttribute(QUAKE_MULTIPLAYER_PANEL_STATE_ATTRIBUTE);
+  function currentScreen(): QuakeMenuSceneScreen | null {
+    return state().screen;
+  }
+
+  function isMainMenuOpen(): boolean {
+    return enabled && currentScreen() === "landing";
+  }
+
+  function isMenuPanelOpen(): boolean {
+    const screen = currentScreen();
+    return enabled && screen !== null && screen !== "landing";
+  }
+
+  // ── Item model ─────────────────────────────────────────────────────────────
+
+  function disabledItemsFor(screen: QuakeMenuSceneScreen): string[] {
+    if (screen === "landing") {
+      const disabled: string[] = [];
+      if (!options.isQuitEnabled?.()) disabled.push("quit");
+      if (!(options.isMultiplayerEnabled?.() ?? true)) disabled.push("multiplayer");
+      return disabled;
     }
-    updateQuakeMenuSceneState({ multiplayerFailure: state === QUAKE_MULTIPLAYER_FAILURE_STATE });
+    if (screen === "single-player") {
+      const busy = startingNewGame || loadingGame || savingGame;
+      const disabled: string[] = [];
+      if (busy) disabled.push("new-game", "level-select");
+      if (busy || !options.onLoadGame || !options.canLoadGame?.()) disabled.push("load");
+      if (busy || !options.onSaveGame || !options.canSaveGame?.()) disabled.push("save");
+      return disabled;
+    }
+    return [];
   }
 
-  function isMultiplayerFailurePanelOpen(): boolean {
-    return isMultiplayerPanelOpen() &&
-      multiplayerPanel?.getAttribute(QUAKE_MULTIPLAYER_PANEL_STATE_ATTRIBUTE) === QUAKE_MULTIPLAYER_FAILURE_STATE;
+  function hotspots(): readonly QuakeMenuSceneHotspot[] {
+    const st = state();
+    return quakeMenuSceneHotspotsFor(manifest, st.screen, st.levels.length, st.multiplayerFailure);
+  }
+
+  /** Selectable item ids on the current screen, in keyboard order. */
+  function selectableItems(): string[] {
+    const st = state();
+    if (!st.screen) return [];
+    const disabled = st.disabledItems;
+    return hotspots()
+      .map((spot) => spot.id)
+      .filter((id) => !disabled.includes(id));
+  }
+
+  function setActiveItem(item: string | null): void {
+    const screen = currentScreen();
+    if (screen && item) lastActiveByScreen.set(screen, item);
+    updateQuakeMenuSceneState({ activeItem: item });
+  }
+
+  function moveSelection(delta: number): void {
+    const items = selectableItems();
+    if (!items.length) return;
+    const current = state().activeItem;
+    const index = current ? items.indexOf(current) : -1;
+    const next = items[(Math.max(0, index) + delta + items.length) % items.length]!;
+    setActiveItem(next);
+    syncMultiplayerFocusForItem(next);
+  }
+
+  // ── Screen transitions ─────────────────────────────────────────────────────
+
+  function openScreen(screen: QuakeMenuSceneScreen): void {
+    controls.update({ moveEnabled: false });
+    if (screen === "level-select") refreshLevels();
+    if (screen === "options") syncOptionTexts();
+    const disabledItems = disabledItemsFor(screen);
+    const remembered = lastActiveByScreen.get(screen);
+    const wasOpen = currentScreen() !== null;
+    updateQuakeMenuSceneState({ screen, disabledItems, editingItem: null });
+    const items = selectableItems();
+    const active = remembered && items.includes(remembered) ? remembered : items[0] ?? null;
+    updateQuakeMenuSceneState({ activeItem: active });
+    document.body.classList.add("quake-menu-open");
+    syncMultiplayerControls();
+    if (!wasOpen) {
+      options.onMenuVisibilityChange?.(true);
+      options.onMenuPauseChange?.(true);
+    }
+    options.clearCrosshairTarget();
   }
 
   function showMainMenu(): void {
-    if (!mainMenu) return;
     if (!enabled) {
       hideMainMenu();
       return;
     }
-    setMultiplayerPanelState(null);
-    controls.update({ moveEnabled: false });
-    updateMainMenuCursor();
-    singlePlayerPanel?.setAttribute("hidden", "");
-    multiplayerPanel?.setAttribute("hidden", "");
-    levelPanel?.setAttribute("hidden", "");
-    aboutPanel?.setAttribute("hidden", "");
-    optionsPanel?.setAttribute("hidden", "");
-    mainMenu.hidden = false;
-    document.body.classList.add("quake-menu-open");
-    updateQuakeMenuSceneState({ screen: "landing" });
-    onMenuVisibilityChange?.(true);
-    onMenuPauseChange?.(true);
-    clearCrosshairTarget();
-    mainMenu.focus({ preventScroll: true });
+    // Showing the menu IS the end of any startup deferral — the route flow
+    // clears this on boot, but a caller-driven show must never leave the
+    // scene suppressed.
+    document.body.classList.remove("quake-main-menu-deferred");
+    updateQuakeMenuSceneState({ multiplayerFailure: false, deferred: false });
+    openScreen("landing");
   }
 
   function hideMainMenu(): void {
-    if (!mainMenu) return;
     controls.update({ moveEnabled: true });
-    setMultiplayerPanelState(null);
     clearPendingMainMenu();
-    mainMenu.hidden = true;
-    singlePlayerPanel?.setAttribute("hidden", "");
-    multiplayerPanel?.setAttribute("hidden", "");
-    levelPanel?.setAttribute("hidden", "");
-    aboutPanel?.setAttribute("hidden", "");
-    optionsPanel?.setAttribute("hidden", "");
+    const wasOpen = currentScreen() !== null;
+    updateQuakeMenuSceneState({ screen: null, activeItem: null, multiplayerFailure: false, editingItem: null });
     document.body.classList.remove("quake-menu-open");
-    updateQuakeMenuSceneState({ screen: null });
-    onMenuVisibilityChange?.(false);
-    onMenuPauseChange?.(false);
+    syncMultiplayerControls();
+    if (wasOpen) {
+      options.onMenuVisibilityChange?.(false);
+      options.onMenuPauseChange?.(false);
+    }
     host.focus({ preventScroll: true });
-    syncCrosshairTarget();
+    options.syncCrosshairTarget();
   }
 
   function clearPendingMainMenu(): void {
-    document.body.classList.remove(QUAKE_MAIN_MENU_PENDING_CLASS);
+    document.body.classList.remove("quake-main-menu-pending");
     updateQuakeMenuSceneState({ pending: false });
   }
 
@@ -184,911 +237,461 @@ export function createQuakeMenuController({
     hideMainMenu();
   }
 
+  function closeMenuPanel(): void {
+    if (!isMenuPanelOpen()) return;
+    if (currentScreen() === "level-select") {
+      openScreen("single-player");
+      return;
+    }
+    updateQuakeMenuSceneState({ multiplayerFailure: false });
+    showMainMenu();
+  }
+
+  // ── Actions ────────────────────────────────────────────────────────────────
+
   function selectNewGame(): void {
-    if (!onSelectNewGame) {
+    if (!options.onSelectNewGame) {
       startFromMainMenu();
       return;
     }
     if (startingNewGame) return;
     startingNewGame = true;
-    syncSinglePlayerItemAvailability();
     hideMainMenu();
-    Promise.resolve(onSelectNewGame())
+    Promise.resolve(options.onSelectNewGame())
       .then(() => {
         startingNewGame = false;
         clearPendingMainMenu();
-        syncSinglePlayerItemAvailability();
         controls.lock();
       })
       .catch((error: unknown) => {
         console.error(error);
         startingNewGame = false;
         clearPendingMainMenu();
-        syncSinglePlayerItemAvailability();
-        showSinglePlayerPanel();
+        openScreen("single-player");
       });
   }
 
   function selectLoadGame(): void {
-    if (!onLoadGame || loadingGame || !canLoadGame?.()) return;
+    if (!options.onLoadGame || loadingGame || !options.canLoadGame?.()) return;
     loadingGame = true;
-    syncSinglePlayerItemAvailability();
     hideMainMenu();
-    Promise.resolve(onLoadGame())
+    Promise.resolve(options.onLoadGame())
       .then(() => {
         loadingGame = false;
-        syncSinglePlayerItemAvailability();
         controls.lock();
       })
       .catch((error: unknown) => {
         console.error(error);
         loadingGame = false;
-        syncSinglePlayerItemAvailability();
-        showSinglePlayerPanel();
+        openScreen("single-player");
       });
   }
 
   function selectSaveGame(): void {
-    if (!onSaveGame || savingGame || !canSaveGame?.()) return;
+    if (!options.onSaveGame || savingGame || !options.canSaveGame?.()) return;
     savingGame = true;
-    syncSinglePlayerItemAvailability();
-    Promise.resolve(onSaveGame())
+    syncSinglePlayerAvailability();
+    Promise.resolve(options.onSaveGame())
       .then(() => {
         savingGame = false;
-        syncSinglePlayerItemAvailability();
-        currentSinglePlayerButton()?.focus({ preventScroll: true });
+        syncSinglePlayerAvailability();
       })
       .catch((error: unknown) => {
         console.error(error);
         savingGame = false;
-        syncSinglePlayerItemAvailability();
-        showSinglePlayerPanel();
+        openScreen("single-player");
       });
   }
 
-  function isMainMenuOpen(): boolean {
-    if (!enabled) return false;
-    return Boolean(mainMenu && !mainMenu.hidden);
+  function syncSinglePlayerAvailability(): void {
+    if (currentScreen() !== "single-player") return;
+    updateQuakeMenuSceneState({ disabledItems: disabledItemsFor("single-player") });
   }
 
-  function isAboutPanelOpen(): boolean {
-    if (!enabled) return false;
-    return Boolean(aboutPanel && !aboutPanel.hidden);
-  }
-
-  function isSinglePlayerPanelOpen(): boolean {
-    if (!enabled) return false;
-    return Boolean(singlePlayerPanel && !singlePlayerPanel.hidden);
-  }
-
-  function isMultiplayerPanelOpen(): boolean {
-    if (!enabled) return false;
-    return Boolean(multiplayerPanel && !multiplayerPanel.hidden);
-  }
-
-  function isLevelPanelOpen(): boolean {
-    if (!enabled) return false;
-    return Boolean(levelPanel && !levelPanel.hidden);
-  }
-
-  function isOptionsPanelOpen(): boolean {
-    if (!enabled) return false;
-    return Boolean(optionsPanel && !optionsPanel.hidden);
-  }
-
-  function isMenuPanelOpen(): boolean {
-    return isSinglePlayerPanelOpen() || isMultiplayerPanelOpen() || isLevelPanelOpen() || isAboutPanelOpen() || isOptionsPanelOpen();
-  }
-
-  function showMenuPanel(panel: HTMLElement): void {
-    if (!mainMenu) return;
-    controls.update({ moveEnabled: false });
-    mainMenu.hidden = true;
-    singlePlayerPanel?.setAttribute("hidden", "");
-    multiplayerPanel?.setAttribute("hidden", "");
-    levelPanel?.setAttribute("hidden", "");
-    aboutPanel?.setAttribute("hidden", "");
-    optionsPanel?.setAttribute("hidden", "");
-    panel.hidden = false;
-    document.body.classList.add("quake-menu-open");
-    updateQuakeMenuSceneState({ screen: sceneScreenFor(panel) });
-    onMenuVisibilityChange?.(true);
-    onMenuPauseChange?.(true);
-    panel.focus({ preventScroll: true });
-  }
-
-  function showSinglePlayerPanel(): void {
-    if (!enabled || !singlePlayerPanel) {
-      selectNewGame();
-      return;
-    }
-    showMenuPanel(singlePlayerPanel);
-    syncSinglePlayerItemAvailability();
-    firstSinglePlayerButton()?.focus({ preventScroll: true });
-  }
-
-  function showMultiplayerPanel(): void {
-    if (!isMultiplayerMenuEnabled()) return;
-    if (!enabled || !multiplayerPanel) {
-      startFromMainMenu();
-      return;
-    }
-    setMultiplayerPanelState(null);
-    showMenuPanel(multiplayerPanel);
-    onShowMultiplayer?.();
-    firstMultiplayerControl()?.focus({ preventScroll: true });
-  }
-
-  function showMultiplayerFailure(title: string): void {
-    if (!enabled || !multiplayerPanel) {
-      showMainMenu();
-      return;
-    }
-    const failureTitle = multiplayerFailureTitle();
-    if (failureTitle) {
-      failureTitle.textContent = title;
-      mountQuakeBitmapText(failureTitle);
-    }
-    setMultiplayerPanelState(QUAKE_MULTIPLAYER_FAILURE_STATE);
-    showMenuPanel(multiplayerPanel);
-    multiplayerBackButton()?.focus({ preventScroll: true });
-  }
-
-  function showLevelPanel(): void {
-    if (!enabled || !levelPanel) {
-      startFromMainMenu();
-      return;
-    }
-    showMenuPanel(levelPanel);
-    (currentLevelButton() ?? firstLevelButton())?.focus({ preventScroll: true });
-  }
-
-  function showAboutPanel(): void {
-    if (!enabled || !aboutPanel) return;
-    showMenuPanel(aboutPanel);
-  }
-
-  function showOptionsPanel(): void {
-    if (!enabled || !optionsPanel) return;
-    showMenuPanel(optionsPanel);
-    firstMenuOptionToggle()?.focus({ preventScroll: true });
-  }
-
-  function closeMenuPanel(): void {
-    if (!isMenuPanelOpen()) return;
-    if (isLevelPanelOpen()) {
-      showSinglePlayerPanel();
-      return;
-    }
-    showMainMenu();
-  }
-
-  function aboutSourceLinkFor(target: EventTarget | null): HTMLAnchorElement | null {
-    const element = target instanceof Element ? target : target instanceof Node ? target.parentElement : null;
-    return element?.closest("#quake-about-source-links a") as HTMLAnchorElement | null;
-  }
-
-  function menuBackButtonFor(target: EventTarget | null): HTMLButtonElement | null {
-    const element = target instanceof Element ? target : target instanceof Node ? target.parentElement : null;
-    return element?.closest(
-      "#quake-single-player-back, #quake-multiplayer-back, #quake-level-back, #quake-about-back, #quake-options-back",
-    ) as HTMLButtonElement | null;
-  }
-
-  function menuCardFor(target: EventTarget | null): HTMLElement | null {
-    const element = target instanceof Element ? target : target instanceof Node ? target.parentElement : null;
-    return element?.closest(".quake-menu-card") as HTMLElement | null;
-  }
-
-  function menuOptionToggleFor(target: EventTarget | null): HTMLElement | null {
-    const element = target instanceof Element ? target : target instanceof Node ? target.parentElement : null;
-    return element?.closest(".quake-option-toggle") as HTMLElement | null;
-  }
-
-  function levelButtonFor(target: EventTarget | null): HTMLButtonElement | null {
-    const element = target instanceof Element ? target : target instanceof Node ? target.parentElement : null;
-    return element?.closest(".quake-level-button") as HTMLButtonElement | null;
-  }
-
-  function singlePlayerButtonFor(target: EventTarget | null): HTMLButtonElement | null {
-    const element = target instanceof Element ? target : target instanceof Node ? target.parentElement : null;
-    return element?.closest(".quake-single-player-button") as HTMLButtonElement | null;
-  }
-
-  function multiplayerControlFor(target: EventTarget | null): HTMLElement | null {
-    const element = target instanceof Element ? target : target instanceof Node ? target.parentElement : null;
-    return element?.closest("#quake-multiplayer-panel input, #quake-multiplayer-panel select, #quake-multiplayer-panel button") as HTMLElement | null;
-  }
-
-  function multiplayerControls(): HTMLElement[] {
-    if (!multiplayerPanel) return [];
-    if (isMultiplayerFailurePanelOpen()) return multiplayerBackButton() ? [multiplayerBackButton()] : [];
-    return Array.from(multiplayerPanel.querySelectorAll<HTMLElement>("input, select, button"))
-      .filter((element) => !(element instanceof HTMLButtonElement && element.disabled));
-  }
-
-  function multiplayerFailureTitle(): HTMLElement | null {
-    return multiplayerPanel?.querySelector<HTMLElement>("#quake-multiplayer-failure-title") ?? null;
-  }
-
-  function multiplayerBackButton(): HTMLButtonElement | null {
-    return multiplayerPanel?.querySelector<HTMLButtonElement>("#quake-multiplayer-back") ?? null;
-  }
-
-  function firstMultiplayerControl(): HTMLElement | null {
-    return multiplayerControls()[0] ?? null;
-  }
-
-  function currentMultiplayerControl(): HTMLElement | null {
-    const active = multiplayerControlFor(document.activeElement);
-    if (!active || !multiplayerPanel?.contains(active)) return firstMultiplayerControl();
-    return active;
-  }
-
-  function focusMultiplayerControl(delta: number): void {
-    const controls = multiplayerControls();
-    if (!controls.length) return;
-    const current = currentMultiplayerControl() ?? controls[0];
-    const index = Math.max(0, controls.indexOf(current));
-    controls[(index + delta + controls.length) % controls.length]?.focus({ preventScroll: true });
-  }
-
-  function isTextEntryTarget(target: EventTarget | null): boolean {
-    const element = target instanceof HTMLElement ? target : target instanceof Node ? target.parentElement : null;
-    return Boolean(element?.closest("input[type=\"text\"], input[type=\"number\"], input:not([type]), textarea, select"));
-  }
-
-  function syncSinglePlayerItemAvailability(): void {
-    if (!singlePlayerPanel) return;
-    const busy = startingNewGame || loadingGame || savingGame;
-    const loadEnabled = Boolean(onLoadGame && !busy && canLoadGame?.());
-    const saveEnabled = Boolean(onSaveGame && !busy && canSaveGame?.());
-    singlePlayerPanel.toggleAttribute("aria-busy", busy);
-    for (const button of singlePlayerPanel.querySelectorAll<HTMLButtonElement>(".quake-single-player-button")) {
-      const action = button.getAttribute(QUAKE_SINGLE_PLAYER_ACTION_ATTRIBUTE) as QuakeSinglePlayerAction | null;
-      const disabled = action === "load"
-        ? !loadEnabled
-        : action === "save"
-          ? !saveEnabled
-          : busy;
-      button.disabled = disabled;
-      button.setAttribute("aria-disabled", String(disabled));
-    }
-    // Mirror into the scene state so the overlay dims the manifest labels the
-    // way the CSS dimmed the buttons. Gated on the panel being open: the shared
-    // `disabledItems` belongs to whichever screen is up.
-    if (isSinglePlayerPanelOpen()) {
-      const disabledItems: string[] = [];
-      for (const button of singlePlayerPanel.querySelectorAll<HTMLButtonElement>(".quake-single-player-button")) {
-        if (!button.disabled) continue;
-        const action = button.getAttribute(QUAKE_SINGLE_PLAYER_ACTION_ATTRIBUTE);
-        if (action) disabledItems.push(action);
-      }
-      updateQuakeMenuSceneState({ disabledItems });
-    }
-  }
-
-  /** Selection cursor on the single-player panel: keyboard focus and pointer
-   *  hover both land here, so the manifest cursor follows either — the panel's
-   *  own replacement for the old `:hover`/`:focus-visible` pseudo cursor. */
-  function syncSinglePlayerActiveItem(target: EventTarget | null): void {
-    const button = singlePlayerButtonFor(target);
-    if (!button || button.disabled) return;
-    updateQuakeMenuSceneState({
-      activeItem: button.getAttribute(QUAKE_SINGLE_PLAYER_ACTION_ATTRIBUTE),
-    });
-  }
-
-  function handleSinglePlayerFocusIn(event: FocusEvent): void {
-    syncSinglePlayerActiveItem(event.target);
-  }
-
-  function handleSinglePlayerPointerOver(event: PointerEvent): void {
-    syncSinglePlayerActiveItem(event.target);
-  }
-
-  function singlePlayerButtons(): HTMLButtonElement[] {
-    if (!singlePlayerPanel) return [];
-    syncSinglePlayerItemAvailability();
-    return Array.from(singlePlayerPanel.querySelectorAll<HTMLButtonElement>(".quake-single-player-button"))
-      .filter((button) => !button.disabled);
-  }
-
-  function firstSinglePlayerButton(): HTMLButtonElement | null {
-    return singlePlayerButtons()[0] ?? null;
-  }
-
-  function currentSinglePlayerButton(): HTMLButtonElement | null {
-    const active = singlePlayerButtonFor(document.activeElement);
-    if (!active || active.disabled || !singlePlayerPanel?.contains(active)) return firstSinglePlayerButton();
-    return active;
-  }
-
-  function focusSinglePlayerButton(delta: number): void {
-    const buttons = singlePlayerButtons();
-    if (!buttons.length) return;
-    const current = currentSinglePlayerButton() ?? buttons[0];
-    const index = Math.max(0, buttons.indexOf(current));
-    buttons[(index + delta + buttons.length) % buttons.length]?.focus({ preventScroll: true });
-  }
-
-  function activateSinglePlayerButton(button: HTMLButtonElement | null): void {
-    syncSinglePlayerItemAvailability();
-    if (!button || button.disabled) return;
-    const action = button.getAttribute(QUAKE_SINGLE_PLAYER_ACTION_ATTRIBUTE) as QuakeSinglePlayerAction | null;
-    if (action === "new-game") selectNewGame();
-    if (action === "level-select") showLevelPanel();
-    if (action === "load") selectLoadGame();
-    if (action === "save") selectSaveGame();
-  }
-
-  function currentOptionPanel(): HTMLElement | null {
-    if (isOptionsPanelOpen()) return optionsPanel;
-    return null;
-  }
-
-  function menuOptionToggles(): HTMLElement[] {
-    const panel = currentOptionPanel();
-    if (!panel) return [];
-    return Array.from(panel.querySelectorAll<HTMLElement>(".quake-option-toggle"));
-  }
-
-  function firstMenuOptionToggle(): HTMLElement | null {
-    return menuOptionToggles()[0] ?? null;
-  }
-
-  function currentMenuOptionToggle(): HTMLElement | null {
-    const panel = currentOptionPanel();
-    const active = menuOptionToggleFor(document.activeElement);
-    if (!panel || !active || !panel.contains(active)) return firstMenuOptionToggle();
-    return active;
-  }
-
-  function focusMenuOptionToggle(delta: number): void {
-    const toggles = menuOptionToggles();
-    if (!toggles.length) return;
-    const current = currentMenuOptionToggle() ?? toggles[0];
-    const index = Math.max(0, toggles.indexOf(current));
-    toggles[(index + delta + toggles.length) % toggles.length]?.focus({ preventScroll: true });
-  }
-
-  function toggleMenuOption(toggle: HTMLElement | null, direction = 1): void {
-    if (toggle instanceof HTMLButtonElement) {
-      toggle.dispatchEvent(new CustomEvent(QUAKE_OPTION_CYCLE_EVENT, {
-        bubbles: true,
-        detail: { direction },
-      }));
-      return;
-    }
-    const input = toggle?.querySelector<HTMLInputElement>("input[type=\"checkbox\"]");
-    if (!input || input.disabled) return;
-    input.click();
-  }
-
-  function syncMainMenuItemAvailability(): void {
-    const quitItem = mainMenuArt?.querySelector<HTMLElement>(
-      `[${QUAKE_MAIN_MENU_ACTION_ATTRIBUTE}="quit"]`,
-    );
-    if (quitItem) {
-      const quitEnabled = Boolean(isQuitEnabled?.());
-      syncMainMenuItemEnabled(quitItem, quitEnabled);
-    }
-
-    const multiplayerItem = mainMenuArt?.querySelector<HTMLElement>(
-      `[${QUAKE_MAIN_MENU_ACTION_ATTRIBUTE}="multiplayer"]`,
-    );
-    if (multiplayerItem) {
-      const multiplayerEnabled = isMultiplayerMenuEnabled();
-      syncMainMenuItemEnabled(multiplayerItem, multiplayerEnabled);
-      syncMultiplayerComingSoonNote(multiplayerItem, !multiplayerEnabled);
-    }
-
-    const disabledItems: string[] = [];
-    if (!isQuitEnabled?.()) disabledItems.push("quit");
-    if (!isMultiplayerMenuEnabled()) disabledItems.push("multiplayer");
-    updateQuakeMenuSceneState({ disabledItems });
-  }
-
-  function isMultiplayerMenuEnabled(): boolean {
-    return isMultiplayerEnabled?.() ?? true;
-  }
-
-  function syncMainMenuItemEnabled(item: HTMLElement, itemEnabled: boolean): void {
-    item.classList.toggle(QUAKE_MAIN_MENU_SELECTABLE_CLASS, itemEnabled);
-    item.classList.toggle(QUAKE_MAIN_MENU_DISABLED_CLASS, !itemEnabled);
-    item.setAttribute("aria-disabled", String(!itemEnabled));
-    if (!itemEnabled) item.classList.remove("quake-main-menu-item-active");
-  }
-
-  function syncMultiplayerComingSoonNote(item: HTMLElement, visible: boolean): void {
-    let note = item.querySelector<HTMLElement>(`.${QUAKE_MAIN_MENU_COMING_SOON_CLASS}`);
-    if (!note && visible) {
-      note = document.createElement("span");
-      note.classList.add(
-        QUAKE_MAIN_MENU_NOTE_CLASS,
-        QUAKE_MAIN_MENU_COMING_SOON_CLASS,
-        QUAKE_BITMAP_LABEL_CLASS,
-        QUAKE_BITMAP_ALT_CLASS,
-      );
-      note.textContent = "coming soon!";
-      item.append(note);
-      mountQuakeBitmapText(note);
-    }
-    if (note) note.hidden = !visible;
-  }
-
-  function mainMenuItems(): HTMLElement[] {
-    if (!mainMenuArt) return [];
-    syncMainMenuItemAvailability();
-    return Array.from(mainMenuArt.querySelectorAll<HTMLElement>(`.${QUAKE_MAIN_MENU_SELECTABLE_CLASS}`))
-      .filter((item) =>
-        !item.classList.contains(QUAKE_MAIN_MENU_DISABLED_CLASS) &&
-        item.getAttribute(QUAKE_MAIN_MENU_ACTION_ATTRIBUTE) !== "level-select" &&
-        (
-          item.getAttribute(QUAKE_MAIN_MENU_ACTION_ATTRIBUTE) !== "multiplayer" ||
-          isMultiplayerMenuEnabled()
-        )
-      );
-  }
-
-  function updateMainMenuCursor(): void {
-    const items = mainMenuItems();
-    if (items.length > 0) {
-      mainMenuSelectionIndex = Math.min(Math.max(mainMenuSelectionIndex, 0), items.length - 1);
-    } else {
-      mainMenuSelectionIndex = 0;
-    }
-    for (let index = 0; index < items.length; index++) {
-      items[index]?.classList.toggle("quake-main-menu-item-active", index === mainMenuSelectionIndex);
-    }
-    updateQuakeMenuSceneState({
-      activeItem: items[mainMenuSelectionIndex]?.getAttribute(QUAKE_MAIN_MENU_ACTION_ATTRIBUTE) ?? null,
-    });
-  }
-
-  function selectMainMenuRow(row: number): boolean {
-    const items = mainMenuItems();
-    if (row < 0 || row >= items.length) return false;
-    if (mainMenuSelectionIndex !== row) {
-      mainMenuSelectionIndex = row;
-      updateMainMenuCursor();
-    }
-    return true;
-  }
-
-  function moveMainMenuCursor(delta: number): void {
-    const items = mainMenuItems();
-    if (!items.length) return;
-    mainMenuSelectionIndex = (mainMenuSelectionIndex + delta + items.length) % items.length;
-    updateMainMenuCursor();
-  }
-
-  function activateMainMenuSelection(): void {
-    const item = mainMenuItems()[mainMenuSelectionIndex];
-    const action = item?.getAttribute(QUAKE_MAIN_MENU_ACTION_ATTRIBUTE) as QuakeMainMenuAction | null;
-    if (action === "single-player") showSinglePlayerPanel();
-    if (action === "multiplayer") showMultiplayerPanel();
-    if (action === "options") showOptionsPanel();
-    if (action === "help") showAboutPanel();
-    if (action === "quit" && isQuitEnabled?.()) onSelectQuit?.();
-  }
-
-  function levelButtons(): HTMLButtonElement[] {
-    if (!levelPanel) return [];
-    return Array.from(levelPanel.querySelectorAll<HTMLButtonElement>(".quake-level-button"));
-  }
-
-  function firstLevelButton(): HTMLButtonElement | null {
-    return levelButtons()[0] ?? null;
-  }
-
-  function currentLevelButton(): HTMLButtonElement | null {
-    return levelButtons().find((button) => button.getAttribute("aria-current") === "page") ?? null;
-  }
-
-  function setCurrentLevel(mapName: string): void {
-    for (const button of levelButtons()) {
-      const current = button.value === mapName;
-      if (current) {
-        button.setAttribute("aria-current", "page");
-      } else {
-        button.removeAttribute("aria-current");
-      }
-    }
-  }
-
-  function setLoadingLevel(mapName: string | null): void {
-    loadingLevelMap = mapName;
-    if (mapName) {
-      levelPanel?.setAttribute("aria-busy", "true");
-    } else {
-      levelPanel?.removeAttribute("aria-busy");
-    }
-    for (const button of levelButtons()) {
-      button.disabled = Boolean(mapName);
-    }
-  }
-
-  function selectLevel(button: HTMLButtonElement): void {
-    const mapName = button.value;
-    if (!mapName || !onSelectLevel || loadingLevelMap) return;
-    setLoadingLevel(mapName);
+  function selectLevel(index: number): void {
+    const level = state().levels[index];
+    if (!level || !options.onSelectLevel || loadingLevelMap) return;
+    loadingLevelMap = level.map;
     hideMainMenu();
-    Promise.resolve(onSelectLevel(mapName))
+    Promise.resolve(options.onSelectLevel(level.map))
       .then(() => {
-        setCurrentLevel(mapName);
-        setLoadingLevel(null);
+        loadingLevelMap = null;
         controls.lock();
       })
       .catch((error: unknown) => {
         console.error(error);
-        setLoadingLevel(null);
-        showLevelPanel();
+        loadingLevelMap = null;
+        openScreen("level-select");
       });
   }
 
-  function levelButtonColumnCount(): number {
-    const buttons = levelButtons();
-    const firstTop = buttons[0]?.offsetTop;
-    if (firstTop === undefined) return 1;
-    let count = 0;
-    for (const button of buttons) {
-      if (Math.abs(button.offsetTop - firstTop) > 2) break;
-      count++;
+  function refreshLevels(): void {
+    updateQuakeMenuSceneState({ levels: options.levels?.() ?? [] });
+  }
+
+  function setCurrentLevel(_mapName: string): void {
+    // Level rows carry a `current` flag computed by the provider — re-pull.
+    if (state().levels.length || currentScreen() === "level-select") refreshLevels();
+  }
+
+  function syncOptionTexts(): void {
+    const rows = options.optionRows?.() ?? [];
+    const texts: Record<string, string> = {};
+    for (const row of rows) texts[`opt:${row.id}`] = row.value();
+    updateQuakeMenuSceneTexts(texts);
+  }
+
+  function activateOptionRow(id: string, direction: number): void {
+    const row = (options.optionRows?.() ?? []).find((r) => r.id === id);
+    if (!row) return;
+    row.activate(direction);
+    syncOptionTexts();
+  }
+
+  function activateItem(item: string | null): void {
+    const screen = currentScreen();
+    if (!item || !screen) return;
+    if (state().disabledItems.includes(item)) return;
+    if (item === "back") {
+      closeMenuPanel();
+      return;
     }
-    return Math.max(1, count);
-  }
-
-  function focusLevelButton(delta: number): void {
-    const buttons = levelButtons();
-    if (!buttons.length) return;
-    const active = levelButtonFor(document.activeElement);
-    const current = active ?? currentLevelButton() ?? buttons[0];
-    const index = Math.max(0, buttons.indexOf(current));
-    buttons[(index + delta + buttons.length) % buttons.length]?.focus({ preventScroll: true });
-  }
-
-  function handleLevelPanelKey(event: KeyboardEvent): boolean {
-    if (!isLevelPanelOpen()) return false;
-    const button = levelButtonFor(event.target);
-    switch (event.code) {
-      case "Escape":
-      case "Backspace":
-        event.preventDefault();
-        event.stopPropagation();
-        closeMenuPanel();
-        return true;
-      case "Enter":
-      case "Space":
-        if (!button) return false;
-        event.preventDefault();
-        event.stopPropagation();
-        selectLevel(button);
-        return true;
-      case "ArrowDown":
-      case "KeyS":
-        event.preventDefault();
-        event.stopPropagation();
-        focusLevelButton(levelButtonColumnCount());
-        return true;
-      case "ArrowUp":
-      case "KeyW":
-        event.preventDefault();
-        event.stopPropagation();
-        focusLevelButton(-levelButtonColumnCount());
-        return true;
-      case "ArrowRight":
-      case "KeyD":
-        event.preventDefault();
-        event.stopPropagation();
-        focusLevelButton(1);
-        return true;
-      case "ArrowLeft":
-      case "KeyA":
-        event.preventDefault();
-        event.stopPropagation();
-        focusLevelButton(-1);
-        return true;
+    switch (screen) {
+      case "landing":
+        if (item === "single-player") openScreen("single-player");
+        else if (item === "multiplayer") showMultiplayerPanel();
+        else if (item === "options") openScreen("options");
+        else if (item === "help") openScreen("help");
+        else if (item === "quit" && options.isQuitEnabled?.()) options.onSelectQuit?.();
+        return;
+      case "single-player":
+        if (item === "new-game") selectNewGame();
+        else if (item === "level-select") openScreen("level-select");
+        else if (item === "load") selectLoadGame();
+        else if (item === "save") selectSaveGame();
+        return;
+      case "options":
+        activateOptionRow(item, 1);
+        return;
+      case "level-select": {
+        const match = /^level:(\d+)$/.exec(item);
+        if (match) selectLevel(Number(match[1]));
+        return;
+      }
+      case "multiplayer":
+        if (item === "mp-create") options.onMultiplayerSubmit?.();
+        else focusMultiplayerControl(item);
+        return;
       default:
-        return false;
+        return;
     }
   }
 
-  function handleSinglePlayerPanelKey(event: KeyboardEvent): boolean {
-    if (!isSinglePlayerPanelOpen()) return false;
-    const button = singlePlayerButtonFor(event.target);
-    switch (event.code) {
-      case "Escape":
-      case "Backspace":
-        event.preventDefault();
-        event.stopPropagation();
-        closeMenuPanel();
-        return true;
-      case "Enter":
-      case "Space":
-        event.preventDefault();
-        event.stopPropagation();
-        activateSinglePlayerButton(button ?? currentSinglePlayerButton());
-        return true;
-      case "ArrowDown":
-      case "KeyS":
-        event.preventDefault();
-        event.stopPropagation();
-        focusSinglePlayerButton(1);
-        return true;
-      case "ArrowUp":
-      case "KeyW":
-        event.preventDefault();
-        event.stopPropagation();
-        focusSinglePlayerButton(-1);
-        return true;
-      default:
-        return false;
+  // ── Multiplayer native controls ────────────────────────────────────────────
+
+  function multiplayerBindings(): readonly QuakeMenuMultiplayerControlBinding[] {
+    return options.multiplayerControls?.() ?? [];
+  }
+
+  function showMultiplayerPanel(): void {
+    if (!(options.isMultiplayerEnabled?.() ?? true)) return;
+    updateQuakeMenuSceneState({ multiplayerFailure: false });
+    openScreen("multiplayer");
+    options.onShowMultiplayer?.();
+    syncMultiplayerControls();
+  }
+
+  function showMultiplayerFailure(title: string): void {
+    if (!enabled) {
+      showMainMenu();
+      return;
+    }
+    updateQuakeMenuSceneTexts({ "mp:failure": title });
+    openScreen("multiplayer");
+    updateQuakeMenuSceneState({ multiplayerFailure: true, activeItem: "back" });
+    syncMultiplayerControls();
+  }
+
+  /** Position (or hide) the native controls over their manifest rects. */
+  function syncMultiplayerControls(): void {
+    const bindings = multiplayerBindings();
+    if (!bindings.length) return;
+    const st = state();
+    const visible = st.screen === "multiplayer" && !st.multiplayerFailure && !st.deferred;
+    const frame = quakeMenuSceneFrame(window.innerWidth, window.innerHeight);
+    const sx = frame.w / QUAKE_MENU_SCENE_FRAME_W;
+    const sy = frame.h / QUAKE_MENU_SCENE_FRAME_H;
+    bindings.forEach((binding, index) => {
+      const el = binding.element;
+      if (!visible) {
+        el.style.display = "none";
+        return;
+      }
+      const rect = quakeMenuMultiplayerControlRect(index);
+      el.style.display = "block";
+      el.style.position = "absolute";
+      el.style.left = `${frame.x + rect.x * sx}px`;
+      el.style.top = `${frame.y + rect.y * sy}px`;
+      el.style.width = `${rect.w * sx}px`;
+      el.style.height = `${rect.h * sy}px`;
+      el.style.fontSize = `${6 * sy}px`;
+      el.style.zIndex = "5";
+    });
+  }
+
+  function focusMultiplayerControl(item: string): void {
+    const binding = multiplayerBindings().find((b) => b.id === item);
+    binding?.element.focus({ preventScroll: true });
+  }
+
+  function syncMultiplayerFocusForItem(item: string): void {
+    if (currentScreen() !== "multiplayer") return;
+    if (multiplayerBindings().some((b) => b.id === item)) {
+      focusMultiplayerControl(item);
+    } else if (document.activeElement instanceof HTMLElement &&
+               multiplayerBindings().some((b) => b.element === document.activeElement)) {
+      document.activeElement.blur();
     }
   }
 
-  function handleMenuPanelKey(event: KeyboardEvent): boolean {
-    if (!isMenuPanelOpen()) return false;
-    if (startingNewGame) {
+  function handleControlFocus(event: FocusEvent): void {
+    const binding = multiplayerBindings().find((b) => b.element === event.currentTarget);
+    if (!binding) return;
+    setActiveItem(binding.id);
+    updateQuakeMenuSceneState({ editingItem: binding.id });
+  }
+
+  function handleControlBlur(): void {
+    updateQuakeMenuSceneState({ editingItem: null });
+  }
+
+  // ── Pointer input: hit-test the manifest hotspots ──────────────────────────
+
+  function isNativeInteractive(target: EventTarget | null): boolean {
+    return target instanceof Element &&
+      target.closest("a, input, select, button, textarea") !== null;
+  }
+
+  function itemAtPointer(clientX: number, clientY: number): string | null {
+    const st = state();
+    if (!st.screen || st.pending || st.deferred) return null;
+    const frame = quakeMenuSceneFrame(window.innerWidth, window.innerHeight);
+    const sx = frame.w / QUAKE_MENU_SCENE_FRAME_W;
+    const sy = frame.h / QUAKE_MENU_SCENE_FRAME_H;
+    // REVERSE order: the Back hotspot is listed last and its measured box
+    // overlaps the last option row's band — later entries win the overlap,
+    // as the later-in-DOM button did in the HTML this replaces.
+    for (const spot of [...hotspots()].reverse()) {
+      if (st.disabledItems.includes(spot.id)) continue;
+      const left = frame.x + spot.rect.x * sx;
+      const top = frame.y + spot.rect.y * sy;
+      if (
+        clientX >= left && clientX <= left + spot.rect.w * sx &&
+        clientY >= top && clientY <= top + spot.rect.h * sy
+      ) {
+        return spot.id;
+      }
+    }
+    return null;
+  }
+
+  function insideMenuFrame(clientX: number, clientY: number): boolean {
+    const frame = quakeMenuSceneFrame(window.innerWidth, window.innerHeight);
+    return clientX >= frame.x && clientX <= frame.x + frame.w &&
+      clientY >= frame.y && clientY <= frame.y + frame.h;
+  }
+
+  function handlePointerMove(event: PointerEvent): void {
+    if (!enabled || !currentScreen()) return;
+    if (document.pointerLockElement) return;
+    if (isNativeInteractive(event.target)) {
+      document.body.style.cursor = "";
+      return;
+    }
+    const item = itemAtPointer(event.clientX, event.clientY);
+    if (item) {
+      if (state().activeItem !== item) setActiveItem(item);
+      document.body.style.cursor = "pointer";
+    } else {
+      document.body.style.cursor = "";
+    }
+  }
+
+  function handlePointerDown(event: PointerEvent): void {
+    if (!enabled || !currentScreen()) return;
+    if (document.pointerLockElement) return;
+    if (event.button !== 0) return;
+    if (isNativeInteractive(event.target)) return;
+    if (startingNewGame) return;
+    const st = state();
+    if (st.pending || st.deferred) return;
+    const item = itemAtPointer(event.clientX, event.clientY);
+    if (item) {
+      event.preventDefault();
+      setActiveItem(item);
+      activateItem(item);
+      return;
+    }
+    // A click outside the menu card closes a panel (the shipped behaviour);
+    // clicks on the landing screen's empty space do nothing.
+    if (isMenuPanelOpen() && !insideMenuFrame(event.clientX, event.clientY)) {
+      closeMenuPanel();
+    }
+  }
+
+  function handleWindowResize(): void {
+    syncMultiplayerControls();
+  }
+
+  // ── Keyboard ───────────────────────────────────────────────────────────────
+
+  function isTextEntryTarget(target: EventTarget | null): boolean {
+    const element = target instanceof HTMLElement ? target : null;
+    return Boolean(element?.closest('input[type="text"], input[type="number"], input:not([type]), textarea, select'));
+  }
+
+  function handleKeyDown(event: KeyboardEvent): boolean {
+    if (!enabled) return false;
+    const screen = currentScreen();
+    if (!screen) return false;
+    if (startingNewGame && screen !== "landing") {
       event.preventDefault();
       event.stopPropagation();
       return true;
     }
-    if (isMultiplayerPanelOpen()) {
-      if (event.code === "Escape" || event.code === "Backspace") {
-        event.preventDefault();
-        event.stopPropagation();
-        closeMenuPanel();
-        return true;
-      }
-      if (isTextEntryTarget(event.target)) return false;
-      if (event.code === "ArrowDown" || event.code === "KeyS") {
-        event.preventDefault();
-        event.stopPropagation();
-        focusMultiplayerControl(1);
-        return true;
-      }
-      if (event.code === "ArrowUp" || event.code === "KeyW") {
-        event.preventDefault();
-        event.stopPropagation();
-        focusMultiplayerControl(-1);
-        return true;
-      }
-    }
-    if (handleSinglePlayerPanelKey(event)) return true;
-    if (handleLevelPanelKey(event)) return true;
-    const sourceLink = aboutSourceLinkFor(event.target);
-    const optionToggle = menuOptionToggleFor(event.target);
+
+    const nativeEntry = isTextEntryTarget(event.target);
+
     switch (event.code) {
       case "Escape":
       case "Backspace":
+        if (event.code === "Backspace" && nativeEntry) return false;
         event.preventDefault();
         event.stopPropagation();
-        closeMenuPanel();
-        return true;
-      case "Enter":
-        if (optionToggle) {
-          event.preventDefault();
-          event.stopPropagation();
-          toggleMenuOption(optionToggle, 1);
-          return true;
-        }
-        if (sourceLink) return false;
-        event.preventDefault();
-        event.stopPropagation();
-        closeMenuPanel();
-        return true;
-      case "Space":
-        event.preventDefault();
-        event.stopPropagation();
-        if (optionToggle) {
-          toggleMenuOption(optionToggle, 1);
-        } else if (sourceLink) {
-          sourceLink.click();
+        if (screen === "landing") {
+          if (options.shouldResumeMainMenuOnEscape?.()) {
+            options.onResumeMainMenuFromEscape?.();
+            startFromMainMenu();
+          }
         } else {
           closeMenuPanel();
         }
         return true;
       case "ArrowDown":
       case "KeyS":
+        if (nativeEntry) return false;
         event.preventDefault();
         event.stopPropagation();
-        if (currentOptionPanel()) focusMenuOptionToggle(1);
+        moveSelection(1);
         return true;
       case "ArrowUp":
       case "KeyW":
+        if (nativeEntry) return false;
         event.preventDefault();
         event.stopPropagation();
-        if (currentOptionPanel()) focusMenuOptionToggle(-1);
+        moveSelection(-1);
         return true;
       case "ArrowLeft":
       case "KeyA":
-        event.preventDefault();
-        event.stopPropagation();
-        if (currentOptionPanel()) toggleMenuOption(currentMenuOptionToggle(), -1);
-        return true;
+        if (nativeEntry) return false;
+        if (screen === "options") {
+          event.preventDefault();
+          event.stopPropagation();
+          const active = state().activeItem;
+          if (active && active !== "back") activateOptionRow(active, -1);
+          return true;
+        }
+        if (screen === "level-select" || screen === "single-player") {
+          event.preventDefault();
+          event.stopPropagation();
+          moveSelection(-1);
+          return true;
+        }
+        return false;
       case "ArrowRight":
       case "KeyD":
-        event.preventDefault();
-        event.stopPropagation();
-        if (currentOptionPanel()) toggleMenuOption(currentMenuOptionToggle(), 1);
-        return true;
-      default:
-        return false;
-    }
-  }
-
-  function handleMenuPanelClick(event: MouseEvent): void {
-    if (startingNewGame) {
-      event.preventDefault();
-      event.stopPropagation();
-      return;
-    }
-    if (menuBackButtonFor(event.target)) {
-      closeMenuPanel();
-      return;
-    }
-    const singlePlayerButton = singlePlayerButtonFor(event.target);
-    if (singlePlayerButton) {
-      activateSinglePlayerButton(singlePlayerButton);
-      return;
-    }
-    const levelButton = levelButtonFor(event.target);
-    if (levelButton) {
-      selectLevel(levelButton);
-      return;
-    }
-    if (aboutSourceLinkFor(event.target)) return;
-    if (menuCardFor(event.target)) return;
-    closeMenuPanel();
-  }
-
-  function handleMainMenuKey(event: KeyboardEvent): boolean {
-    if (!isMainMenuOpen()) return false;
-    switch (event.code) {
-      case "ArrowDown":
-      case "KeyS":
-        event.preventDefault();
-        event.stopPropagation();
-        moveMainMenuCursor(1);
-        return true;
-      case "ArrowUp":
-      case "KeyW":
-        event.preventDefault();
-        event.stopPropagation();
-        moveMainMenuCursor(-1);
-        return true;
-      case "Enter":
-        event.preventDefault();
-        event.stopPropagation();
-        activateMainMenuSelection();
-        return true;
-      case "Space":
-        event.preventDefault();
-        event.stopPropagation();
-        activateMainMenuSelection();
-        return true;
-      case "Escape":
-        event.preventDefault();
-        event.stopPropagation();
-        if (shouldResumeMainMenuOnEscape?.()) {
-          onResumeMainMenuFromEscape?.();
-          startFromMainMenu();
+        if (nativeEntry) return false;
+        if (screen === "options") {
+          event.preventDefault();
+          event.stopPropagation();
+          const active = state().activeItem;
+          if (active && active !== "back") activateOptionRow(active, 1);
+          return true;
         }
+        if (screen === "level-select" || screen === "single-player") {
+          event.preventDefault();
+          event.stopPropagation();
+          moveSelection(1);
+          return true;
+        }
+        return false;
+      case "Enter":
+      case "Space":
+        if (event.code === "Space" && nativeEntry) return false;
+        if (event.code === "Enter" && screen === "multiplayer" && nativeEntry) {
+          // Implicit form submission, as the shipped <form> behaved.
+          event.preventDefault();
+          event.stopPropagation();
+          options.onMultiplayerSubmit?.();
+          return true;
+        }
+        event.preventDefault();
+        event.stopPropagation();
+        activateItem(state().activeItem ?? selectableItems()[0] ?? null);
         return true;
       default:
         return false;
     }
-  }
-
-  function handleKeyDown(event: KeyboardEvent): boolean {
-    return handleMenuPanelKey(event) || handleMainMenuKey(event);
-  }
-
-  function handleMainMenuClick(event: MouseEvent): void {
-    const row = mainMenuPointerRow(event);
-    if (row === null) return;
-    if (!selectMainMenuRow(row)) return;
-    activateMainMenuSelection();
-  }
-
-  function handleMainMenuPointerMove(event: PointerEvent): void {
-    const row = mainMenuPointerRow(event);
-    if (row !== null && selectMainMenuRow(row)) {
-      mainMenu?.classList.add("quake-main-menu-hover");
-    } else {
-      mainMenu?.classList.remove("quake-main-menu-hover");
-    }
-  }
-
-  function handleMainMenuPointerLeave(): void {
-    mainMenu?.classList.remove("quake-main-menu-hover");
-  }
-
-  function mainMenuPointerRow(event: MouseEvent): number | null {
-    if (!mainMenuArt) return null;
-    const items = mainMenuItems();
-    for (const item of items) {
-      const itemRect = item.getBoundingClientRect();
-      const cursor = item.querySelector<HTMLElement>(".quake-main-menu-item-cursor");
-      const cursorRect = cursor && getComputedStyle(cursor).display !== "none"
-        ? cursor.getBoundingClientRect()
-        : null;
-      const left = cursorRect ? Math.min(itemRect.left, cursorRect.left) : itemRect.left;
-      const right = cursorRect ? Math.max(itemRect.right, cursorRect.right) : itemRect.right;
-      const top = cursorRect ? Math.min(itemRect.top, cursorRect.top) : itemRect.top;
-      const bottom = cursorRect ? Math.max(itemRect.bottom, cursorRect.bottom) : itemRect.bottom;
-      if (
-        event.clientX >= left &&
-        event.clientX <= right &&
-        event.clientY >= top &&
-        event.clientY <= bottom
-      ) {
-        const row = items.indexOf(item);
-        return row >= 0 ? row : null;
-      }
-    }
-    return null;
   }
 
   function focusCurrent(): void {
-    if (isSinglePlayerPanelOpen()) {
-      (currentSinglePlayerButton() ?? firstSinglePlayerButton() ?? singlePlayerPanel)?.focus({ preventScroll: true });
-    } else if (isMultiplayerPanelOpen()) {
-      (isMultiplayerFailurePanelOpen()
-        ? multiplayerBackButton()
-        : currentMultiplayerControl() ?? multiplayerPanel
-      )?.focus({ preventScroll: true });
-    } else if (isLevelPanelOpen()) {
-      (currentLevelButton() ?? firstLevelButton() ?? levelPanel)?.focus({ preventScroll: true });
-    } else if (isAboutPanelOpen()) {
-      aboutPanel?.focus({ preventScroll: true });
-    } else if (isOptionsPanelOpen()) {
-      optionsPanel?.focus({ preventScroll: true });
-    } else if (isMainMenuOpen()) {
-      mainMenu?.focus({ preventScroll: true });
-    } else {
-      host.focus();
+    const st = state();
+    if (st.screen === "multiplayer" && st.activeItem &&
+        multiplayerBindings().some((b) => b.id === st.activeItem)) {
+      focusMultiplayerControl(st.activeItem);
+      return;
     }
+    host.focus({ preventScroll: true });
   }
+
+  // ── Wiring ─────────────────────────────────────────────────────────────────
 
   function handleControlsStart(): void {
     hideMainMenu();
   }
 
   function handleControlsEnd(): void {
-    if (shouldOpenMainMenuOnControlsEnd && !shouldOpenMainMenuOnControlsEnd()) return;
+    if (options.shouldOpenMainMenuOnControlsEnd && !options.shouldOpenMainMenuOnControlsEnd()) return;
     showMainMenu();
   }
 
   function dispose(): void {
-    mainMenu?.removeEventListener("click", handleMainMenuClick);
-    mainMenu?.removeEventListener("pointermove", handleMainMenuPointerMove);
-    mainMenu?.removeEventListener("pointerleave", handleMainMenuPointerLeave);
-    singlePlayerPanel?.removeEventListener("click", handleMenuPanelClick);
-    singlePlayerPanel?.removeEventListener("focusin", handleSinglePlayerFocusIn);
-    singlePlayerPanel?.removeEventListener("pointerover", handleSinglePlayerPointerOver);
-    multiplayerPanel?.removeEventListener("click", handleMenuPanelClick);
-    levelPanel?.removeEventListener("click", handleMenuPanelClick);
-    aboutPanel?.removeEventListener("click", handleMenuPanelClick);
-    optionsPanel?.removeEventListener("click", handleMenuPanelClick);
+    window.removeEventListener("pointermove", handlePointerMove);
+    window.removeEventListener("pointerdown", handlePointerDown, { capture: true });
+    window.removeEventListener("resize", handleWindowResize);
+    for (const binding of multiplayerBindings()) {
+      binding.element.removeEventListener("focus", handleControlFocus);
+      binding.element.removeEventListener("blur", handleControlBlur);
+    }
     controls.removeEventListener("start", handleControlsStart);
     controls.removeEventListener("end", handleControlsEnd);
+    document.body.style.cursor = "";
   }
 
   if (enabled) {
-    mainMenu?.addEventListener("click", handleMainMenuClick);
-    mainMenu?.addEventListener("pointermove", handleMainMenuPointerMove);
-    mainMenu?.addEventListener("pointerleave", handleMainMenuPointerLeave);
-    singlePlayerPanel?.addEventListener("click", handleMenuPanelClick);
-    singlePlayerPanel?.addEventListener("focusin", handleSinglePlayerFocusIn);
-    singlePlayerPanel?.addEventListener("pointerover", handleSinglePlayerPointerOver);
-    multiplayerPanel?.addEventListener("click", handleMenuPanelClick);
-    levelPanel?.addEventListener("click", handleMenuPanelClick);
-    aboutPanel?.addEventListener("click", handleMenuPanelClick);
-    optionsPanel?.addEventListener("click", handleMenuPanelClick);
+    window.addEventListener("pointermove", handlePointerMove);
+    // Capture: the polycss camera host swallows pointer events for mouselook.
+    window.addEventListener("pointerdown", handlePointerDown, { capture: true });
+    window.addEventListener("resize", handleWindowResize);
+    for (const binding of multiplayerBindings()) {
+      binding.element.addEventListener("focus", handleControlFocus);
+      binding.element.addEventListener("blur", handleControlBlur);
+    }
     controls.addEventListener("start", handleControlsStart);
     controls.addEventListener("end", handleControlsEnd);
+    // No state seeding here: the app module is still initializing when this
+    // constructor runs, and the row model's getters close over bindings that
+    // do not exist yet. The first openScreen() call refreshes everything.
   }
 
   return {
@@ -1100,6 +703,7 @@ export function createQuakeMenuController({
     setCurrentLevel,
     handleKeyDown,
     focusCurrent,
+    syncOptionTexts,
     dispose,
   };
 }

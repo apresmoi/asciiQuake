@@ -8,7 +8,6 @@ import {
 import type { QuakeUrlRoute } from "../routeState";
 import { addQuakeBodyClasses, removeQuakeBodyClasses } from "./dom";
 import { updateQuakeMenuSceneState } from "../menuSceneState";
-import type { QuakeAppDomElements } from "./dom";
 import type { QuakeAssetManifest, QuakeMapLoadOptions } from "./session";
 
 const QUAKE_LOADING_READY_MIN_PRESENTED_FRAMES = 6;
@@ -28,7 +27,6 @@ export interface QuakeLoadingReadinessSnapshot {
 }
 
 export interface QuakeLoadingFlowOptions {
-  dom: QuakeAppDomElements;
   initialLoading: boolean;
   previewEnabled: boolean;
   currentMapName(): string;
@@ -48,7 +46,6 @@ export interface QuakeLoadingFlowOptions {
   clearWeaponViewPunch(): void;
   hideStatsOverlay(): void;
   onLoadingChange(loading: boolean): void;
-  renderBitmapText(element: HTMLElement): void;
   setControlsLoading(): void;
   syncCrosshairTarget(): void;
   syncDebugFlyMode(): void;
@@ -96,17 +93,18 @@ export interface QuakeLoadingStartupOptions {
 }
 
 export function createQuakeLoadingFlow(options: QuakeLoadingFlowOptions): QuakeLoadingFlow {
-  const dom = options.dom;
   let loading = options.initialLoading;
+  // The loading overlay as STATE (the old element's hidden flag and classes):
+  // visibility doubles as the glyph scene's chrome; the death card and the
+  // persisted-console flag are what the CSS classes used to carry.
+  let overlayVisible = true;
+  let consolePersisted = false;
+  let deathActive = false;
   const loadingConsole = createQuakeLoadingConsole({
-    overlay: dom.loadingOverlay,
-    status: dom.loadingStatus,
-    progress: dom.loadingProgress,
-    progressFill: dom.loadingProgressFill,
-    action: dom.loadingAction,
+    isOverlayVisible: () => overlayVisible,
+    isDeathActive: () => deathActive,
     hasCurrentResult: options.hasCurrentResult,
     isLoading: () => loading,
-    renderBitmapText: options.renderBitmapText,
   });
 
   function setLoadingState(active: boolean): void {
@@ -171,27 +169,25 @@ export function createQuakeLoadingFlow(options: QuakeLoadingFlowOptions): QuakeL
    * attribute itself (its DOM observer deliberately watches childList only).
    */
   function setLoadingOverlayHidden(hidden: boolean): void {
-    if (dom.loadingOverlay) dom.loadingOverlay.hidden = hidden;
+    overlayVisible = !hidden;
     updateQuakeMenuSceneState({ chrome: !hidden });
   }
 
   function handleGameplayStarted(started: boolean): void {
-    if (!started || !dom.loadingOverlay?.classList.contains("quake-loading-console-persisted")) return;
+    if (!started || !consolePersisted) return;
     if (!options.previewEnabled) {
       hidePersistedConsole();
       return;
     }
     removeQuakeBodyClasses("quake-loading");
     setLoadingOverlayHidden(false);
-    dom.loadingOverlay.setAttribute("aria-busy", "false");
   }
 
   function hidePersistedConsole(): void {
-    if (!dom.loadingOverlay?.classList.contains("quake-loading-console-persisted")) return;
+    if (!consolePersisted) return;
     removeQuakeBodyClasses("quake-loading");
     setLoadingOverlayHidden(true);
-    dom.loadingOverlay.removeAttribute("aria-busy");
-    dom.loadingOverlay.classList.remove("quake-loading-console-persisted");
+    consolePersisted = false;
     loadingConsole.clearQueue();
   }
 
@@ -215,17 +211,14 @@ export function createQuakeLoadingFlow(options: QuakeLoadingFlowOptions): QuakeL
       clearRuntimeInputForLoading();
       options.hideStatsOverlay();
       addQuakeBodyClasses("quake-loading");
-      dom.loadingOverlay?.classList.remove("quake-loading-console-persisted");
+      consolePersisted = false;
       if (!flowOptions.preserveConsole) loadingConsole.reset(status);
       if (!(status === "Loading" && !options.hasCurrentResult())) {
         loadingConsole.updateDisplay(status, { completed: 0, total: 0 });
       }
       loadingConsole.hideAction();
       loadingConsole.showProgress();
-      if (dom.loadingOverlay) {
-        setLoadingOverlayHidden(false);
-        dom.loadingOverlay.setAttribute("aria-busy", "true");
-      }
+      setLoadingOverlayHidden(false);
       options.setControlsLoading();
       options.clearCrosshairTarget();
       return;
@@ -233,18 +226,12 @@ export function createQuakeLoadingFlow(options: QuakeLoadingFlowOptions): QuakeL
 
     if (options.previewEnabled || !options.isGameplayStarted()) {
       addQuakeBodyClasses("quake-loading");
-      if (dom.loadingOverlay) {
-        setLoadingOverlayHidden(false);
-        dom.loadingOverlay.setAttribute("aria-busy", "false");
-        dom.loadingOverlay.classList.add("quake-loading-console-persisted");
-      }
+      setLoadingOverlayHidden(false);
+      consolePersisted = true;
     } else {
       removeQuakeBodyClasses("quake-loading");
-      if (dom.loadingOverlay) {
-        setLoadingOverlayHidden(true);
-        dom.loadingOverlay.removeAttribute("aria-busy");
-        dom.loadingOverlay.classList.remove("quake-loading-console-persisted");
-      }
+      setLoadingOverlayHidden(true);
+      consolePersisted = false;
     }
     loadingConsole.completeQueue();
     loadingConsole.hideAction();
@@ -259,14 +246,8 @@ export function createQuakeLoadingFlow(options: QuakeLoadingFlowOptions): QuakeL
   function hideMainMenuForLoadingError(): void {
     removeQuakeBodyClasses("quake-menu-open", "quake-main-menu-pending");
     addQuakeBodyClasses("quake-main-menu-deferred");
-    // Mirror into the scene state: the glyph overlay draws the menu from data,
-    // not from these classes/attributes.
+    // The glyph overlay draws the menu from data, not from these classes.
     updateQuakeMenuSceneState({ screen: null, pending: false, deferred: true });
-    if (dom.mainMenu) dom.mainMenu.hidden = true;
-    dom.singlePlayerPanel?.setAttribute("hidden", "");
-    dom.levelPanel?.setAttribute("hidden", "");
-    dom.aboutPanel?.setAttribute("hidden", "");
-    dom.optionsPanel?.setAttribute("hidden", "");
   }
 
   function setError(error?: unknown): void {
@@ -274,11 +255,8 @@ export function createQuakeLoadingFlow(options: QuakeLoadingFlowOptions): QuakeL
     clearRuntimeInputForLoading();
     addQuakeBodyClasses("quake-loading");
     hideMainMenuForLoadingError();
-    if (dom.loadingOverlay) {
-      setLoadingOverlayHidden(false);
-      dom.loadingOverlay.setAttribute("aria-busy", "false");
-      dom.loadingOverlay.classList.add("quake-loading-console-persisted");
-    }
+    setLoadingOverlayHidden(false);
+    consolePersisted = true;
     loadingConsole.reset("Load failed");
     loadingConsole.updateDisplay("Load failed", { completed: 0, total: 0 });
     loadingConsole.completeQueue();
@@ -296,37 +274,34 @@ export function createQuakeLoadingFlow(options: QuakeLoadingFlowOptions): QuakeL
     loadingConsole.reset(QUAKE_ASSETS_REGENERATING_STATUS);
     loadingConsole.updateDisplay(QUAKE_ASSETS_REGENERATING_STATUS, { completed: 0, total: 0 });
     loadingConsole.showAction(message);
-    if (dom.loadingOverlay) {
-      setLoadingOverlayHidden(false);
-      dom.loadingOverlay.setAttribute("aria-busy", "true");
-    }
+    setLoadingOverlayHidden(false);
     options.setControlsLoading();
     options.clearCrosshairTarget();
   }
 
   function hasDeathOverlay(): boolean {
-    return dom.loadingOverlay?.classList.contains("quake-loading-death") === true;
+    return deathActive;
   }
 
   function showDeathOverlay(): void {
-    if (!dom.loadingOverlay) return;
     loadingConsole.clearQueue();
-    setLoadingOverlayHidden(false);
-    dom.loadingOverlay.classList.add("quake-loading-death");
-    dom.loadingOverlay.setAttribute("aria-busy", "false");
+    // Deliberately NOT chrome: the shipped death card had a transparent
+    // ground — "you died" draws over the live world, no backdrop.
+    deathActive = true;
+    updateQuakeMenuSceneState({ consoleDeath: true });
     loadingConsole.setLines(["you died"]);
     loadingConsole.hideProgress();
     loadingConsole.hideAction();
   }
 
   function clearDeathOverlay(): void {
-    if (!hasDeathOverlay() || !dom.loadingOverlay) return;
-    dom.loadingOverlay.classList.remove("quake-loading-death");
+    if (!deathActive) return;
+    deathActive = false;
+    updateQuakeMenuSceneState({ consoleDeath: false });
     loadingConsole.hideAction();
     loadingConsole.showProgress();
     if (!loading && !options.previewEnabled) {
       setLoadingOverlayHidden(true);
-      dom.loadingOverlay.removeAttribute("aria-busy");
     }
   }
 

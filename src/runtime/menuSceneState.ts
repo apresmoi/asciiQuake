@@ -47,6 +47,37 @@ export interface QuakeMenuSceneState {
   readonly chrome: boolean;
   /** The gameplay HUD's presentation state — see {@link QuakeHudSceneState}. */
   readonly hud: QuakeHudSceneState;
+  /**
+   * Dynamic strings by key, drawn by the manifest text defs (`key` lookups):
+   * option values ("opt:<rowId>"), the version tag ("version"), the
+   * multiplayer failure title ("mp:failure"). Positions live in the manifest;
+   * only the words live here.
+   */
+  readonly texts: Readonly<Record<string, string>>;
+  /** Boot/loading console lines, newest last — drawn viewport-anchored. */
+  readonly consoleLines: readonly string[];
+  /** Action line under the console (asset-regeneration hint), or null. */
+  readonly consoleAction: string | null;
+  /** Loading progress 0..1 for the console progress bar, or null = hidden. */
+  readonly consoleProgress: number | null;
+  /** Death presentation: the console shows its lines huge and centred. */
+  readonly consoleDeath: boolean;
+  /** Level-select rows, in menu order. */
+  readonly levels: readonly QuakeMenuSceneLevel[];
+  /** Gameplay notify lines (top-left) and centerprint lines (centred). */
+  readonly notifyLines: readonly string[];
+  readonly centerLines: readonly string[];
+  /** Item id whose NATIVE control has focus — its glyph cursor pauses. */
+  readonly editingItem: string | null;
+}
+
+export interface QuakeMenuSceneLevel {
+  readonly map: string;
+  /** "E1M1" — the alt-coloured code column. */
+  readonly code: string;
+  /** "The Slipgate Complex" — the title column. */
+  readonly title: string;
+  readonly current: boolean;
 }
 
 /**
@@ -92,6 +123,15 @@ let state: QuakeMenuSceneState = {
     // time the crosshair option is applied.
     crosshair: "plus",
   },
+  texts: {},
+  consoleLines: [],
+  consoleAction: null,
+  consoleProgress: null,
+  consoleDeath: false,
+  levels: [],
+  notifyLines: [],
+  centerLines: [],
+  editingItem: null,
 };
 
 const listeners = new Set<Listener>();
@@ -110,8 +150,16 @@ export function updateQuakeMenuSceneState(partial: Partial<QuakeMenuSceneState>)
     next.multiplayerFailure === state.multiplayerFailure &&
     next.chrome === state.chrome &&
     hudSceneStatesEqual(next.hud, state.hud) &&
-    next.disabledItems.length === state.disabledItems.length &&
-    next.disabledItems.every((id, i) => id === state.disabledItems[i])
+    stringArraysEqual(next.disabledItems, state.disabledItems) &&
+    next.texts === state.texts &&
+    stringArraysEqual(next.consoleLines, state.consoleLines) &&
+    next.consoleAction === state.consoleAction &&
+    next.consoleProgress === state.consoleProgress &&
+    next.consoleDeath === state.consoleDeath &&
+    next.levels === state.levels &&
+    stringArraysEqual(next.notifyLines, state.notifyLines) &&
+    stringArraysEqual(next.centerLines, state.centerLines) &&
+    next.editingItem === state.editingItem
   ) {
     return;
   }
@@ -121,6 +169,20 @@ export function updateQuakeMenuSceneState(partial: Partial<QuakeMenuSceneState>)
 
 export function updateQuakeHudSceneState(partial: Partial<QuakeHudSceneState>): void {
   updateQuakeMenuSceneState({ hud: { ...state.hud, ...partial } });
+}
+
+/** Merge dynamic strings into `texts` (values are drawn by manifest `key` defs). */
+export function updateQuakeMenuSceneTexts(partial: Record<string, string>): void {
+  let changed = false;
+  for (const [key, value] of Object.entries(partial)) {
+    if (state.texts[key] !== value) { changed = true; break; }
+  }
+  if (!changed) return;
+  updateQuakeMenuSceneState({ texts: { ...state.texts, ...partial } });
+}
+
+function stringArraysEqual(a: readonly string[], b: readonly string[]): boolean {
+  return a.length === b.length && a.every((v, i) => v === b[i]);
 }
 
 function hudSceneStatesEqual(a: QuakeHudSceneState, b: QuakeHudSceneState): boolean {
