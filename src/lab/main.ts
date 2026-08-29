@@ -24,7 +24,7 @@ import {
   type QuakeGlyphTuningValues,
 } from "../runtime/app/glyphTuningSpec";
 import { GLYPH_FONT_ATLAS_ASCII, WIREFRAME_PALETTES } from "glyphcss";
-import { isAsciiOnlyGlyphPalette } from "../runtime/app/asciiGlyphPolicy";
+import { isAsciiOnlyGlyphPalette, sanitizeQuakeGlyphPalette } from "../runtime/app/asciiGlyphPolicy";
 import logoUrl from "../assets/cssquake-logo.png";
 import plaqueUrl from "../assets/main-menu-plaque-baked.png";
 import titleUrl from "../assets/main-menu-title-baked.png";
@@ -58,7 +58,7 @@ let source: SourceKind = (startupParams.get("labSource") as SourceKind) || "logo
 let displayW = numParam("labW", 120, 1600, 620);
 let labText = startupParams.get("labText") ?? "Loading sound/misc/menu1.wav\nQUAKE v1.09";
 let textGlyphPx = numParam("labGlyphPx", 6, 96, 16);
-let palette = startupParams.get("glyphImagePalette") ?? "detail";
+let palette = sanitizeQuakeGlyphPalette(startupParams.get("glyphImagePalette"));
 let encoding: "atlas" | "spans" =
   startupParams.get("glyphImageEncoding") === "spans" ? "spans" : "atlas";
 let segment = startupParams.get("labSegment") !== "0";
@@ -333,19 +333,13 @@ function buildControls(): void {
   // Palette / encoding
   addHeader("Glyph palette / encoding");
   const palSel = document.createElement("select");
-  for (const name of Object.keys(WIREFRAME_PALETTES)) {
+  // ASCII ONLY. Non-ASCII palettes are not offered here at all — not even as a
+  // comparison baseline. asciiQuake renders printable ASCII and nothing else, so
+  // the lab must not be able to show something the game can never ship.
+  for (const name of Object.keys(WIREFRAME_PALETTES).filter(isAsciiOnlyGlyphPalette)) {
     const o = document.createElement("option");
     o.value = name;
-    // Non-ASCII palettes stay selectable HERE (the lab is the comparison
-    // tool) but are marked: the game itself rejects them and falls back to
-    // "detail" (see asciiGlyphPolicy.ts), so a copied game URL carrying one
-    // will not reproduce what the lab shows.
-    o.textContent =
-      name === "detail"
-        ? "detail (game default)"
-        : isAsciiOnlyGlyphPalette(name)
-          ? name
-          : `${name} (non-ASCII, lab only - game rejects)`;
+    o.textContent = name === "detail" ? "detail (game default)" : name;
     if (name === palette) o.selected = true;
     palSel.appendChild(o);
   }
