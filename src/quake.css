@@ -2923,3 +2923,22 @@ body.quake-menu-open .dn-stats-overlay {
 .quake-glyph-render #quake-loading-overlay {
   background-color: transparent;
 }
+
+/* ── Input VALUES stay real text ─────────────────────────────────────────────
+   Every other menu label is glyph-rendered, but the text inside a field is live
+   and editable. Mirroring it through the conchars sheet made it read far darker
+   than the labels beside it: the mirror span inherits the input's
+   `rgba(246, 241, 223, 0.84)`, and the overlay folds that alpha into the quad's
+   brightness, landing dim on top of an already-dim sheet. Showing the native
+   text at full opacity instead is both brighter and more correct — a caret and
+   a selection need real text, not a rasterized copy of it. */
+.quake-glyph-render .quake-multiplayer-control-glyph {
+  display: none !important;
+}
+.quake-glyph-render .quake-multiplayer-control-shell input,
+.quake-glyph-render #quake-multiplayer-field input,
+.quake-glyph-render #quake-multiplayer-field select {
+  color: #f6f1df !important;
+  opacity: 1 !important;
+  -webkit-text-fill-color: #f6f1df !important;
+}
