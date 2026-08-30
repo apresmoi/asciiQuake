@@ -26,6 +26,7 @@ import {
   sanitizeQuakeGlyphPalette,
   sanitizeQuakeGlyphSceneMode,
 } from "./runtime/app/asciiGlyphPolicy";
+import { buildQuakeUiMeshStyles } from "./runtime/app/quakeUiMeshStyles";
 import { getQuakeMenuSceneState, updateQuakeMenuSceneState, updateQuakeMenuSceneTexts } from "./runtime/menuSceneState";
 import { GLYPH_FONT_ATLAS_ASCII } from "glyphcss";
 import {
@@ -1551,63 +1552,17 @@ function mountQuakeGlyphUiOverlay(t: QuakeGlyphTuningValues): void {
     // opaque backdrop stole their partial-alpha cells at base-cell
     // granularity and eroded the art (corner logo: 215 of ~650 ink cells
     // survived; the lab keeps them all).
-    meshStyles: {
-      logo: {
-        palette: quakeUiLogoPalette,
-        ambient: t.logoAmbient,
-        gamma: t.logoGamma,
-        saturation: t.logoSaturation,
-        colorBoost: Math.max(1, 1.65 / t.logoAmbient),
-        occlusionMarginPx: t.logoOcclusionMargin,
-      },
-      // ONE profile for every conchars run — boot console AND menu row text
-      // (same font, same path; see drawGlyphRun). Seeded from the user's
-      // console lab session; densities stay per element.
-      text: {
-        palette: quakeUiTextPalette,
-        ambient: t.textAmbient,
-        gamma: t.textCellGamma,
-        saturation: t.textCellSaturation,
-        inkComp: t.textInkComp,
-        strokePx: t.textStroke,
-        sheetGamma: t.textSheetGamma,
-        sheetSaturation: t.textSheetSaturation,
-        occlusionMarginPx: t.textOcclusionMargin,
-      },
-      plaque: {
-        palette: quakeUiPlaquePalette,
-        ambient: t.plaqueAmbient,
-        gamma: t.plaqueGamma,
-        saturation: t.plaqueSaturation,
-        black: t.plaqueBlack,
-        inkComp: t.plaqueInkComp,
-        strokePx: t.plaqueStroke,
-        colorBoost: Math.max(1, 1.65 / t.plaqueAmbient),
-        occlusionMarginPx: t.plaqueOcclusionMargin,
-      },
-      title: {
-        palette: quakeUiTitlePalette,
-        ambient: t.titleAmbient,
-        gamma: t.titleGamma,
-        saturation: t.titleSaturation,
-        black: t.titleBlack,
-        inkComp: t.titleInkComp,
-        strokePx: t.titleStroke,
-        colorBoost: Math.max(1, 1.65 / t.titleAmbient),
-        occlusionMarginPx: t.titleOcclusionMargin,
-      },
-      labels: {
-        palette: quakeUiLabelPalette,
-        ambient: t.labelAmbient,
-        gamma: t.labelGamma,
-        saturation: t.labelSaturation,
-        black: t.labelBlack,
-        inkComp: t.labelInkComp,
-        strokePx: t.labelStroke,
-        colorBoost: Math.max(1, 1.65 / t.labelAmbient),
-        occlusionMarginPx: t.labelOcclusionMargin,
-      },
-    },
+    // The table itself lives in quakeUiMeshStyles.ts, SHARED with the glyph
+    // lab's "complete first screen" preview — the lab renders the exact rows
+    // the game ships, never a copy. Palettes are the sanitized per-element
+    // choices resolved above (ASCII-only policy).
+    meshStyles: buildQuakeUiMeshStyles(t, {
+      logo: quakeUiLogoPalette,
+      text: quakeUiTextPalette,
+      plaque: quakeUiPlaquePalette,
+      title: quakeUiTitlePalette,
+      labels: quakeUiLabelPalette,
+    }),
     // Measured against the cssquake.wtf reference menu (perceived-luminance
     // region stats, 2026-08): 3.0 + the 0.6px glyph stroke + gamma 0.4 +
     // backdropGamma 0.6 lands the banner/plaque within ~70% of the

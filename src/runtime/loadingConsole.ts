@@ -17,7 +17,9 @@ export function setQuakeLoadingRendererLine(mode: "polycss" | "glyphcss"): void 
     : `Using PolyCSS renderer v${__POLYCSS_VERSION__}`;
 }
 
-const quakeLoadingConsoleBootLines = (): readonly string[] => [
+/** Exported for the glyph lab's "complete first screen" preview, which seeds
+ *  the console with the REAL boot transcript instead of a lookalike. */
+export const quakeLoadingConsoleBootLines = (): readonly string[] => [
   "Quake (C) 1996 id Software, Inc.",
   "Shareware version 1.06",
   quakeLoadingRendererLine,

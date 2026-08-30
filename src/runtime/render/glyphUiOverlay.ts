@@ -1,6 +1,10 @@
 import { createGlyphOrthographicCamera, createGlyphScene, quantizeGlyphAtlasPalette, type GlyphFontAtlas } from "glyphcss";
 import type { Polygon } from "@layoutit/polycss";
 import {
+  remapQuakeInkGlyphsToAscii,
+  type QuakeGlyphUiSceneMode,
+} from "../app/asciiGlyphPolicy";
+import {
   QUAKE_MENU_SCENE_FRAME_W,
   QUAKE_MENU_SCENE_FRAME_H,
   QUAKE_CONSOLE_GAP,
@@ -333,6 +337,25 @@ export interface QuakeGlyphUiOverlayOptions {
    * while the panels are still traced.
    */
   readonly menu?: QuakeMenuSceneManifest;
+  /**
+   * glyphcss render mode for the WHOLE UI scene (default "solid" — the
+   * shipped path, byte-identical when omitted). "ink" (silhouette/crease
+   * edges) and "wireframe" (palette-tier strokes) exist for the glyph lab's
+   * render-mode comparison. ASCII policy: sanitize upstream through
+   * `sanitizeQuakeGlyphUiSceneMode` — ink is legal only because this
+   * overlay's `transformCells` hook remaps ink's five non-ASCII oriented
+   * glyphs to ASCII before encoding (see QUAKE_INK_ASCII_GLYPH_REMAP), and
+   * wireframe only because `wireframeJunctions` is never enabled here.
+   */
+  readonly sceneMode?: QuakeGlyphUiSceneMode;
+  /**
+   * Draw the gameplay HUD (status bar art, icons, digit readouts, crosshair)
+   * even while the menu chrome is up. Shipped behavior (`undefined`/false):
+   * the HUD renders only in-game (`state.chrome === false` and no blocking
+   * body class). The glyph lab sets this to preview the complete landing
+   * screen with the HUD bar composited in.
+   */
+  readonly forceHud?: boolean;
   /**
    * Texture URL for a rule, when the element's own `background-image` cannot be
    * read.
@@ -1090,8 +1113,13 @@ export function createQuakeGlyphUiOverlay(
   }
 
   const camera = createGlyphOrthographicCamera({ rotX: 0, rotY: 0, zoom: 1 });
+  // ASCII policy note: `wireframeJunctions` must NEVER be passed here — the
+  // junction resolve pass is glyphcss's one wireframe path that emits
+  // box-drawing (non-ASCII) glyphs. The policy test asserts this file never
+  // names the option.
+  const sceneMode: QuakeGlyphUiSceneMode = options.sceneMode ?? "solid";
   const scene = createGlyphScene(surface, {
-    mode: "solid",
+    mode: sceneMode,
     glyphPalette: options.glyphPalette ?? "detail",
     useColors: true,
     // Same encoder the world overlay uses: one text node of PUA code points
@@ -1107,6 +1135,12 @@ export function createQuakeGlyphUiOverlay(
     // DOM text — whose coordinate math and screen-authored colours assume the
     // full-host grid — is stamped into the base grid only, AFTER its lift.
     transformCells: (grid, layer) => {
+      // Ink mode's ASCII guarantee (asciiGlyphPolicy.ts): the ink rasterizer
+      // draws from a fixed oriented set with five non-ASCII members, so every
+      // ink grid is remapped to ASCII stand-ins BEFORE any other cell work.
+      // This hook runs once per layer on the final glyph buffer — nothing
+      // encodes without passing through it.
+      if (sceneMode === "ink") remapQuakeInkGlyphsToAscii(grid.char);
       // A STYLED mesh's grid gets its own tone: glyphcss names each detail
       // layer with its mesh id (the style tag), so this is exact per-mesh
       // identification, not a shape heuristic. Levels and ink compensation
@@ -1557,7 +1591,9 @@ export function createQuakeGlyphUiOverlay(
    */
   function emitHudScene(groups: Map<string, PolyGroup>, hostBox: DOMRect): void {
     const st = getQuakeMenuSceneState();
-    if (st.chrome || !hudBodyClassesAllow()) return;
+    // `forceHud` (the glyph lab's landing+HUD preview) bypasses both gates;
+    // the shipped path is untouched when the option is absent.
+    if (!options.forceHud && (st.chrome || !hudBodyClassesAllow())) return;
     const hud = st.hud;
     const cx = hostBox.width / 2;
     const cy = hostBox.height / 2;
@@ -2280,6 +2316,21 @@ export function createQuakeGlyphUiOverlay(
     // texture load, so every rebuild renders untextured until the images return —
     // seen as the UI blinking on menu selection, and as a grid of `$` in
     // `#ffffff` when rebuilds outpace the loads.
+    // Ink mode's front-facing test is PROJECTED winding (no doubleSided
+    // escape hatch): under this overlay's axis-swapped frame (world X =
+    // screen down) the quads' shipped vertex order projects as back-facing,
+    // and ink drops every silhouette edge of a back-face — measured as a
+    // completely empty render. Reversing each polygon flips the projected
+    // winding; solid mode is orientation-agnostic here (`doubleSided: true`),
+    // so this runs for ink alone and the shipped path is untouched.
+    if (sceneMode === "ink") {
+      for (const group of groups.values()) {
+        for (const poly of group.polys as unknown as { vertices: unknown[]; uvs?: unknown[] }[]) {
+          poly.vertices.reverse();
+          poly.uvs?.reverse();
+        }
+      }
+    }
     for (const [groupKey, group] of groups) {
       const existing = meshes.get(groupKey);
       if (existing) existing.setPolygons(group.polys);

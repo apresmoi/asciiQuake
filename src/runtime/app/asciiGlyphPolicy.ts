@@ -10,10 +10,21 @@
  * Everything that picks a glyph source funnels through the sanitizers here:
  *  - `sanitizeQuakeGlyphPalette` — `?glyphPalette=`, `?glyphImagePalette=`,
  *    the persisted options-menu choice, and the menu cycle list itself.
- *  - `sanitizeQuakeGlyphSceneMode` — `?glyphSceneMode=`: glyphcss's
- *    "wireframe"/"voxel" modes emit its box-drawing junction set
- *    (│─└┘┌┐├┤┬┴┼) and "ink" renders a fixed oriented set (·‾▔▏▕…), all
- *    non-ASCII, so only "solid" is legal here.
+ *  - `sanitizeQuakeGlyphSceneMode` — `?glyphSceneMode=` (world renderer):
+ *    "solid" and "wireframe" are legal. Wireframe was verified against
+ *    glyphcss 0.1.6: its box-drawing junction set (│─└┘┌┐├┤┬┴┼) is emitted
+ *    ONLY by the `wireframeJunctions: true` resolve pass — with the option
+ *    off (its default; this repo never sets it, wiring-asserted by the
+ *    test) every wireframe cell draws from the palette's thin/normal/core
+ *    tiers, which the palette sanitizer already guarantees are ASCII.
+ *    "voxel" falls through to the junction-capable path unverified and
+ *    stays illegal. "ink" renders a FIXED oriented set (`- _ / \ |` plus
+ *    non-ASCII `· ‾ ▔ ▏ ▕`), ignoring the palette entirely — it is legal
+ *    only where the render path installs {@link QUAKE_INK_ASCII_GLYPH_REMAP}
+ *    (a `transformCells` post-pass). The UI overlay does; the world overlay
+ *    has no cell hook (adding one would touch the per-frame hot path), so
+ *    ink stays rejected for `?glyphSceneMode=` and is allowed only through
+ *    `sanitizeQuakeGlyphUiSceneMode`.
  *  - `sanitizeQuakeGlyphCharMode` — `?glyphCharMode=`: "braille" is Unicode
  *    braille patterns; "halfblock"/"quadrant" are block elements. Only
  *    "ascii" is legal.
@@ -81,13 +92,66 @@ export function sanitizeQuakeGlyphPalette(requested: string | null | undefined):
   return QUAKE_ASCII_FALLBACK_PALETTE;
 }
 
-/** Gate for `?glyphSceneMode=` — only "solid" renders ASCII-only. */
+/**
+ * Ink mode's non-ASCII glyphs → ASCII stand-ins, orientation preserved.
+ *
+ * glyphcss 0.1.6's ink rasterizer picks every cell from ONE hardcoded
+ * oriented set — `- _ / \ |` plus the five keys below — and consults neither
+ * the glyph palette nor `wireframeJunctions` (verified in the 0.1.6 bundle;
+ * the policy test re-verifies by rendering through the library). Remapping
+ * these five therefore makes ink's whole output alphabet printable ASCII.
+ * Applied as the FIRST step of a `transformCells` hook wherever ink mode is
+ * exposed (the UI overlay); the wiring test asserts that hook exists.
+ */
+export const QUAKE_INK_ASCII_GLYPH_REMAP: Readonly<Record<string, string>> = Object.freeze({
+  "·": ".", // · middle dot (degenerate/zero-direction cell)
+  "‾": '"', // ‾ overline (high horizontal)
+  "▔": '"', // ▔ upper one-eighth block (high horizontal)
+  "▏": "|", // ▏ left one-eighth block (vertical)
+  "▕": "|", // ▕ right one-eighth block (vertical)
+});
+
+/** In-place ASCII remap of a rasterized cell-glyph array (ink mode). */
+export function remapQuakeInkGlyphsToAscii(chars: string[]): void {
+  for (let i = 0; i < chars.length; i++) {
+    const replacement = QUAKE_INK_ASCII_GLYPH_REMAP[chars[i]!];
+    if (replacement !== undefined) chars[i] = replacement;
+  }
+}
+
+/** The UI overlay's scene modes — the subset with an ASCII guarantee. */
+export type QuakeGlyphUiSceneMode = "solid" | "wireframe" | "ink";
+
+/**
+ * Gate for `?glyphSceneMode=` (WORLD renderer) — "solid" and "wireframe"
+ * render ASCII-only (wireframe: palette tiers only while `wireframeJunctions`
+ * stays unset — see the module doc). Ink needs the remap hook the world
+ * overlay does not have; voxel is unverified. Both fall back to "solid".
+ */
 export function sanitizeQuakeGlyphSceneMode(mode: string | null | undefined): QuakeGlyphSceneMode | undefined {
   if (mode == null || mode === "") return undefined;
-  if (mode === "solid") return mode;
+  if (mode === "solid" || mode === "wireframe") return mode;
   console.warn(
-    `asciiQuake: glyphSceneMode ${JSON.stringify(mode)} rejected - wireframe/voxel emit ` +
-      `box-drawing junctions and ink emits a non-ASCII oriented set. Using "solid".`,
+    `asciiQuake: glyphSceneMode ${JSON.stringify(mode)} rejected - voxel emits box-drawing ` +
+      `junctions and ink emits a non-ASCII oriented set (no remap hook on the world path). ` +
+      `Using "solid". Legal: solid, wireframe.`,
+  );
+  return "solid";
+}
+
+/**
+ * Gate for the UI overlay's scene mode (the glyph lab's render-mode select).
+ * "ink" is legal HERE because the UI overlay's `transformCells` hook applies
+ * {@link QUAKE_INK_ASCII_GLYPH_REMAP} before encoding whenever its scene mode
+ * is ink (wiring-asserted by the policy test); "wireframe" for the same
+ * junctions-off reason as the world gate. Everything else → "solid".
+ */
+export function sanitizeQuakeGlyphUiSceneMode(mode: string | null | undefined): QuakeGlyphUiSceneMode | undefined {
+  if (mode == null || mode === "") return undefined;
+  if (mode === "solid" || mode === "wireframe" || mode === "ink") return mode;
+  console.warn(
+    `asciiQuake: UI glyphSceneMode ${JSON.stringify(mode)} rejected - only solid, wireframe ` +
+      `and ink (ASCII-remapped) are legal. Using "solid".`,
   );
   return "solid";
 }
