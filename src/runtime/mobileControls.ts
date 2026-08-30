@@ -166,6 +166,7 @@ export function createQuakeMobileControls(options: QuakeMobileControlsOptions): 
    * phase and are passive, so they see the gesture before any pointer handler
    * and never block scrolling.
    */
+  let lookAnchorPending = false;
   let lastTouchX = 0;
   let lastTouchY = 0;
   let sawTouchPoint = false;
@@ -350,9 +351,16 @@ export function createQuakeMobileControls(options: QuakeMobileControlsOptions): 
       return;
     }
     lookPointerId = event.pointerId;
-    const lookStart = pointerPoint(event);
-    lookLastX = lookStart.x;
-    lookLastY = lookStart.y;
+    // Do NOT anchor on pointerdown. When this browser zeroes pointer
+    // coordinates the touch fallback still holds the PREVIOUS gesture's point
+    // (pointerdown fires before touchstart, so nothing fresh exists yet), and
+    // the first move then produced `current - stale` — one huge jump, which is
+    // the "tap and drag again and the camera jumps" report: absolute instead of
+    // incremental. The anchor is taken from the first MOVE instead, which always
+    // carries a real coordinate, and that move emits no delta.
+    lookAnchorPending = true;
+    lookLastX = 0;
+    lookLastY = 0;
     lookMoveCount = 0;
     lookStartedAt = performance.now();
     const rect = lookZone?.getBoundingClientRect();
@@ -379,6 +387,13 @@ export function createQuakeMobileControls(options: QuakeMobileControlsOptions): 
       return;
     }
     const lookNow = pointerPoint(event);
+    if (lookAnchorPending) {
+      // First move of the gesture: establish the origin, emit nothing.
+      lookAnchorPending = false;
+      lookLastX = lookNow.x;
+      lookLastY = lookNow.y;
+      return;
+    }
     const deltaX = lookNow.x - lookLastX;
     const deltaY = lookNow.y - lookLastY;
     lookLastX = lookNow.x;
