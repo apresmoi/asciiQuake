@@ -26,6 +26,7 @@ import {
   sanitizeQuakeGlyphPalette,
   sanitizeQuakeGlyphSceneMode,
 } from "./runtime/app/asciiGlyphPolicy";
+import { buildQuakeUiMeshStyles } from "./runtime/app/quakeUiMeshStyles";
 import { getQuakeMenuSceneState, updateQuakeMenuSceneState, updateQuakeMenuSceneTexts } from "./runtime/menuSceneState";
 import { GLYPH_FONT_ATLAS_ASCII } from "glyphcss";
 import {
@@ -741,13 +742,20 @@ const QUAKE_GLYPH_PALETTE_STORAGE_KEY = "cssquake.glyphPalette";
 const QUAKE_GLYPH_PALETTES = QUAKE_ASCII_GLYPH_PALETTES;
 
 // `?glyphPalette=` wins (shareable/debug), then the persisted choice, then the
-// ASCII ramp — this is asciiQuake, so the default has to render as characters.
-// Both sources pass through the ASCII-only sanitizer: a non-ASCII or unknown
-// palette (an old persisted "solid"/"blocks" choice, a hand-typed URL) logs
-// and falls back instead of rendering Unicode.
+// world's shipped default. Both sources pass through the ASCII-only sanitizer:
+// a non-ASCII or unknown palette (an old persisted "solid"/"blocks" choice, a
+// hand-typed URL) logs and falls back instead of rendering Unicode.
+//
+// The world defaults to the `dense` ramp (2026-08 lighting retune): its
+// 25-37% ink floor carries each cell's energy through COVERAGE, which is what
+// let the world tone drop from the old ink-overdriving brighten 6.5 — see
+// QUAKE_GLYPH_WORLD_TUNING_KNOBS. An explicit user choice (menu/URL) wins.
+const QUAKE_WORLD_GLYPH_PALETTE_DEFAULT = "dense";
 function resolveQuakeGlyphPalette(): string {
-  const fromUrl = new URLSearchParams(window.location.search).get("glyphPalette");
-  return sanitizeQuakeGlyphPalette(fromUrl ?? quakeStorageValue(QUAKE_GLYPH_PALETTE_STORAGE_KEY));
+  const requested =
+    new URLSearchParams(window.location.search).get("glyphPalette") ??
+    quakeStorageValue(QUAKE_GLYPH_PALETTE_STORAGE_KEY);
+  return requested ? sanitizeQuakeGlyphPalette(requested) : QUAKE_WORLD_GLYPH_PALETTE_DEFAULT;
 }
 
 // Render backend is picked once at startup: `?renderMode=` wins (shareable,
@@ -1416,14 +1424,34 @@ const quakeGlyphOverlay: QuakeGlyphWorldOverlay | null =
         depthEpsilon: quakeUrlNumberParam(quakeStartupUrlParams, "glyphEps", 0, 0.1) ?? undefined,
         // Glyph ramp palette (intensity → char). Defaults to "blocks" (solid
         // block elements → walls read as surfaces, not letters).
-        // ?glyphPalette=detail|default|ascii to compare.
+        // ?glyphPalette=detail|dense|ascii to compare.
         glyphPalette: resolveQuakeGlyphPalette(),
-        // Entity detail multiplier (default 2): pickups/weapon/enemies/projectiles
-        // render at 2× the world's glyph density in their own depth-occluded layer,
-        // for crisp entities over a cheap coarse world. Detail-layer alignment under
-        // the perspective camera is fixed (glyphcss b1e2bb6). 1 = off; movers stay
-        // at world density. `?glyphEntityDensity=`.
-        entityDensity: quakeUrlNumberParam(quakeStartupUrlParams, "glyphEntityDensity", 1, 4) ?? undefined,
+        // Entity detail multiplier: pickups/weapon/enemies/projectiles render at
+        // this × the world's glyph density in their own depth-occluded layer,
+        // for crisp entities over a cheap coarse world. Detail-layer alignment
+        // under the perspective camera is fixed (glyphcss b1e2bb6). 1 = off;
+        // movers stay at world density. `?glyphEntityDensity=`.
+        //
+        // Default 3, lifted to 4 on high-DPI (2026-08, measured at the 9px world
+        // cell): a NEAR soldier spans 19 detail cells across at the old default 2
+        // — an unreadable blob — vs 28 at 3 (a recognisable soldier) and 38 at 4
+        // (helmet/face/belt resolve). Cost is negligible (PERF_REPORT.md: density
+        // 1→2 moved base-raster 2%; entities cover a small screen fraction). The
+        // ceiling is glyph legibility, not the budget: at DPR 1 a density-4 cell
+        // is 2.25 device px — at the ~2px floor where letterforms carry nothing
+        // and the mesh reads as a gridded sprite — while density 3 (3 device px)
+        // keeps ASCII glyphs visible, so DPR 1 stays at 3. At DPR 2 a density-4
+        // cell is 4.5 device px and strictly sharper; near-entity definition kept
+        // improving through 4 with no grey-out (the corner-logo regression regime
+        // — sub-DEVICE-pixel cells — is never entered).
+        // Lowered one step from 4/3 after the user reported gameplay lag. A static
+        // pose could not reproduce it — densities 2/3/4 all sat vsync-locked at
+        // ~62fps/16.2ms — but the cell count is real (87k/94k/104k at that pose),
+        // and it bites in play, where many entities are visible at once and the
+        // PVS churns. Definition still resolves at 3 (a near soldier is 28 cells
+        // across vs 19 at density 2); `?glyphEntityDensity=` restores 4.
+        entityDensity: quakeUrlNumberParam(quakeStartupUrlParams, "glyphEntityDensity", 1, 4) ??
+          (window.devicePixelRatio >= 1.5 ? 3 : 2),
         // DEBUG: ?glyphEntityTransparent=1 drops entity occlusion (isolate placement
         // vs occlusion); ?glyphEntityOutline=1 boxes each detail layer.
         entityTransparent: quakeStartupUrlParams.get("glyphEntityTransparent") === "1",
@@ -1551,63 +1579,17 @@ function mountQuakeGlyphUiOverlay(t: QuakeGlyphTuningValues): void {
     // opaque backdrop stole their partial-alpha cells at base-cell
     // granularity and eroded the art (corner logo: 215 of ~650 ink cells
     // survived; the lab keeps them all).
-    meshStyles: {
-      logo: {
-        palette: quakeUiLogoPalette,
-        ambient: t.logoAmbient,
-        gamma: t.logoGamma,
-        saturation: t.logoSaturation,
-        colorBoost: Math.max(1, 1.65 / t.logoAmbient),
-        occlusionMarginPx: t.logoOcclusionMargin,
-      },
-      // ONE profile for every conchars run — boot console AND menu row text
-      // (same font, same path; see drawGlyphRun). Seeded from the user's
-      // console lab session; densities stay per element.
-      text: {
-        palette: quakeUiTextPalette,
-        ambient: t.textAmbient,
-        gamma: t.textCellGamma,
-        saturation: t.textCellSaturation,
-        inkComp: t.textInkComp,
-        strokePx: t.textStroke,
-        sheetGamma: t.textSheetGamma,
-        sheetSaturation: t.textSheetSaturation,
-        occlusionMarginPx: t.textOcclusionMargin,
-      },
-      plaque: {
-        palette: quakeUiPlaquePalette,
-        ambient: t.plaqueAmbient,
-        gamma: t.plaqueGamma,
-        saturation: t.plaqueSaturation,
-        black: t.plaqueBlack,
-        inkComp: t.plaqueInkComp,
-        strokePx: t.plaqueStroke,
-        colorBoost: Math.max(1, 1.65 / t.plaqueAmbient),
-        occlusionMarginPx: t.plaqueOcclusionMargin,
-      },
-      title: {
-        palette: quakeUiTitlePalette,
-        ambient: t.titleAmbient,
-        gamma: t.titleGamma,
-        saturation: t.titleSaturation,
-        black: t.titleBlack,
-        inkComp: t.titleInkComp,
-        strokePx: t.titleStroke,
-        colorBoost: Math.max(1, 1.65 / t.titleAmbient),
-        occlusionMarginPx: t.titleOcclusionMargin,
-      },
-      labels: {
-        palette: quakeUiLabelPalette,
-        ambient: t.labelAmbient,
-        gamma: t.labelGamma,
-        saturation: t.labelSaturation,
-        black: t.labelBlack,
-        inkComp: t.labelInkComp,
-        strokePx: t.labelStroke,
-        colorBoost: Math.max(1, 1.65 / t.labelAmbient),
-        occlusionMarginPx: t.labelOcclusionMargin,
-      },
-    },
+    // The table itself lives in quakeUiMeshStyles.ts, SHARED with the glyph
+    // lab's "complete first screen" preview — the lab renders the exact rows
+    // the game ships, never a copy. Palettes are the sanitized per-element
+    // choices resolved above (ASCII-only policy).
+    meshStyles: buildQuakeUiMeshStyles(t, {
+      logo: quakeUiLogoPalette,
+      text: quakeUiTextPalette,
+      plaque: quakeUiPlaquePalette,
+      title: quakeUiTitlePalette,
+      labels: quakeUiLabelPalette,
+    }),
     // Measured against the cssquake.wtf reference menu (perceived-luminance
     // region stats, 2026-08): 3.0 + the 0.6px glyph stroke + gamma 0.4 +
     // backdropGamma 0.6 lands the banner/plaque within ~70% of the
@@ -1777,7 +1759,7 @@ if (quakeStartupUrlParams.has("debug")) {
               param: "glyphPalette",
               label: "ramp palette",
               options: asciiOnlyGlyphPaletteNames(),
-              def: "detail",
+              def: QUAKE_WORLD_GLYPH_PALETTE_DEFAULT,
             }],
             selectValues: quakeWorldGlyphPanelSelects,
             // The world's budget-derived cell is the real default; the spec's

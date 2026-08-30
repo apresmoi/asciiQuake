@@ -24,7 +24,38 @@ import {
   type QuakeGlyphTuningValues,
 } from "../runtime/app/glyphTuningSpec";
 import { GLYPH_FONT_ATLAS_ASCII, WIREFRAME_PALETTES } from "glyphcss";
-import { isAsciiOnlyGlyphPalette, sanitizeQuakeGlyphPalette } from "../runtime/app/asciiGlyphPolicy";
+import {
+  isAsciiOnlyGlyphPalette,
+  sanitizeQuakeGlyphPalette,
+  sanitizeQuakeGlyphUiSceneMode,
+  type QuakeGlyphUiSceneMode,
+} from "../runtime/app/asciiGlyphPolicy";
+import { buildQuakeUiMeshStyles } from "../runtime/app/quakeUiMeshStyles";
+import {
+  createQuakeMenuSceneManifest,
+  quakeMenuSceneFrame,
+  quakeMenuVersionPos,
+  QUAKE_CONSOLE_GLYPH,
+  QUAKE_CONSOLE_LEFT,
+  QUAKE_CONSOLE_PITCH,
+  QUAKE_CONSOLE_TOP,
+  QUAKE_MENU_SCENE_FRAME_W,
+  QUAKE_MENU_SCENE_FRAME_H,
+  type QuakeMenuSceneManifest,
+  type QuakeMenuSceneSpriteDef,
+} from "../runtime/render/menuSceneManifest";
+import { QUAKE_HUD_BASE_URL, quakeHudSceneFrame } from "../runtime/render/hudSceneManifest";
+import {
+  getQuakeMenuSceneState,
+  updateQuakeHudSceneState,
+  updateQuakeMenuSceneState,
+  updateQuakeMenuSceneTexts,
+} from "../runtime/menuSceneState";
+import {
+  quakeLoadingConsoleBootLines,
+  QUAKE_LOADING_CONSOLE_PAK_LINE,
+  setQuakeLoadingRendererLine,
+} from "../runtime/loadingConsole";
 import logoUrl from "../assets/cssquake-logo.png";
 import plaqueUrl from "../assets/main-menu-plaque-baked.png";
 import titleUrl from "../assets/main-menu-title-baked.png";
@@ -35,7 +66,10 @@ const CONCHARS_GRID = 16;
 /** Monospace advance fraction — same constant the overlay uses. */
 const CELL_ASPECT = 0.606;
 
-type SourceKind = "logo" | "text" | "plaque" | "title" | "label" | "custom";
+/** Same define the game uses for its version tag (vite.config.ts). */
+declare const __ASCIIQUAKE_VERSION__: string;
+
+type SourceKind = "logo" | "text" | "plaque" | "title" | "label" | "screen" | "custom";
 
 interface ImagePreset {
   readonly url: string;
@@ -71,6 +105,17 @@ let encoding: "atlas" | "spans" =
   startupParams.get("glyphImageEncoding") === "spans" ? "spans" : "atlas";
 let segment = startupParams.get("labSegment") !== "0";
 let customUrl: string | null = null;
+/** Scene render mode (`?labSceneMode=`): solid (shipped), ink, wireframe —
+ *  the ASCII-legal subset, gated by the UI scene-mode sanitizer. */
+let sceneMode: QuakeGlyphUiSceneMode =
+  sanitizeQuakeGlyphUiSceneMode(startupParams.get("labSceneMode")) ?? "solid";
+/** Render the in-game HUD bar into the "complete first screen" preview. */
+let hudPreview = startupParams.get("labHud") === "1";
+/** The non-logo per-element ramps, as shipped (App.ts's
+ *  QUAKE_ELEMENT_PALETTE_DEFAULT). */
+const ELEMENT_PALETTE_DEFAULT = "dense";
+/** The manifest built for the current "screen" preview (ground-truth pane). */
+let screenManifest: QuakeMenuSceneManifest | null = null;
 
 function numParam(name: string, min: number, max: number, def: number): number {
   const raw = startupParams.get(name);
@@ -126,6 +171,11 @@ function scheduleRemount(): void {
 
 /** Element box (CSS px) the current source occupies, centred in the pane. */
 function elementBox(): { w: number; h: number } {
+  if (source === "screen") {
+    // The complete first screen fills the whole pane — the pane IS the
+    // viewport the manifest's host-anchored sizing rules resolve against.
+    return { w: glyphHost.clientWidth || 1, h: glyphHost.clientHeight || 1 };
+  }
   if (source === "text") {
     const lines = labText.split("\n");
     const cols = Math.max(1, ...lines.map((l) => l.length));
@@ -137,10 +187,116 @@ function elementBox(): { w: number; h: number } {
   return { w: displayW, h: displayW * (nat.h / nat.w) };
 }
 
+/** Options shared by every overlay mount — the scene-wide tone/encoding
+ *  knobs, exactly as the single-element mounts always passed them. */
+function sharedOverlayOptions() {
+  return {
+    maxCells: values.maxCells,
+    minCellPx: values.minCellPx,
+    ambient: values.ambient,
+    gamma: values.gamma,
+    saturation: values.saturation,
+    blackPoint: values.black,
+    whitePoint: values.white,
+    backdropGamma: values.backdropGamma,
+    backdropBlackPoint: values.backdropBlack,
+    backdropWhitePoint: values.backdropWhite,
+    inkCompensation: values.inkComp,
+    strokePx: values.stroke,
+    textGamma: values.textGamma,
+    textSaturation: values.textSaturation,
+    glyphPalette: palette,
+    colorEncoding: encoding,
+    fontAtlas: GLYPH_FONT_ATLAS_ASCII,
+    // Render mode (solid / ink / wireframe) — sanitized ASCII-legal subset.
+    sceneMode,
+  } as const;
+}
+
+/**
+ * The COMPLETE first screen, composed exactly as the game ships it: the
+ * overlay renders the same menu manifest (backdrop, corner logo, plaque,
+ * MAIN title, the five landing labels, cursor) from the same shared scene
+ * state (boot console transcript, version tag), styled by the SAME
+ * `buildQuakeUiMeshStyles` table App.ts passes — not a lab copy. No Quake
+ * boot: the state is seeded synchronously to the post-boot landing values.
+ */
+function remountScreen(): void {
+  // The landing as the player sees it after boot (menuSceneState's live
+  // values once main.ts/menu.ts clear `pending`/`deferred`).
+  setQuakeLoadingRendererLine("glyphcss");
+  updateQuakeMenuSceneState({
+    screen: "landing",
+    activeItem: "single-player",
+    disabledItems: ["quit"],
+    pending: false,
+    deferred: false,
+    chrome: true,
+    consoleLines: [
+      ...quakeLoadingConsoleBootLines(),
+      QUAKE_LOADING_CONSOLE_PAK_LINE,
+      `=== asciiQuake v${__ASCIIQUAKE_VERSION__} initialized ===`,
+    ],
+    consoleAction: null,
+    consoleProgress: null,
+  });
+  updateQuakeMenuSceneTexts({ version: `v${__ASCIIQUAKE_VERSION__}` });
+  if (hudPreview) {
+    // A fresh-spawn loadout: face + shells icon, 100 health, 0 armor,
+    // 25 shells, the default "plus" crosshair (hud.ts's initial inventory).
+    updateQuakeHudSceneState({
+      slots: ["face-normal", "ammo-shells"],
+      armor: "  0",
+      health: "100",
+      ammo: " 25",
+      damage: false,
+      crosshair: "plus",
+    });
+  }
+
+  screenManifest = createQuakeMenuSceneManifest({
+    density: values.density,
+    backdropBrightness: values.backdrop,
+    logoDensity: values.logoDensity,
+    plaqueDensity: values.plaqueDensity,
+    titleDensity: values.titleDensity,
+    labelDensity: values.labelDensity,
+  });
+
+  overlay = createQuakeGlyphUiOverlay({
+    host: glyphHost as HTMLElement,
+    sprites: [],
+    menu: screenManifest,
+    // The SHIPPED per-element style table — the same builder App.ts calls,
+    // with the shipped palette defaults (logo select still applies).
+    meshStyles: buildQuakeUiMeshStyles(values, {
+      logo: logoPalette,
+      text: ELEMENT_PALETTE_DEFAULT,
+      plaque: ELEMENT_PALETTE_DEFAULT,
+      title: ELEMENT_PALETTE_DEFAULT,
+      labels: ELEMENT_PALETTE_DEFAULT,
+    }),
+    manifestTextDensity: values.textDensity,
+    consoleTextDensity: values.consoleDensity,
+    // The HUD toggle: the overlay's chrome gate is bypassed so the status
+    // bar composites into the landing preview.
+    forceHud: hudPreview,
+    ...sharedOverlayOptions(),
+  });
+}
+
 function remount(): void {
   overlay?.dispose();
   overlay = null;
   glyphHost.textContent = "";
+
+  if (source === "screen") {
+    remountScreen();
+    renderSourcePane();
+    syncUrl();
+    return;
+  }
+  screenManifest = null;
 
   const box = elementBox();
   const holder = document.createElement("div");
@@ -215,23 +371,7 @@ function remount(): void {
       source === "text"
         ? [{ selector: ".lab-text-run", layer: 1, density: values.consoleDensity }]
         : undefined,
-    maxCells: values.maxCells,
-    minCellPx: values.minCellPx,
-    ambient: values.ambient,
-    gamma: values.gamma,
-    saturation: values.saturation,
-    blackPoint: values.black,
-    whitePoint: values.white,
-    backdropGamma: values.backdropGamma,
-    backdropBlackPoint: values.backdropBlack,
-    backdropWhitePoint: values.backdropWhite,
-    inkCompensation: values.inkComp,
-    strokePx: values.stroke,
-    textGamma: values.textGamma,
-    textSaturation: values.textSaturation,
-    glyphPalette: palette,
-    colorEncoding: encoding,
-    fontAtlas: GLYPH_FONT_ATLAS_ASCII,
+    ...sharedOverlayOptions(),
   });
 
   renderSourcePane();
@@ -239,7 +379,145 @@ function remount(): void {
 }
 
 // ── Source pane ──────────────────────────────────────────────────────────────
+/** One boot-console/version line composed from the conchars sheet — the same
+ *  source pixels the glyph pipeline samples, scaled with pixelated sampling. */
+function concharsLineCanvas(line: string, glyphPx: number): HTMLCanvasElement | null {
+  if (!concharsImg || !line.length) return null;
+  const canvas = document.createElement("canvas");
+  canvas.width = line.length * 8;
+  canvas.height = 8;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return null;
+  ctx.imageSmoothingEnabled = false;
+  const cell = concharsImg.naturalWidth / CONCHARS_GRID;
+  for (let i = 0; i < line.length; i++) {
+    const code = line.charCodeAt(i) & 127;
+    if (code === 32) continue;
+    const gu = code & (CONCHARS_GRID - 1);
+    const gv = code >> 4;
+    ctx.drawImage(concharsImg, gu * cell, gv * cell, cell, cell, i * 8, 0, 8, 8);
+  }
+  canvas.style.cssText =
+    "position:absolute;image-rendering:pixelated;" +
+    `width:${line.length * glyphPx}px;height:${glyphPx}px;`;
+  return canvas;
+}
+
+/**
+ * Ground truth for the "complete first screen" source: the manifest's OWN
+ * sprite defs placed as plain `<img>`s (chrome via `place`, landing sprites
+ * via the 320x200 frame transform), the boot console and version tag from
+ * the conchars sheet — the same inputs the glyph pane rasterizes.
+ */
+function renderScreenSourcePane(): void {
+  srcContent.style.left = "0";
+  srcContent.style.top = "0";
+  srcContent.style.transform = "none";
+  srcContent.style.width = "100%";
+  srcContent.style.height = "100%";
+  srcContent.style.background = "#000";
+  srcContent.style.overflow = "hidden";
+  srcContent.textContent = "";
+  const manifest = screenManifest;
+  if (!manifest) return;
+  const st = getQuakeMenuSceneState();
+  const w = srcContent.clientWidth || 1;
+  const h = srcContent.clientHeight || 1;
+  const frame = quakeMenuSceneFrame(w, h);
+  const sx = frame.w / QUAKE_MENU_SCENE_FRAME_W;
+  const sy = frame.h / QUAKE_MENU_SCENE_FRAME_H;
+
+  const addSprite = (
+    def: QuakeMenuSceneSpriteDef,
+    r: { x: number; y: number; w: number; h: number },
+  ): void => {
+    const wrap = document.createElement("div");
+    wrap.style.cssText =
+      `position:absolute;left:${r.x}px;top:${r.y}px;width:${r.w}px;height:${r.h}px;overflow:hidden;`;
+    const img = document.createElement("img");
+    img.src = def.texture;
+    const frames = def.sheet?.frames ?? 1;
+    let frameIndex = def.frame ?? 0;
+    if (def.role === "label" && def.item === st.activeItem) frameIndex = 1;
+    if (def.sheet?.axis === "y") {
+      img.style.cssText =
+        `position:absolute;left:0;top:${-frameIndex * 100}%;width:100%;height:${frames * 100}%;`;
+    } else if (def.sheet?.axis === "x") {
+      img.style.cssText =
+        `position:absolute;left:${-frameIndex * 100}%;top:0;width:${frames * 100}%;height:100%;`;
+    } else {
+      img.style.cssText =
+        "position:absolute;inset:0;width:100%;height:100%;" +
+        `object-fit:${def.fit === "cover" ? "cover" : "fill"};`;
+    }
+    const disabled = def.item !== undefined && st.disabledItems.includes(def.item);
+    const dim = (def.brightness ?? 1) * (disabled ? manifest.dimmedBrightness : 1);
+    if (dim < 1) img.style.filter = `brightness(${dim})`;
+    wrap.appendChild(img);
+    srcContent.appendChild(wrap);
+  };
+
+  for (const def of manifest.chrome) {
+    const r = def.place?.(w, h);
+    if (r) addSprite(def, r);
+  }
+  const landing = manifest.screens.landing;
+  if (landing) {
+    for (const def of landing.sprites) {
+      if (def.role === "cursor" && def.item !== st.activeItem) continue;
+      const r = def.rect;
+      if (!r) continue;
+      addSprite(def, {
+        x: frame.x + r.x * sx,
+        y: frame.y + r.y * sy,
+        w: r.w * sx,
+        h: r.h * sy,
+      });
+    }
+  }
+
+  // Boot console + version tag, per the overlay's viewport-anchored layout.
+  let top = QUAKE_CONSOLE_TOP;
+  for (const line of st.consoleLines) {
+    const canvas = concharsLineCanvas(line, QUAKE_CONSOLE_GLYPH);
+    if (canvas) {
+      canvas.style.left = `${QUAKE_CONSOLE_LEFT}px`;
+      canvas.style.top = `${top}px`;
+      srcContent.appendChild(canvas);
+    }
+    top += QUAKE_CONSOLE_PITCH;
+  }
+  const version = st.texts["version"];
+  if (version) {
+    const pos = quakeMenuVersionPos(w);
+    const canvas = concharsLineCanvas(version, pos.h);
+    if (canvas) {
+      canvas.style.left = `${pos.x}px`;
+      canvas.style.top = `${pos.y}px`;
+      canvas.style.opacity = "0.45";
+      srcContent.appendChild(canvas);
+    }
+  }
+
+  // HUD ground truth (bar art only — icons/digits are the glyph pane's job).
+  if (hudPreview) {
+    const hf = quakeHudSceneFrame(w, h);
+    const bar = document.createElement("img");
+    bar.src = QUAKE_HUD_BASE_URL;
+    bar.style.cssText =
+      `position:absolute;left:${hf.x}px;top:${hf.y}px;width:${hf.w}px;height:${hf.h}px;` +
+      "image-rendering:pixelated;filter:brightness(0.55);";
+    srcContent.appendChild(bar);
+  }
+}
+
 function renderSourcePane(): void {
+  if (source === "screen") {
+    renderScreenSourcePane();
+    return;
+  }
+  srcContent.style.background = "";
+  srcContent.style.overflow = "";
   const box = elementBox();
   srcContent.style.left = "50%";
   srcContent.style.top = "50%";
@@ -305,6 +583,7 @@ function buildControls(): void {
     ["plaque", IMAGE_PRESETS.plaque!.label],
     ["title", IMAGE_PRESETS.title!.label],
     ["label", IMAGE_PRESETS.label!.label],
+    ["screen", "complete first screen (landing)"],
     ["custom", "custom image (drop / pick)"],
   ];
   for (const [value, label] of opts) {
@@ -347,6 +626,11 @@ function buildControls(): void {
       textGlyphPx = v;
       scheduleRemount();
     });
+  } else if (source === "screen") {
+    addCheckbox("render HUD bar (in-game status bar, off as shipped)", hudPreview, (v) => {
+      hudPreview = v;
+      scheduleRemount();
+    });
   } else {
     addSlider("element display width (px)", 120, 1600, 10, displayW, (v) => {
       displayW = v;
@@ -357,6 +641,28 @@ function buildControls(): void {
       scheduleRemount();
     });
   }
+
+  // Render mode — the ASCII-legal glyphcss scene modes (asciiGlyphPolicy):
+  // solid ships; ink remaps its five non-ASCII oriented glyphs to ASCII;
+  // wireframe draws palette tiers only (junction pass never enabled).
+  addHeader("Render mode");
+  const modeSel = document.createElement("select");
+  for (const [value, label] of [
+    ["solid", "solid (game default)"],
+    ["ink", "ink — outline/edge render (ASCII-remapped)"],
+    ["wireframe", "wireframe — palette-tier strokes"],
+  ] as const) {
+    const o = document.createElement("option");
+    o.value = value;
+    o.textContent = label;
+    if (value === sceneMode) o.selected = true;
+    modeSel.appendChild(o);
+  }
+  modeSel.onchange = () => {
+    sceneMode = sanitizeQuakeGlyphUiSceneMode(modeSel.value) ?? "solid";
+    scheduleRemount();
+  };
+  controlsEl.appendChild(modeSel);
 
   // Palette / encoding
   addHeader("Glyph palette / encoding");
@@ -448,6 +754,8 @@ function buildControls(): void {
     palette = "detail";
     logoPalette = LOGO_PALETTE_DEFAULT;
     encoding = "atlas";
+    sceneMode = "solid";
+    hudPreview = false;
     buildControls();
     scheduleRemount();
   };
@@ -540,6 +848,8 @@ function syncUrl(): void {
     qs.set("labGlyphPx", String(textGlyphPx));
   }
   if (!segment) qs.set("labSegment", "0");
+  if (sceneMode !== "solid") qs.set("labSceneMode", sceneMode);
+  if (hudPreview) qs.set("labHud", "1");
   const str = qs.toString();
   history.replaceState(null, "", str ? `?${str}` : location.pathname);
 }

@@ -185,6 +185,16 @@ export interface QuakeGlyphEntityTransform {
   depthBias?: number;
   /** Per-entity glyph detail multiplier (overrides the overlay's default). */
   density?: number;
+  /**
+   * Per-mesh multiplier on the scene's `brighten` (1 = scene tone). The
+   * viewmodel uses it (2026-08 retune): the gun's baked colours sit darker
+   * than the reference gun's under the scene-wide world tone — its ink
+   * measured ~0.8x the cssquake.wtf gun while walls measured ~1.4x — so it
+   * carries its own lift. Applied when the mesh's GEOMETRY is (re)registered
+   * via {@link QuakeGlyphWorldOverlay.setEntity}; transform-only moves keep
+   * the colours already baked into the mesh.
+   */
+  toneScale?: number;
   /** Never occluded by the world — but OCCLUDING it. Quake draws the viewmodel
    *  after a depth clear: the gun is never swallowed by the wall the player is
    *  standing against, yet the world IS hidden behind the gun. Implemented via
@@ -307,20 +317,20 @@ export interface QuakeGlyphWorldOverlay {
 const QUAKE_GLYPH_OVERLAY_PERSPECTIVE = 1400;
 const QUAKE_GLYPH_OVERLAY_ZOOM = 50;
 // Quake's baked texture colours are very dark; lift them so the ASCII reads.
-// Raised from 3.6 when the default glyph set moved from "solid" to the ASCII
-// ramp: a `█` painted the WHOLE cell, so the cell's full area carried the
-// colour, while a letter inks a fraction of it and the black background shows
-// through the rest. Same colours, much lower apparent luminance — so the ramp
-// change has to be paid for here. 6.5 is the measured ceiling before the linear
-// multiply starts clamping bright surfaces to a flat yellow and collapsing the
-// ceiling's tonal separation (a gamma curve would hold highlights better; this
-// stays a straight multiply). `?glyphBright=` overrides.
-const QUAKE_GLYPH_OVERLAY_BRIGHTEN = 6.5;
+// 2026-08 retune, measured per-SEGMENT (walls/entities/viewmodel) against
+// cssquake.wtf across 10 e1m1 poses: the previous 6.5 (with gamma 0.7) was
+// tuned to match the whole-frame MEAN at the spawn pose, which forced the
+// glyph INK to 2.0-2.6x the reference's surface luminance — the eye reads the
+// ink, so the world looked far brighter than the reference everywhere. 2.9
+// with gamma 1 and the `dense` ramp (whose higher ink coverage carries the
+// cell's energy) lands ink at ~1.4x reference surface tone and block mean at
+// ~0.8x — the perceptual middle for text-on-black. `?glyphBright=` overrides.
+const QUAKE_GLYPH_OVERLAY_BRIGHTEN = 2.9;
 // Hue-preserving tone curve applied after the brighten multiply (see the
-// `gamma` option). 0.7, measured against the cssquake.wtf polycss reference
-// at the e1m1 spawn: with the 0.4px stroke it lands the perceived mean on
-// the reference (43 vs 43) where the plain multiply stalled at 29.
-const QUAKE_GLYPH_OVERLAY_GAMMA = 0.7;
+// `gamma` option). 1 = no lift (2026-08 retune): the old 0.7 mid-lift was the
+// other half of the ink overdrive above — it raised shadow and mid ink far
+// past the reference's surface tone. The knob remains for URL tuning.
+const QUAKE_GLYPH_OVERLAY_GAMMA = 1;
 // Sub-pixel glyph stroke (see the `strokePx` option).
 const QUAKE_GLYPH_OVERLAY_STROKE_PX = 0.4;
 // Depth-test deadband for near-coplanar world surfaces (see scene `depthEpsilon`).
@@ -407,14 +417,16 @@ export function createQuakeGlyphWorldOverlay(
   // glyph ramp. So at coarse cells SS2 cleans up sub-cell coverage cheaply, but at
   // fine cells (which already resolve sub-cell features) it just halves the fps;
   // drop it there. Explicit `?ssaa=` always wins.
-  // "detail" ramp by default: a ~70-level ASCII ramp (space → `.:-=+*#%@` → dense
-  // letters), so the world reads as actual characters. This is the whole point of
-  // the ASCII backend — "solid" (every covered cell a full `█`) renders as flat
-  // colour blocks with no glyph texture at all, which is a block renderer wearing
-  // a <pre>. Colour is unaffected: runs coalesce by colour, not by glyph, and the
-  // atlas encodes the full ASCII range. `?glyphPalette=solid` restores the blocks,
-  // `blocks` is the dithered block ramp. NOTE: scene-level, so entities use it too.
-  let glyphPalette = options.glyphPalette ?? "detail";
+  // "dense" ramp by default (2026-08 retune): its 25-37% ink floor keeps dark
+  // cells textured instead of empty, so the cell's energy comes from COVERAGE
+  // rather than overdriven ink — the "detail" ramp's 0-6% dark tail was what
+  // forced the old 6.5x brighten (and its 2x-too-bright ink) to keep the frame
+  // readable. "solid" (every covered cell a full `█`) renders as flat colour
+  // blocks with no glyph texture at all, which is a block renderer wearing a
+  // <pre>. Colour is unaffected: runs coalesce by colour, not by glyph, and the
+  // atlas encodes the full ASCII range. `?glyphPalette=detail` restores the
+  // sparse ramp. NOTE: scene-level, so entities use it too.
+  let glyphPalette = options.glyphPalette ?? "dense";
   // Scene mode + character encoding. Braille (U+2800..U+28FF, a 2x4 dot mask per
   // cell) only applies to WIREFRAME output in glyphcss, so asking for braille
   // without a mode implies wireframe — otherwise it silently renders as plain
@@ -498,8 +510,14 @@ export function createQuakeGlyphWorldOverlay(
     }
     return lifted;
   };
-  const ambientLight = options.ambientLight ?? 0.5;
-  const directionalLight = options.directionalLight ?? 0.6;
+  // Ambient 0.8 / dir 0.25 (2026-08 retune): Quake's lighting is fully BAKED
+  // into the face colours — the cssquake.wtf reference applies no orientation
+  // shading — so a strong directional term double-darkens shadow-facing walls
+  // (measured worst at the e1m1 start-hall door: block mean 31 vs the
+  // reference's 51 under the old 0.5/0.6). A small dir term stays for glyph
+  // shape cues; ambient carries the rest.
+  const ambientLight = options.ambientLight ?? 0.8;
+  const directionalLight = options.directionalLight ?? 0.25;
   const depthEpsilon = Math.max(0, Math.min(0.1, options.depthEpsilon ?? QUAKE_GLYPH_OVERLAY_DEPTH_EPSILON));
   // The motion "see-through" crawl is per-face lit-colour detail aliasing as the
   // floor scrolls. Blending each colour toward a common tone by `flatten` (0..1)
@@ -707,11 +725,13 @@ export function createQuakeGlyphWorldOverlay(
   // the world every frame. Keyed by a stable entity id.
   const entities = new Map<string, GlyphMeshHandle>();
 
-  function toGlyphPolygons(geometry: QuakeGlyphEntityGeometry): GlyphPolygon[] {
+  function toGlyphPolygons(geometry: QuakeGlyphEntityGeometry, toneScale = 1): GlyphPolygon[] {
     const polygons = geometry.polygons.map((polygon) => {
       // Entities keep their own colour variation (no world flatten); just lift
       // the dark baked Quake palette like the world does so they read.
-      const color = toneHex(brightenHex(polygon.c, brighten));
+      // `toneScale` folds a per-mesh lift (the viewmodel's) into the same
+      // brighten multiply, so the tone cache still keys on the final hex.
+      const color = toneHex(brightenHex(polygon.c, brighten * toneScale));
       paletteColors.add(color);
       return { vertices: polygon.v as Vec3[], color };
     });
@@ -808,7 +828,7 @@ export function createQuakeGlyphWorldOverlay(
       }
       if (existing) { existing.dispose(); entities.delete(id); }
       if (!op.geometry?.polygons?.length) continue;
-      entities.set(id, scene.add(toGlyphPolygons(op.geometry), toMeshTransform(id, op.transform)));
+      entities.set(id, scene.add(toGlyphPolygons(op.geometry, op.transform.toneScale), toMeshTransform(id, op.transform)));
     }
     staged.clear();
   }

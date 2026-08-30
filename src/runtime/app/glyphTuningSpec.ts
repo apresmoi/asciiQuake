@@ -178,16 +178,27 @@ export const QUAKE_GLYPH_UI_TUNING_KNOBS: readonly QuakeGlyphTuningKnob[] = [
   { key: "labelOcclusionMargin", param: "glyphImageLabelOcclusionMargin", label: "label occlusion margin px", min: 0, max: 8, step: 0.25, def: 2, group: "Label tone" },
 ] as const;
 
-/** The world glyph scene (glyphWorldOverlay) — gameplay ASCII. */
+/** The world glyph scene (glyphWorldOverlay) — gameplay ASCII.
+ *
+ * Tone defaults (2026-08 retune vs cssquake.wtf, e1m1): measured per-SEGMENT
+ * (walls / entities / viewmodel) across 10 poses, the old `brighten 6.5 +
+ * gamma 0.7` put the glyph INK at 2.0-2.6x the reference's surface luminance
+ * at every pose — the whole-frame block mean matched, but the eye reads the
+ * ink, so the game looked much brighter than the reference. The shipped
+ * values land ink at ~1.4x reference surface tone (block mean ~0.8x, the
+ * glyph medium's tradeoff) with the `dense` ramp carrying coverage. Ambient
+ * 0.8 / dir 0.25: the reference's lighting is fully baked into face colours,
+ * so the old dir 0.6 orientation shading double-darkened shadow-facing walls
+ * (measured worst at the e1m1 start-hall door: block mean 31 vs reference 51). */
 export const QUAKE_GLYPH_WORLD_TUNING_KNOBS: readonly QuakeGlyphTuningKnob[] = [
-  { key: "brighten", param: "glyphBright", label: "brighten (linear)", min: 1, max: 12, step: 0.1, def: 6.5, group: "World tone" },
-  { key: "gamma", param: "glyphGamma", label: "gamma (lower = brighter)", min: 0.2, max: 1, step: 0.01, def: 0.7, group: "World tone" },
+  { key: "brighten", param: "glyphBright", label: "brighten (linear)", min: 1, max: 12, step: 0.1, def: 2.0, group: "World tone" },
+  { key: "gamma", param: "glyphGamma", label: "gamma (lower = brighter)", min: 0.2, max: 1, step: 0.01, def: 1, group: "World tone" },
   { key: "black", param: "glyphBlack", label: "black point", min: 0, max: 0.5, step: 0.005, def: 0, group: "World tone" },
   { key: "white", param: "glyphWhite", label: "white point", min: 0.5, max: 1, step: 0.005, def: 1, group: "World tone" },
   { key: "flat", param: "glyphFlat", label: "flatten colours", min: 0, max: 1, step: 0.02, def: 0, group: "World tone" },
   { key: "stroke", param: "glyphStroke", label: "glyph stroke px", min: 0, max: 2, step: 0.05, def: 0.4, group: "World tone" },
-  { key: "ambient", param: "glyphAmbient", label: "ambient light", min: 0, max: 1, step: 0.02, def: 0.5, group: "World light" },
-  { key: "dir", param: "glyphDir", label: "directional light", min: 0, max: 1, step: 0.02, def: 0.6, group: "World light" },
+  { key: "ambient", param: "glyphAmbient", label: "ambient light", min: 0, max: 1, step: 0.02, def: 0.8, group: "World light" },
+  { key: "dir", param: "glyphDir", label: "directional light", min: 0, max: 1, step: 0.02, def: 0.25, group: "World light" },
   { key: "cell", param: "glyphCell", label: "cell px (detail)", min: 6, max: 40, step: 1, def: 12, group: "World grid" },
 ] as const;
 
