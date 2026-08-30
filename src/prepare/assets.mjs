@@ -17,7 +17,7 @@ import {
   deterministicAtlasDebugSourceImagesSymbol,
   replaceQuakeRenderBundleWorldAtlas,
 } from "./deterministicAtlas.mjs";
-import { buildQuakeGlyphGeometry, buildQuakeGlyphMovers, buildQuakeGlyphFaceLeaves } from "./glyphGeometry.mjs";
+import { buildQuakeGlyphGeometry, buildQuakeGlyphMovers, buildQuakeGlyphFaceLeaves, buildQuakeStandaloneGlyphGeometry } from "./glyphGeometry.mjs";
 import { prepareQuakeEffectSprites } from "./effectSprites.mjs";
 import {
   QUAKE_PREPARED_SCENE_MODES,
@@ -3915,9 +3915,17 @@ async function buildQuakePickupModels(assets, buildBspModel, programMetadata, re
     async (source) => runPrepareStep(`model ${source}`, async () => {
       const model = await buildBspModel(source);
       const polygons = model.polygons;
+      let glyphGeometry;
+      if (quakeEmitGlyphGeometry) {
+        glyphGeometry = buildQuakeStandaloneGlyphGeometry(polygons);
+        if (!glyphGeometry || glyphGeometry.polygonCount === 0) {
+          throw new Error(`BSP pickup model ${source} produced empty glyph geometry (${polygons?.length ?? 0} source polygons).`);
+        }
+      }
       const prepared = {
         source,
         polygons,
+        ...(quakeEmitGlyphGeometry ? { glyphGeometry } : {}),
         disableDomTightening: true,
         domTighteningTarget: "pickups",
         debugOutlineKind: "pickup",
