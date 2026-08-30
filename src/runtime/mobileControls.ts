@@ -75,6 +75,8 @@ export function createQuakeMobileControls(options: QuakeMobileControlsOptions): 
   let attached = false;
 
   function attach(): void {
+    window.addEventListener("resize", applyLandscapeFallback);
+    window.addEventListener("orientationchange", applyLandscapeFallback);
     if (attached) return;
     attached = true;
     media.addEventListener("change", syncAvailability);
@@ -84,6 +86,8 @@ export function createQuakeMobileControls(options: QuakeMobileControlsOptions): 
   function dispose(): void {
     if (attached) {
       media.removeEventListener("change", syncAvailability);
+      window.removeEventListener("resize", applyLandscapeFallback);
+      window.removeEventListener("orientationchange", applyLandscapeFallback);
       attached = false;
     }
     destroy();
@@ -98,6 +102,7 @@ export function createQuakeMobileControls(options: QuakeMobileControlsOptions): 
   }
 
   function syncAvailability(): void {
+    applyLandscapeFallback();
     if (media.matches) {
       setup();
     } else {
@@ -137,13 +142,43 @@ export function createQuakeMobileControls(options: QuakeMobileControlsOptions): 
       await orientation?.lock?.("landscape");
       orientationLocked = true;
     } catch {
-      /* unsupported or OS-locked — portrait stays playable */
+      /* fall through to the CSS rotation below */
     }
+    // FALLBACK: present landscape even when the real thing is unavailable.
+    // `orientation.lock()` needs fullscreen, is unsupported on iOS Safari, and
+    // rejects outright when the OS rotation lock is on — measured on a real S23,
+    // where the page sat in portrait-primary with the world rendering fine. When
+    // the lock does not take, rotate the app ourselves so the player still gets a
+    // wide view. `getBoundingClientRect()` reports post-transform boxes, so glyph
+    // hotspots and the touch controls keep hit-testing correctly.
+    applyLandscapeFallback();
   }
 
+  /** True once the CSS rotation is standing in for a real orientation lock. */
+  let landscapeFallbackApplied = false;
+
+  function applyLandscapeFallback(): void {
+    const portrait = window.innerHeight > window.innerWidth;
+    const wanted = !orientationLocked && portrait && media.matches;
+    if (wanted === landscapeFallbackApplied) return;
+    landscapeFallbackApplied = wanted;
+    document.body.classList.toggle("quake-force-landscape", wanted);
+    options.onAvailabilityChange();
+  }
+
+  /**
+   * Any touch anywhere is the trigger, NOT a touch on the controls.
+   *
+   * Gating this on the control surface never fired: the controls are
+   * `display: none` while a menu is open or the game is paused, which is the
+   * state the app starts in — so on a fresh load there was nothing to touch and
+   * the app stayed portrait. The first tap on the menu ("single player", "new
+   * game") is both the earliest user gesture available and the one the player
+   * actually makes, so the rotation happens before gameplay rather than after.
+   */
   function onFirstControlTouch(event: PointerEvent): void {
     if (event.pointerType === "mouse") return;
-    if (!(event.target instanceof Node) || root?.contains(event.target) !== true) return;
+    if (!media.matches) return;
     void requestLandscape();
   }
 
