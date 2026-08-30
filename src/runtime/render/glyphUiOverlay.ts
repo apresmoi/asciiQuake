@@ -488,8 +488,8 @@ export interface QuakeGlyphMeshStyle {
    * cell containing this mesh's ink claims (the anti-theft guarantee), and
    * the margin is stamped around the ink in that fine map, so the ground
    * follows the artwork's alpha contour instead of growing whole ~10px base
-   * cells (the earlier `occlusionDilate` pad — measured as a fat square-
-   * kernel halo, rejected). The ground the backdrop actually loses is still
+   * cells (glyphcss's earlier `occlusionDilate` pad — measured as a fat
+   * square-kernel halo, rejected, and dropped from the library in 0.1.6). The ground the backdrop actually loses is still
    * quantized to base cells — the id-map's hard floor — so margins below one
    * base cell differ only in which borderline cells claim. Ignored by
    * "none".
