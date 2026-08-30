@@ -1385,20 +1385,3 @@ body.quake-menu-open .dn-stats-overlay {
    text at full opacity instead is both brighter and more correct — a caret and
    a selection need real text, not a rasterized copy of it. */
 
-
-
-/* ── Forced landscape on a portrait phone ────────────────────────────────────
-   Set by mobileControls when `screen.orientation.lock()` is unavailable or
-   refused (no fullscreen, iOS Safari, or the OS rotation lock is on). Rotating
-   the app is the only way a page can present landscape on a device that will
-   not turn. The viewport axes swap, so the rotated box is sized from the
-   OPPOSITE viewport unit on each axis. `getBoundingClientRect()` returns
-   post-transform boxes, so glyph hotspots and the touch controls keep hit
-   testing without any inverse-transform maths. */
-body.quake-force-landscape {
-  width: 100vh;
-  height: 100vw;
-  transform: rotate(90deg) translateY(-100vw);
-  transform-origin: top left;
-  overflow: hidden;
-}
