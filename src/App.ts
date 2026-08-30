@@ -1805,6 +1805,22 @@ if (quakeStartupUrlParams.has("debug")) {
   });
 }
 
+// Teleport tracer (`?trace=<collector-origin>`): off unless the flag is present.
+// Reports camera-path discontinuities over the LAN, because USB debugging kept
+// dropping mid-session and a screenshot after the fact never shows the frames
+// that caused the jump.
+{
+  const traceCollector = quakeStartupUrlParams.get("trace");
+  if (traceCollector && quakeGlyphOverlay) {
+    void import("./runtime/debug/jumpTrace").then(({ startQuakeJumpTrace }) => {
+      startQuakeJumpTrace({
+        collector: traceCollector,
+        readEye: () => (quakeGlyphOverlay as unknown as { __debugEye?: () => number[] }).__debugEye?.() ?? null,
+      });
+    });
+  }
+}
+
 if (quakeGlyphOverlay) {
   // polycss keeps driving camera/controls/collision underneath; the opaque
   // ASCII overlay (z-index 1, after the camera) paints over its world.
