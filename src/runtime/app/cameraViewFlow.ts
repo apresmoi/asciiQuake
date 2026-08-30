@@ -286,7 +286,7 @@ export function quakeInitialCameraViewConfig(renderSupersample: number): QuakeCa
   };
 }
 
-function quakeCameraPerspectiveForViewport(width: number, height: number, zoom: number): number {
+export function quakeCameraPerspectiveForViewport(width: number, height: number, zoom: number): number {
   const perspectiveOverride = quakeCameraPerspectiveFromUrl();
   return (
     perspectiveOverride ??

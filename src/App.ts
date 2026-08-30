@@ -1420,6 +1420,7 @@ const quakeGlyphOverlay: QuakeGlyphWorldOverlay | null =
         // pixel-identical — no FOV magic. `?glyphPersp=`/`?glyphZoom=`/`?glyphFovScale=`
         // remain only for experiments.
         perspective: quakeUrlNumberParam(quakeStartupUrlParams, "glyphPersp", 100, 40000) ?? quakeCameraViewConfig.perspective,
+        pinPerspective: quakeUrlNumberParam(quakeStartupUrlParams, "glyphPersp", 100, 40000) !== null,
         zoom: quakeUrlNumberParam(quakeStartupUrlParams, "glyphZoom", 0.01, 500) ?? quakeCameraViewConfig.zoom,
         fovScale: quakeUrlNumberParam(quakeStartupUrlParams, "glyphFovScale", 0.1, 10) ?? undefined,
         flat: quakeWorldGlyphTuning.flat,

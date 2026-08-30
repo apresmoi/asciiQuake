@@ -1,6 +1,7 @@
 import { createGlyphPerspectiveCamera, createGlyphScene, quantizeGlyphAtlasPalette, type GlyphFontAtlas } from "glyphcss";
 import type { GlyphMeshHandle, GlyphMeshTransform, GlyphOcclusionCoverage } from "glyphcss";
 import { BASE_TILE, type Vec3 } from "@layoutit/polycss";
+import { quakeCameraPerspectiveForViewport } from "../app/cameraViewFlow";
 
 /**
  * Glyph world overlay — renders the prepared world geometry as ASCII art into a
@@ -25,6 +26,9 @@ export interface QuakeGlyphWorldOverlayOptions {
   readonly host: HTMLElement;
   /** Insert the overlay before this child of `host` (e.g. the viewmodel layer). */
   readonly insertBefore?: HTMLElement | null;
+  /** Keep `perspective` fixed at the supplied value instead of tracking the
+   *  viewport — set when `?glyphPersp=` pins it explicitly. */
+  readonly pinPerspective?: boolean;
   /** CSS-perspective distance in virtual px (FOV). */
   readonly perspective?: number;
   /** Camera zoom (scale). */
@@ -424,15 +428,10 @@ export function createQuakeGlyphWorldOverlay(
    * Read from `window`, NOT the overlay element, which does not exist yet at
    * this point in setup — referencing it here threw and rendered a black screen.
    */
-  const QUAKE_FOV_REFERENCE_HEIGHT = 900;
-  const autoFovScale = () =>
-    Math.min(1, Math.sqrt(Math.max(1, window.innerHeight) / QUAKE_FOV_REFERENCE_HEIGHT));
-  // MUTABLE, and recomputed on resize. Computing it once at construction meant a
-  // phone that booted in portrait kept a portrait-derived value after rotating:
-  // measured 0.908 (= sqrt(742/900)) still in force at a landscape 846x411,
-  // where the correct value is 0.676 — a camera 34% too far back, which is the
-  // "feels like third person" report.
-  let fovScale = options.fovScale ?? autoFovScale();
+  // No FOV compensation here — see `refreshViewportCamera`. The real
+  // viewport-dependence lives in `perspective`, which the app recomputes per
+  // viewport; a fovScale curve was an earlier misdiagnosis of that.
+  const fovScale = options.fovScale ?? 1;
   // The glyph render is synchronous in the game loop, so render time = framerate
   // = flicker. A chunky grid (cellPx 20) keeps the framerate high; on TOP of
   // that, 2× supersampling fixes the PROVEN see-through cause — coverage point-
@@ -593,17 +592,35 @@ export function createQuakeGlyphWorldOverlay(
 
   const camera = createGlyphPerspectiveCamera({ rotX: 90, rotY: 270, zoom, perspective, distance: 0, fovScale });
 
-  /** Re-derive the framing when the viewport changes (rotation, resize, chrome). */
-  function refreshFovScale(): void {
-    if (options.fovScale !== undefined) return;   // an explicit override stays pinned
-    const next = autoFovScale();
-    if (Math.abs(next - fovScale) < 0.001) return;
-    fovScale = next;
-    (camera as unknown as { fovScale: number }).fovScale = next;
+  /**
+   * Re-derive `perspective` when the viewport changes.
+   *
+   * THE BUG THIS FIXES: the overlay was handed the perspective computed at
+   * construction and never heard about later viewports, while the app's own
+   * camera flow recomputes it per viewport (`quakeCameraPerspectiveForViewport`,
+   * which is aspect-aware). Boot in portrait, then go fullscreen landscape, and
+   * the glyph camera kept the PORTRAIT value — measured on a Galaxy S23:
+   * perspective 761.5 still in force at 846x411, where ~421 is correct. A camera
+   * 1.8x too far back, reported as "the pivot is too far from the screen ...
+   * it feels like third person".
+   *
+   * It also explains why portrait-without-fullscreen looked perfect: nothing
+   * ever resized, so the construction-time value stayed correct — and why
+   * desktop sweeps never reproduced it, since those pages never rotate.
+   */
+  function refreshViewportCamera(): void {
+    // Only a URL override pins it. The app ALWAYS passes a perspective (its
+    // construction-time default), so guarding on `options.perspective` being
+    // defined disabled this entirely — the first version of this fix did that
+    // and silently changed nothing.
+    if (options.pinPerspective) return;
+    const next = quakeCameraPerspectiveForViewport(window.innerWidth, window.innerHeight, camera.zoom);
+    if (!Number.isFinite(next) || Math.abs(next - camera.perspective) < 0.5) return;
+    (camera as unknown as { perspective: number }).perspective = next;
     scheduleRender();
   }
-  window.addEventListener("resize", refreshFovScale);
-  window.addEventListener("orientationchange", refreshFovScale);
+  window.addEventListener("resize", refreshViewportCamera);
+  window.addEventListener("orientationchange", refreshViewportCamera);
 
   const scene = createGlyphScene(element, {
     mode: sceneMode,
@@ -1186,8 +1203,8 @@ export function createQuakeGlyphWorldOverlay(
   }
 
   function dispose(): void {
-    window.removeEventListener("resize", refreshFovScale);
-    window.removeEventListener("orientationchange", refreshFovScale);
+    window.removeEventListener("resize", refreshViewportCamera);
+    window.removeEventListener("orientationchange", refreshViewportCamera);
     if (pendingFrame) { window.cancelAnimationFrame(pendingFrame); pendingFrame = 0; }
     if (paletteTimer) { window.clearTimeout(paletteTimer); paletteTimer = 0; }
     // Drop staged ops rather than flushing them: the render that would have
