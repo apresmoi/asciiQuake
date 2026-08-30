@@ -54,6 +54,7 @@ export interface QuakeDebugPanelFlow {
   handleShowOutlinesOptionChange: (event: Event) => void;
   handleShowTexturesOptionChange: (event: Event) => void;
   isModeEnabled: () => boolean;
+  showOutlinesEnabled: () => boolean;
   setMode: (enabled: boolean) => void;
   setEnemyAnimationsEnabled: (enabled: boolean) => void;
   setShowFps: (enabled: boolean) => void;
@@ -80,8 +81,47 @@ export function createQuakeDebugPanelFlow(options: QuakeDebugPanelFlowOptions): 
   let showOutlines = options.initialShowOutlines;
   let showLabels = options.initialShowLabels;
   let statsTimer: number | null = null;
-  const debugStackParent = options.debugStack?.parentNode ?? null;
+  // The stats panel's DOM is built LAZILY on first enable — the boot page
+  // ships no debug markup at all (the flat-DOM shell), so the aside and its
+  // stat rows are created here when debug mode first turns on.
+  let debugStack = options.debugStack;
+  let debugPanel = options.debugPanel;
+  const statElements = new Map(options.debugStatElements);
+  const debugStackParent = options.debugStack?.parentNode ?? document.body;
   const debugStackNextSibling = options.debugStack?.nextSibling ?? null;
+
+  function ensurePanelDom(): void {
+    if (debugPanel || typeof document === "undefined") return;
+    const stack = document.createElement("div");
+    stack.id = "quake-debug-stack";
+    const aside = document.createElement("aside");
+    aside.id = "quake-debug-panel";
+    aside.setAttribute("aria-label", "Debug stats");
+    aside.innerHTML = `
+      <div id="quake-debug-card">
+        <header id="quake-debug-header"><h2 id="quake-debug-title">Debug</h2></header>
+        <dl id="quake-debug-stats" aria-label="Debug stats">
+          <div><dt>Capture</dt><dd data-qstat="capture">-</dd></div>
+          <div><dt>Visible</dt><dd data-qstat="visible">-</dd></div>
+          <div><dt>DOM</dt><dd data-qstat="dom">-</dd></div>
+          <div><dt>Enemies</dt><dd data-qstat="enemies">-</dd></div>
+          <div><dt>Pickups</dt><dd data-qstat="pickups">-</dd></div>
+        </dl>
+        <div id="quake-debug-outline-legend" aria-label="Surface outline legend">
+          <span><span class="quake-debug-outline-swatch quake-debug-outline-swatch-world" aria-hidden="true"></span><span>World</span></span>
+          <span><span class="quake-debug-outline-swatch quake-debug-outline-swatch-special" aria-hidden="true"></span><span>Special</span></span>
+          <span><span class="quake-debug-outline-swatch quake-debug-outline-swatch-movers" aria-hidden="true"></span><span>Objects/items</span></span>
+          <span><span class="quake-debug-outline-swatch quake-debug-outline-swatch-enemies" aria-hidden="true"></span><span>Enemies</span></span>
+        </div>
+      </div>`;
+    stack.appendChild(aside);
+    for (const element of aside.querySelectorAll<HTMLElement>("[data-qstat]")) {
+      const name = element.dataset.qstat;
+      if (name) statElements.set(name, element);
+    }
+    debugStack = stack;
+    debugPanel = aside;
+  }
 
   function isModeEnabled(): boolean {
     return mode;
@@ -179,12 +219,13 @@ export function createQuakeDebugPanelFlow(options: QuakeDebugPanelFlowOptions): 
   }
 
   function syncPanelVisibility(): void {
+    if (mode) ensurePanelDom();
     syncDebugStackMounted(mode);
-    if (!options.debugPanel) {
+    if (!debugPanel) {
       if (!mode) stopStats();
       return;
     }
-    options.debugPanel.hidden = !mode;
+    debugPanel.hidden = !mode;
     if (mode) {
       syncPanelStats();
       startStats();
@@ -194,14 +235,14 @@ export function createQuakeDebugPanelFlow(options: QuakeDebugPanelFlowOptions): 
   }
 
   function syncDebugStackMounted(mounted: boolean): void {
-    if (!options.debugStack || !debugStackParent) return;
+    if (!debugStack || !debugStackParent) return;
     if (mounted) {
-      if (!options.debugStack.isConnected) {
-        debugStackParent.insertBefore(options.debugStack, debugStackNextSibling);
+      if (!debugStack.isConnected) {
+        debugStackParent.insertBefore(debugStack, debugStackNextSibling);
       }
       return;
     }
-    options.debugStack.remove();
+    debugStack.remove();
   }
 
   function startStats(): void {
@@ -216,7 +257,7 @@ export function createQuakeDebugPanelFlow(options: QuakeDebugPanelFlowOptions): 
   }
 
   function syncPanelStats(): void {
-    if (!mode || !options.debugPanel || options.debugPanel.hidden) return;
+    if (!mode || !debugPanel || debugPanel.hidden) return;
     const worldStats = options.worldStats();
     const shootableStats = options.shootablesStats();
     const view = options.currentView();
@@ -238,7 +279,7 @@ export function createQuakeDebugPanelFlow(options: QuakeDebugPanelFlowOptions): 
   }
 
   function setStat(name: string, value: string): void {
-    const element = options.debugStatElements.get(name);
+    const element = statElements.get(name);
     if (element) element.textContent = value;
   }
 
@@ -259,6 +300,7 @@ export function createQuakeDebugPanelFlow(options: QuakeDebugPanelFlowOptions): 
     handleShowOutlinesOptionChange: (event) => setShowOutlines((event.currentTarget as HTMLInputElement).checked),
     handleShowTexturesOptionChange: (event) => setShowTextures((event.currentTarget as HTMLInputElement).checked),
     isModeEnabled,
+    showOutlinesEnabled: () => showOutlines || hideTextures,
     setEnemyAnimationsEnabled,
     setMode,
     setShowFps,

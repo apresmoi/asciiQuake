@@ -1,148 +1,48 @@
+/**
+ * The page shell, as data. The shell is FLAT now: engine mounts, the gameplay
+ * tint/intermission layer, the multiplayer form's native controls and the
+ * corner links — everything else (menus, panels, HUD anchors, the loading
+ * overlay, bitmap text) renders from the scene manifest + scene state inside
+ * the glyph overlay's `<pre>` layers, so no element exists for it.
+ */
 export interface QuakeAppDomElements {
   app: HTMLElement;
+  /** polycss world mount. */
   scene: HTMLElement | null;
-  menu: HTMLElement | null;
+  /** polycss viewmodel mount. */
   weapon: HTMLElement | null;
-  mainMenu: HTMLElement | null;
-  mainMenuArt: HTMLElement | null;
-  versionLabel: HTMLElement | null;
-  singlePlayerPanel: HTMLElement | null;
-  multiplayerPanel: HTMLElement | null;
-  multiplayerForm: HTMLFormElement | null;
-  multiplayerNameInput: HTMLInputElement | null;
-  multiplayerColorInput: HTMLInputElement | null;
-  multiplayerRoomInput: HTMLInputElement | null;
-  multiplayerMapSelect: HTMLSelectElement | null;
-  multiplayerFragLimitInput: HTMLInputElement | null;
-  multiplayerMaxPlayersInput: HTMLInputElement | null;
-  levelPanel: HTMLElement | null;
-  levelList: HTMLElement | null;
-  aboutPanel: HTMLElement | null;
-  optionsPanel: HTMLElement | null;
-  disableSoundOption: HTMLInputElement | null;
-  disableEnemiesOption: HTMLInputElement | null;
-  disableDamageOption: HTMLInputElement | null;
-  invertMouseOption: HTMLInputElement | null;
-  alwaysRunOption: HTMLInputElement | null;
-  showGunOption: HTMLInputElement | null;
-  dynamicLightingOption: HTMLInputElement | null;
-  renderModeOption: HTMLInputElement | null;
-  glyphDetailOption: HTMLButtonElement | null;
-  glyphDetailOptionValue: HTMLElement | null;
-  glyphPaletteOption: HTMLButtonElement | null;
-  glyphPaletteOptionValue: HTMLElement | null;
-  impactParticlesOption: HTMLInputElement | null;
+  /** Gameplay impact-particle pool layer. */
   impactParticlesLayer: HTMLElement | null;
-  crosshair: HTMLElement | null;
-  crosshairOption: HTMLButtonElement | null;
-  crosshairOptionValue: HTMLElement | null;
-  debugStack: HTMLElement | null;
-  debugPanel: HTMLElement | null;
-  debugShowMenuOption: HTMLInputElement | null;
-  debugEnabledOption: HTMLInputElement | null;
-  debugShowFpsOption: HTMLInputElement | null;
-  debugEnableAnimationsOption: HTMLInputElement | null;
-  debugFreezeEnemiesOption: HTMLInputElement | null;
-  debugDisableAttacksOption: HTMLInputElement | null;
-  debugShowTexturesOption: HTMLInputElement | null;
-  debugFlyModeOption: HTMLInputElement | null;
-  debugShowOutlinesOption: HTMLInputElement | null;
-  debugShowLabelsOption: HTMLInputElement | null;
-  debugRecordingRow: HTMLElement | null;
-  debugRecordingButton: HTMLButtonElement | null;
-  debugStatElements: Map<string, HTMLElement>;
-  loadingOverlay: HTMLElement | null;
-  loadingStatus: HTMLElement | null;
-  loadingProgress: HTMLElement | null;
-  loadingProgressFill: HTMLElement | null;
-  loadingAction: HTMLElement | null;
-  hudArmorValue: HTMLElement | null;
-  hudHealthValue: HTMLElement | null;
-  hudHealthDamageValue: HTMLElement | null;
-  hudAmmoValue: HTMLElement | null;
-  classicHud: HTMLElement | null;
+  /** Gameplay layer: tint overlays, intermission, scoreboard mount. */
   hud: HTMLElement | null;
   bonusOverlay: HTMLElement | null;
   damageOverlay: HTMLElement | null;
-  notify: HTMLElement | null;
-  centerPrint: HTMLElement | null;
+  /** Intermission card root — its content is built at show time. */
   intermission: HTMLElement | null;
+  /** The multiplayer form's NATIVE controls (positioned by the menu
+   *  controller over their manifest rects). */
+  multiplayerNameInput: HTMLInputElement | null;
+  multiplayerColorInput: HTMLInputElement | null;
+  multiplayerMapSelect: HTMLSelectElement | null;
+  multiplayerFragLimitInput: HTMLInputElement | null;
+  multiplayerMaxPlayersInput: HTMLInputElement | null;
 }
 
 export function queryQuakeAppDom(): QuakeAppDomElements {
   return {
     app: requiredQuakeElement("quake-app"),
     scene: quakeElement("quake-scene"),
-    menu: quakeElement("quake-menu"),
     weapon: quakeElement("quake-weapon"),
-    mainMenu: quakeElement("quake-main-menu"),
-    mainMenuArt: quakeElement("quake-main-menu-art"),
-    versionLabel: quakeElement("asciiquake-version"),
-    singlePlayerPanel: quakeElement("quake-single-player-panel"),
-    multiplayerPanel: quakeElement("quake-multiplayer-panel"),
-    multiplayerForm: quakeElement("quake-multiplayer-form"),
-    multiplayerNameInput: quakeElement("quake-multiplayer-name"),
-    multiplayerColorInput: quakeElement("quake-multiplayer-color"),
-    multiplayerRoomInput: quakeElement("quake-multiplayer-room"),
-    multiplayerMapSelect: quakeElement("quake-multiplayer-map"),
-    multiplayerFragLimitInput: quakeElement("quake-multiplayer-fraglimit"),
-    multiplayerMaxPlayersInput: quakeElement("quake-multiplayer-maxplayers"),
-    levelPanel: quakeElement("quake-level-panel"),
-    levelList: quakeElement("quake-level-list"),
-    aboutPanel: quakeElement("quake-about-panel"),
-    optionsPanel: quakeElement("quake-options-panel"),
-    disableSoundOption: quakeElement("quake-option-disable-sound"),
-    disableEnemiesOption: quakeElement("quake-option-disable-enemies"),
-    disableDamageOption: quakeElement("quake-option-disable-damage"),
-    invertMouseOption: quakeElement("quake-option-invert-mouse"),
-    alwaysRunOption: quakeElement("quake-option-always-run"),
-    showGunOption: quakeElement("quake-option-show-gun"),
-    dynamicLightingOption: quakeElement("quake-option-dynamic-lighting"),
-    renderModeOption: quakeElement("quake-option-render-mode"),
-    glyphDetailOption: quakeElement("quake-option-glyph-detail"),
-    glyphDetailOptionValue: quakeElement("quake-option-glyph-detail-value"),
-    glyphPaletteOption: quakeElement("quake-option-glyph-palette"),
-    glyphPaletteOptionValue: quakeElement("quake-option-glyph-palette-value"),
-    impactParticlesOption: quakeElement("quake-option-impact-particles"),
     impactParticlesLayer: quakeElement("quake-impact-particles"),
-    crosshair: quakeElement("quake-crosshair"),
-    crosshairOption: quakeElement("quake-option-crosshair"),
-    crosshairOptionValue: quakeElement("quake-option-crosshair-value"),
-    debugStack: quakeElement("quake-debug-stack"),
-    debugPanel: quakeElement("quake-debug-panel"),
-    debugShowMenuOption: quakeElement("quake-debug-show-menu"),
-    debugEnabledOption: quakeElement("quake-debug-enabled"),
-    debugShowFpsOption: quakeElement("quake-debug-show-fps"),
-    debugEnableAnimationsOption: quakeElement("quake-debug-enable-animations"),
-    debugFreezeEnemiesOption: quakeElement("quake-debug-freeze-enemies"),
-    debugDisableAttacksOption: quakeElement("quake-debug-disable-attacks"),
-    debugShowTexturesOption: quakeElement("quake-debug-show-textures"),
-    debugFlyModeOption: quakeElement("quake-debug-fly-mode"),
-    debugShowOutlinesOption: quakeElement("quake-debug-show-outlines"),
-    debugShowLabelsOption: quakeElement("quake-debug-show-labels"),
-    debugRecordingRow: quakeElement("quake-debug-recording-row"),
-    debugRecordingButton: quakeElement("quake-debug-recording-toggle"),
-    debugStatElements: new Map(
-      Array.from(document.querySelectorAll<HTMLElement>("[data-qstat]"))
-        .map((element) => [element.dataset.qstat ?? "", element] as const)
-        .filter(([name]) => Boolean(name)),
-    ),
-    loadingOverlay: quakeElement("quake-loading-overlay"),
-    loadingStatus: quakeElement("quake-loading-status"),
-    loadingProgress: quakeElement("quake-loading-progress"),
-    loadingProgressFill: quakeElement("quake-loading-progress-fill"),
-    loadingAction: quakeElement("quake-loading-action"),
-    hudArmorValue: quakeElement("quake-hud-armor-value"),
-    hudHealthValue: quakeElement("quake-hud-health-value"),
-    hudHealthDamageValue: quakeElement("quake-hud-health-damage-value"),
-    hudAmmoValue: quakeElement("quake-hud-ammo-value"),
-    classicHud: quakeElement("quake-classic-hud"),
     hud: quakeElement("quake-hud"),
     bonusOverlay: quakeElement("quake-bonus-overlay"),
     damageOverlay: quakeElement("quake-damage-overlay"),
-    notify: quakeElement("quake-notify"),
-    centerPrint: quakeElement("quake-centerprint"),
     intermission: quakeElement("quake-intermission"),
+    multiplayerNameInput: quakeElement("quake-multiplayer-name"),
+    multiplayerColorInput: quakeElement("quake-multiplayer-color"),
+    multiplayerMapSelect: quakeElement("quake-multiplayer-map"),
+    multiplayerFragLimitInput: quakeElement("quake-multiplayer-fraglimit"),
+    multiplayerMaxPlayersInput: quakeElement("quake-multiplayer-maxplayers"),
   };
 }
 

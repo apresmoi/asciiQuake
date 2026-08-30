@@ -45,8 +45,24 @@ export function mountQuakeBitmapText(root: ParentNode = document): void {
   }
 }
 
+/**
+ * The text this element should render, safe to re-read after conversion.
+ *
+ * Converting is not a one-shot: the overlay re-runs it when the menu rebuilds.
+ * After the first pass the element holds a `.quake-bitmap-source` span AND the
+ * per-character bitmap, so `element.textContent` returns the text TWICE, and
+ * each extra pass doubled it again — measured on the multiplayer panel as
+ * "Name" -> "NameNameNameNa" with 8 character spans, and "GO BACK" rendering
+ * twice on the button. Reading the source span back makes re-conversion a
+ * no-op instead.
+ */
+function readBitmapSourceText(element: HTMLElement): string {
+  const source = element.querySelector(":scope > .quake-bitmap-source");
+  return normalizeBitmapText((source ?? element).textContent ?? "");
+}
+
 function renderQuakeBitmapTextElement(element: HTMLElement): void {
-  const text = normalizeBitmapText(element.textContent ?? "");
+  const text = readBitmapSourceText(element);
   const options = quakeBitmapTextOptionsByElement.get(element) ?? parseBitmapTextOptions(element);
   quakeBitmapTextOptionsByElement.set(element, options);
   stripBitmapTextMetadata(element);
@@ -72,6 +88,13 @@ function createQuakeBitmapText(
   container.setAttribute("aria-hidden", "true");
 
   if (options.wrap === "anywhere") {
+    if (quakeBitmapTextRendersAsCharacters) {
+      // One run for the whole line: anywhere-wrapped callers (notify,
+      // centerprint) pre-chunk their text to line length, so the run never
+      // wraps and stays a single grid row for the overlay to stamp.
+      container.append(createQuakeBitmapRun(text, options.alt));
+      return container;
+    }
     for (const char of text) container.append(createQuakeBitmapGlyph(char, options.alt));
     return container;
   }
@@ -91,11 +114,40 @@ function createQuakeBitmapText(
   return container;
 }
 
+/** Set by the app when the ASCII backend is active. */
+let quakeBitmapTextRendersAsCharacters = false;
+
+export function setQuakeBitmapTextAsCharacters(enabled: boolean): void {
+  quakeBitmapTextRendersAsCharacters = enabled;
+}
+
 function createQuakeBitmapWord(text: string, alt: boolean): HTMLElement {
+  if (quakeBitmapTextRendersAsCharacters) return createQuakeBitmapRun(text, alt);
   const wordElement = document.createElement("span");
   wordElement.className = "quake-bitmap-word";
   for (const char of text) wordElement.append(createQuakeBitmapGlyph(char, alt));
   return wordElement;
+}
+
+/**
+ * ASCII backend: one element per word-run of text, carrying the words as a
+ * plain text node for the glyph overlay to stamp INTO the character grid.
+ *
+ * This replaces the span-per-character output (`createQuakeBitmapGlyphAsText`)
+ * that put ~1,470 `.quake-bitmap-char` elements over the menu as HTML painted
+ * ON TOP of the grid. A run keeps the exact box the character row occupied
+ * (explicit `width = chars x glyph size`, the word wrapper's own height), so
+ * every flex layout, hit target and wrap point stays put — but the paint moves
+ * into the shared `<pre>`: the run itself is visibility-hidden whenever the
+ * glyph UI host is up (see quake.css) and the overlay's `stampText` draws its
+ * text on the cells its box covers.
+ */
+function createQuakeBitmapRun(text: string, alt: boolean): HTMLElement {
+  const run = document.createElement("span");
+  run.className = alt ? "quake-bitmap-word quake-bitmap-run quake-bitmap-run-alt" : "quake-bitmap-word quake-bitmap-run";
+  run.textContent = text;
+  run.style.width = `calc(${text.length} * var(--quake-bitmap-glyph-size))`;
+  return run;
 }
 
 function createQuakeBitmapGlyph(char: string, alt: boolean): HTMLElement {

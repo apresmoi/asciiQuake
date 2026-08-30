@@ -1,3 +1,6 @@
+import { updateQuakeHudSceneState } from "../menuSceneState";
+import type { QuakeMenuOptionRow } from "../menu";
+
 export type QuakeCrosshairOption = "off" | "plus" | "dot" | "x" | "o" | "caret" | "vee";
 
 interface QuakeCrosshairDefinition {
@@ -15,39 +18,41 @@ const QUAKE_CROSSHAIR_OPTIONS: QuakeCrosshairDefinition[] = [
   { value: "vee", label: "v" },
 ];
 
+/**
+ * The options screen as a ROW MODEL — the DOM-free replacement for the old
+ * checkbox/cycle-button flow. Each row binds a manifest layout row (by id,
+ * see QUAKE_MENU_OPTIONS_ROWS) to the app state it reads and writes; the
+ * menu controller walks these rows for keyboard/pointer activation and
+ * pushes their `value()` strings into the scene state for the overlay to
+ * draw. No checkbox holds state any more — the getters ARE the state.
+ */
 export interface QuakeOptionsFlowOptions {
-  alwaysRunOption: HTMLInputElement | null;
-  crosshair: HTMLElement | null;
-  crosshairOption: HTMLElement | null;
-  crosshairOptionValue: HTMLElement | null;
-  disableDamageOption: HTMLInputElement | null;
-  disableEnemiesOption: HTMLInputElement | null;
-  disableSoundOption: HTMLInputElement | null;
-  dynamicLightingOption: HTMLInputElement | null;
-  renderModeOption: HTMLInputElement | null;
-  glyphDetailOption: HTMLElement | null;
-  glyphDetailOptionValue: HTMLElement | null;
-  glyphPaletteOption: HTMLElement | null;
-  glyphPaletteOptionValue: HTMLElement | null;
-  impactParticlesOption: HTMLInputElement | null;
-  invertMouseOption: HTMLInputElement | null;
-  showGunOption: HTMLInputElement | null;
   audioMuted(): boolean;
   damageDisabled(): boolean;
   dynamicLightingEnabled(): boolean;
   renderModeIsGlyph(): boolean;
   enemiesDisabled(): boolean;
+  enemiesFrozen(): boolean;
+  attacksDisabled(): boolean;
   impactParticlesEnabled(): boolean;
   invertMouse(): boolean;
-  alwaysRun(): boolean;
-  showGun(): boolean;
-  mountBitmapText(element: HTMLElement): void;
+  showOutlines(): boolean;
+  statsPanelEnabled(): boolean;
+  showFps(): boolean;
   unlockAudio(): void;
-  setAlwaysRun(alwaysRun: boolean): void;
   setAudioMuted(muted: boolean): void;
   setDamageDisabled(disabled: boolean): void;
   setDynamicLighting(enabled: boolean): void;
   setRenderMode(glyph: boolean): void;
+  setEnemiesDisabled(disabled: boolean): void;
+  setEnemiesFrozen(frozen: boolean): void;
+  setAttacksDisabled(disabled: boolean): void;
+  setImpactParticles(enabled: boolean): void;
+  setInvertMouse(invert: boolean): void;
+  setShowOutlines(enabled: boolean): void;
+  setStatsPanel(enabled: boolean): void;
+  setShowFps(enabled: boolean): void;
+  setStaticLightingClass(enabled: boolean): void;
   /** Current ASCII-detail level name for display (glyph backend). */
   glyphDetailLabel(): string;
   /** Cycle the ASCII detail level (reloads with the new cell size). */
@@ -56,93 +61,26 @@ export interface QuakeOptionsFlowOptions {
   glyphPaletteLabel(): string;
   /** Cycle the glyph set — applies live, no reload. */
   cycleGlyphPalette(direction: number): void;
-  setEnemiesDisabled(disabled: boolean): void;
-  setImpactParticles(enabled: boolean): void;
-  setInvertMouse(invert: boolean): void;
-  setShowGun(enabled: boolean): void;
-  setStaticLightingClass(enabled: boolean): void;
-  syncDebugControls(): void;
-  syncDebugFlyMode(): void;
 }
 
 export interface QuakeOptionsFlow {
-  attach(): void;
+  /** The options screen's rows, in manifest layout order. */
+  rows(): readonly QuakeMenuOptionRow[];
   cycleCrosshairOption(direction: number): void;
-  dispose(): void;
   setCrosshairOption(value: QuakeCrosshairOption): void;
-  syncAudioToggle(): void;
+  crosshairLabel(): string;
   syncControls(): void;
-  syncDynamicLightingOption(): void;
-  syncRenderModeOption(): void;
-  syncImpactParticlesOption(): void;
+  dispose(): void;
 }
 
 export function createQuakeOptionsFlow(options: QuakeOptionsFlowOptions): QuakeOptionsFlow {
   let crosshairOption: QuakeCrosshairOption = "plus";
 
-  function syncAudioToggle(): void {
-    if (options.disableSoundOption) options.disableSoundOption.checked = options.audioMuted();
-  }
-
-  function syncDynamicLightingOption(): void {
-    const enabled = options.dynamicLightingEnabled();
-    if (options.dynamicLightingOption) options.dynamicLightingOption.checked = enabled;
-    options.setStaticLightingClass(!enabled);
-  }
-
-  function syncRenderModeOption(): void {
-    if (options.renderModeOption) options.renderModeOption.checked = options.renderModeIsGlyph();
-    syncGlyphDetailOption();
-    syncGlyphPaletteOption();
-  }
-
-  function syncGlyphDetailOption(): void {
-    if (options.glyphDetailOptionValue) {
-      options.glyphDetailOptionValue.textContent = options.glyphDetailLabel();
-    }
-  }
-
-  function syncGlyphPaletteOption(): void {
-    if (options.glyphPaletteOptionValue) {
-      options.glyphPaletteOptionValue.textContent = options.glyphPaletteLabel();
-    }
-  }
-
-  function handleGlyphPaletteCycle(event: Event): void {
-    const direction = (event as CustomEvent<{ direction?: number }>).detail?.direction ?? 1;
-    options.cycleGlyphPalette(direction);
-    // Live swap (no reload), so refresh the label in place.
-    syncGlyphPaletteOption();
-  }
-
-  function handleGlyphDetailCycle(event: Event): void {
-    const direction = event instanceof CustomEvent && typeof event.detail?.direction === "number"
-      ? event.detail.direction
-      : 1;
-    options.cycleGlyphDetail(direction);
-    // Live resize when the ASCII overlay is up (no reload), so refresh the label
-    // in place. When it isn't, the cycle navigates and this never runs.
-    syncGlyphDetailOption();
-  }
-
-  function syncImpactParticlesOption(): void {
-    if (options.impactParticlesOption) options.impactParticlesOption.checked = options.impactParticlesEnabled();
-  }
-
   function setCrosshairOption(value: QuakeCrosshairOption): void {
     crosshairOption = value;
     const definition = quakeCrosshairDefinition(value);
-    if (options.crosshair) {
-      options.crosshair.dataset.quakeCrosshair = definition.value;
-      options.crosshair.hidden = definition.value === "off";
-    }
-    if (options.crosshairOption) {
-      options.crosshairOption.setAttribute("aria-label", `Crosshair ${definition.label}`);
-    }
-    if (options.crosshairOptionValue) {
-      options.crosshairOptionValue.textContent = definition.label;
-      options.mountBitmapText(options.crosshairOptionValue);
-    }
+    // The glyph HUD draws the crosshair from this data ("off" hides it).
+    updateQuakeHudSceneState({ crosshair: definition.value });
   }
 
   function cycleCrosshairOption(direction: number): void {
@@ -155,111 +93,69 @@ export function createQuakeOptionsFlow(options: QuakeOptionsFlowOptions): QuakeO
     setCrosshairOption(next.value);
   }
 
+  function crosshairLabel(): string {
+    return quakeCrosshairDefinition(crosshairOption).label;
+  }
+
+  const onOff = (value: boolean) => (value ? "on" : "off");
+  const toggle = (id: string, get: () => boolean, set: (next: boolean) => void): QuakeMenuOptionRow => ({
+    id,
+    value: () => onOff(get()),
+    activate: () => set(!get()),
+  });
+
+  // Row ids and order match QUAKE_MENU_OPTIONS_ROWS in the scene manifest —
+  // the manifest owns each row's position and label, this model its meaning.
+  const rowModel: readonly QuakeMenuOptionRow[] = [
+    toggle("show-outlines", options.showOutlines, options.setShowOutlines),
+    toggle("show-stats", options.statsPanelEnabled, options.setStatsPanel),
+    toggle("show-fps", options.showFps, options.setShowFps),
+    {
+      id: "crosshair",
+      value: crosshairLabel,
+      activate: (direction) => cycleCrosshairOption(direction),
+    },
+    toggle("dynamic-lighting", options.dynamicLightingEnabled, (next) => {
+      options.setDynamicLighting(next);
+      options.setStaticLightingClass(!next);
+    }),
+    toggle("render-mode", options.renderModeIsGlyph, options.setRenderMode),
+    {
+      id: "glyph-detail",
+      value: options.glyphDetailLabel,
+      activate: (direction) => options.cycleGlyphDetail(direction),
+    },
+    {
+      id: "glyph-palette",
+      value: options.glyphPaletteLabel,
+      activate: (direction) => options.cycleGlyphPalette(direction),
+    },
+    toggle("mute-sounds", options.audioMuted, (next) => {
+      options.unlockAudio();
+      options.setAudioMuted(next);
+    }),
+    toggle("show-particles", options.impactParticlesEnabled, options.setImpactParticles),
+    // Shipped mapping preserved: the row's value mirrors the DISABLE flag the
+    // old checkbox held, exactly as `#quake-option-disable-enemies` did.
+    toggle("show-enemies", options.enemiesDisabled, options.setEnemiesDisabled),
+    toggle("disable-damage", options.damageDisabled, options.setDamageDisabled),
+    toggle("disable-movement", options.enemiesFrozen, options.setEnemiesFrozen),
+    toggle("disable-attacks", options.attacksDisabled, options.setAttacksDisabled),
+    toggle("invert-mouse", options.invertMouse, options.setInvertMouse),
+  ];
+
   function syncControls(): void {
-    syncAudioToggle();
-    if (options.disableEnemiesOption) options.disableEnemiesOption.checked = options.enemiesDisabled();
-    if (options.disableDamageOption) options.disableDamageOption.checked = options.damageDisabled();
-    options.syncDebugControls();
-    options.syncDebugFlyMode();
-    syncDynamicLightingOption();
-    syncRenderModeOption();
-    syncImpactParticlesOption();
-    if (options.invertMouseOption) options.invertMouseOption.checked = options.invertMouse();
-    if (options.alwaysRunOption) options.alwaysRunOption.checked = options.alwaysRun();
-    if (options.showGunOption) options.showGunOption.checked = options.showGun();
+    options.setStaticLightingClass(!options.dynamicLightingEnabled());
     setCrosshairOption(crosshairOption);
   }
 
-  function handleDisableSoundOptionChange(event: Event): void {
-    options.unlockAudio();
-    options.setAudioMuted((event.currentTarget as HTMLInputElement).checked);
-  }
-
-  function handleDisableEnemiesOptionChange(event: Event): void {
-    options.setEnemiesDisabled((event.currentTarget as HTMLInputElement).checked);
-  }
-
-  function handleDisableDamageOptionChange(event: Event): void {
-    options.setDamageDisabled((event.currentTarget as HTMLInputElement).checked);
-  }
-
-  function handleDynamicLightingOptionChange(event: Event): void {
-    options.setDynamicLighting((event.currentTarget as HTMLInputElement).checked);
-  }
-
-  function handleRenderModeOptionChange(event: Event): void {
-    options.setRenderMode((event.currentTarget as HTMLInputElement).checked);
-  }
-
-  function handleImpactParticlesOptionChange(event: Event): void {
-    options.setImpactParticles((event.currentTarget as HTMLInputElement).checked);
-  }
-
-  function handleAlwaysRunOptionChange(event: Event): void {
-    options.setAlwaysRun((event.currentTarget as HTMLInputElement).checked);
-  }
-
-  function handleShowGunOptionChange(event: Event): void {
-    options.setShowGun((event.currentTarget as HTMLInputElement).checked);
-  }
-
-  function handleCrosshairOptionClick(): void {
-    cycleCrosshairOption(1);
-  }
-
-  function handleCrosshairOptionCycle(event: Event): void {
-    const direction = event instanceof CustomEvent && typeof event.detail?.direction === "number"
-      ? event.detail.direction
-      : 1;
-    cycleCrosshairOption(direction);
-  }
-
-  function handleInvertMouseOptionChange(event: Event): void {
-    options.setInvertMouse((event.currentTarget as HTMLInputElement).checked);
-  }
-
-  function attach(): void {
-    options.disableSoundOption?.addEventListener("change", handleDisableSoundOptionChange);
-    options.disableEnemiesOption?.addEventListener("change", handleDisableEnemiesOptionChange);
-    options.disableDamageOption?.addEventListener("change", handleDisableDamageOptionChange);
-    options.dynamicLightingOption?.addEventListener("change", handleDynamicLightingOptionChange);
-    options.renderModeOption?.addEventListener("change", handleRenderModeOptionChange);
-    options.impactParticlesOption?.addEventListener("change", handleImpactParticlesOptionChange);
-    options.alwaysRunOption?.addEventListener("change", handleAlwaysRunOptionChange);
-    options.showGunOption?.addEventListener("change", handleShowGunOptionChange);
-    options.crosshairOption?.addEventListener("click", handleCrosshairOptionClick);
-    options.crosshairOption?.addEventListener("quake-option-cycle", handleCrosshairOptionCycle);
-    options.glyphDetailOption?.addEventListener("quake-option-cycle", handleGlyphDetailCycle);
-    options.glyphPaletteOption?.addEventListener("quake-option-cycle", handleGlyphPaletteCycle);
-    options.invertMouseOption?.addEventListener("change", handleInvertMouseOptionChange);
-  }
-
-  function dispose(): void {
-    options.disableSoundOption?.removeEventListener("change", handleDisableSoundOptionChange);
-    options.disableEnemiesOption?.removeEventListener("change", handleDisableEnemiesOptionChange);
-    options.disableDamageOption?.removeEventListener("change", handleDisableDamageOptionChange);
-    options.dynamicLightingOption?.removeEventListener("change", handleDynamicLightingOptionChange);
-    options.renderModeOption?.removeEventListener("change", handleRenderModeOptionChange);
-    options.impactParticlesOption?.removeEventListener("change", handleImpactParticlesOptionChange);
-    options.alwaysRunOption?.removeEventListener("change", handleAlwaysRunOptionChange);
-    options.showGunOption?.removeEventListener("change", handleShowGunOptionChange);
-    options.crosshairOption?.removeEventListener("click", handleCrosshairOptionClick);
-    options.crosshairOption?.removeEventListener("quake-option-cycle", handleCrosshairOptionCycle);
-    options.glyphDetailOption?.removeEventListener("quake-option-cycle", handleGlyphDetailCycle);
-    options.glyphPaletteOption?.removeEventListener("quake-option-cycle", handleGlyphPaletteCycle);
-    options.invertMouseOption?.removeEventListener("change", handleInvertMouseOptionChange);
-  }
-
   return {
-    attach,
+    rows: () => rowModel,
     cycleCrosshairOption,
-    dispose,
     setCrosshairOption,
-    syncAudioToggle,
+    crosshairLabel,
     syncControls,
-    syncDynamicLightingOption,
-    syncRenderModeOption,
-    syncImpactParticlesOption,
+    dispose: () => {},
   };
 }
 

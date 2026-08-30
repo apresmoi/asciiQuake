@@ -11,13 +11,28 @@ import {
   QUAKE_DEFAULT_RENDER_MODE,
   type QuakeRenderMode,
 } from "./runtime/render/engine";
+import { createQuakeGlyphUiOverlay, type QuakeGlyphUiOverlay } from "./runtime/render/glyphUiOverlay";
+import { createQuakeMenuSceneManifest } from "./runtime/render/menuSceneManifest";
+import {
+  QUAKE_GLYPH_UI_TUNING_KNOBS,
+  QUAKE_GLYPH_WORLD_TUNING_KNOBS,
+  readQuakeGlyphTuningValues,
+  type QuakeGlyphTuningValues,
+} from "./runtime/app/glyphTuningSpec";
+import {
+  asciiOnlyGlyphPaletteNames,
+  QUAKE_ASCII_GLYPH_PALETTES,
+  sanitizeQuakeGlyphCharMode,
+  sanitizeQuakeGlyphPalette,
+  sanitizeQuakeGlyphSceneMode,
+} from "./runtime/app/asciiGlyphPolicy";
+import { getQuakeMenuSceneState, updateQuakeMenuSceneState, updateQuakeMenuSceneTexts } from "./runtime/menuSceneState";
+import { GLYPH_FONT_ATLAS_ASCII } from "glyphcss";
 import {
   createQuakeGlyphWorldOverlay,
   QUAKE_GLYPH_OVERLAY_CELL_PX,
-  type QuakeGlyphCharMode,
   type QuakeGlyphColorEncoding,
   type QuakeGlyphComposite,
-  type QuakeGlyphSceneMode,
   type QuakeGlyphWorldOverlay,
 } from "./runtime/render/glyphWorldOverlay";
 import { QUAKE_RENDER_SUPERSAMPLE } from "./prepare/scene";
@@ -31,7 +46,7 @@ import type {
 import { QUAKE_PLAYER_WEAPON_FIRE_FACTS } from "./generated/quakeProgramFacts";
 import { createQuakeSoundController, type QuakeSoundEvent } from "./runtime/audio";
 import { QUAKE_ALIAS_MODEL_RENDER_YAW_OFFSET } from "./runtime/aliasModelOrientation";
-import { mountQuakeBitmapText } from "./runtime/bitmapText";
+import { mountQuakeBitmapText, setQuakeBitmapTextAsCharacters } from "./runtime/bitmapText";
 import {
   QUAKE_COLLISION_UNIT_SCALE,
   QUAKE_PLAYER_MINS_Z,
@@ -74,6 +89,7 @@ import {
 import {
   QUAKE_LOADING_CONSOLE_PAK_LINE,
   type QuakeLoadingProgressTracker,
+  setQuakeLoadingRendererLine,
 } from "./runtime/loadingConsole";
 import { createQuakeAppRuntimeContext } from "./runtime/app/context";
 import {
@@ -288,87 +304,39 @@ const quakeDom = queryQuakeAppDom();
 const {
   app: quakeApp,
   scene: quakeSceneRoot,
-  menu: quakeMenu,
   weapon,
-  mainMenu,
-  mainMenuArt,
-  versionLabel,
-  singlePlayerPanel,
-  multiplayerPanel,
-  multiplayerForm,
+  impactParticlesLayer,
+  hud: quakeHud,
+  bonusOverlay,
+  damageOverlay,
+  intermission: quakeIntermissionRoot,
   multiplayerNameInput,
   multiplayerColorInput,
   multiplayerMapSelect,
   multiplayerFragLimitInput,
   multiplayerMaxPlayersInput,
-  levelPanel,
-  levelList,
-  aboutPanel,
-  optionsPanel,
-  disableSoundOption,
-  disableEnemiesOption,
-  disableDamageOption,
-  invertMouseOption,
-  alwaysRunOption,
-  showGunOption,
-  dynamicLightingOption,
-  renderModeOption,
-  glyphDetailOption,
-  glyphDetailOptionValue,
-  glyphPaletteOption,
-  glyphPaletteOptionValue,
-  impactParticlesOption,
-  impactParticlesLayer,
-  crosshair,
-  crosshairOption,
-  crosshairOptionValue,
-  debugStack,
-  debugPanel,
-  debugShowMenuOption,
-  debugEnabledOption,
-  debugShowFpsOption,
-  debugEnableAnimationsOption,
-  debugFreezeEnemiesOption,
-  debugDisableAttacksOption,
-  debugShowTexturesOption,
-  debugFlyModeOption,
-  debugShowOutlinesOption,
-  debugShowLabelsOption,
-  debugRecordingRow,
-  debugRecordingButton,
-  debugStatElements,
-  loadingOverlay,
-  loadingStatus,
-  loadingProgress,
-  loadingProgressFill,
-  loadingAction,
-  hudArmorValue,
-  hudHealthValue,
-  hudHealthDamageValue,
-  hudAmmoValue,
-  classicHud,
-  hud: quakeHud,
-  bonusOverlay,
-  damageOverlay,
-  notify: quakeNotify,
-  centerPrint: quakeCenterPrint,
-  intermission: quakeIntermissionRoot,
 } = quakeDom;
-const quakeText = createQuakeTextController({
-  centerPrintRoot: quakeCenterPrint,
-  notifyRoot: quakeNotify,
-});
+// Deleted with the HTML shell — typed nulls/empties keep the guarded debug
+// code paths compiling until those tools grow scene-drawn equivalents.
+const classicHud: HTMLElement | null = null;
+const debugRecordingButton: HTMLButtonElement | null = null;
+const debugRecordingRow: HTMLElement | null = null;
+const debugFlyModeOption: HTMLInputElement | null = null;
+const debugStatElements = new Map<string, HTMLElement>();
+const quakeText = createQuakeTextController();
 const quakeIntermission = createQuakeIntermissionFlow({
   renderBitmapText: mountQuakeBitmapText,
   root: quakeIntermissionRoot,
 });
 const quakeLevelStats = createQuakeLevelStatsFlow();
+// No HUD DOM exists: the glyph scene draws the status bar from the scene
+// state (emitHudScene); null sources keep hud.ts's sync a data-only push.
 const hudElements = createQuakeHudElements({
-  root: classicHud,
-  armor: hudArmorValue,
-  health: hudHealthValue,
-  healthDamage: hudHealthDamageValue,
-  ammo: hudAmmoValue,
+  root: null,
+  armor: null,
+  health: null,
+  healthDamage: null,
+  ammo: null,
 });
 const QUAKE_LOADING_PREVIEW_ENABLED = import.meta.env.DEV && new URLSearchParams(window.location.search).has("loading");
 
@@ -725,31 +693,61 @@ function setQuakeStorageValue(key: string, value: string): void {
   }
 }
 
+/** Default ASCII cell budget — the cap "Normal" holds to on ANY window size.
+ *  20k keeps p95 inside the 16.7ms frame budget at 2560x1440 (measured: 42k
+ *  cells there pushed p95 to 33ms). Fine/Ultra deliberately exceed it; they are
+ *  an explicit "I want more detail and will pay for it" choice. */
+const QUAKE_GLYPH_CELL_BUDGET = 20_000;
+
+/** Measured cell width as a fraction of the `<pre>` font size: glyphcss's own
+ *  `.glyph-output{font:13px/1}` makes the cell HEIGHT equal the font size, and a
+ *  monospace advance is ~0.6x that. Verified against the live grid — cell 12 at
+ *  1280x720 measures 176x60, i.e. 7.27px x 12px. */
+const QUAKE_GLYPH_CELL_ASPECT = 0.606;
+
+/** The budget the player is currently on. A resize re-derives the px from THIS,
+ *  which is the whole point of budgeting: the frame cost stays put when the
+ *  window changes instead of quietly scaling with its area. */
+let quakeGlyphDetailBudget: number = QUAKE_GLYPH_CELL_BUDGET;
+
+/** `?glyphCell=` pins a literal px and opts out of budgeting (and of the resize
+ *  re-fit) — it exists so a bug report can pin an exact grid. A function, not a
+ *  const: this block sits above `quakeStartupUrlParams` so the overlay can be
+ *  constructed with a budgeted cell, and reading it eagerly here is a TDZ error. */
+function quakeGlyphCellIsPinned(): boolean {
+  return quakeUrlNumberParam(quakeStartupUrlParams, "glyphCell", 6, 40) !== null;
+}
+
+/** Cell size in px that lands closest to `cells` total cells in the current
+ *  viewport. From `cells = (W*H) / (aspect * px^2)`, solved for px. */
+function quakeGlyphCellForBudget(cells: number): number {
+  const host = quakeApp?.getBoundingClientRect();
+  const width = host?.width || window.innerWidth || 1280;
+  const height = host?.height || window.innerHeight || 720;
+  const px = Math.sqrt((width * height) / (QUAKE_GLYPH_CELL_ASPECT * Math.max(1, cells)));
+  return Math.max(6, Math.min(40, Math.round(px)));
+}
+
+
 const QUAKE_RENDER_MODE_STORAGE_KEY = "cssquake.renderMode";
 const QUAKE_GLYPH_PALETTE_STORAGE_KEY = "cssquake.glyphPalette";
 
 // Glyph sets (glyphcss ramp palettes) offered in the options menu, in cycle
 // order. Each is an intensity ramp, so swapping one is a live scene option —
 // no reload, unlike the render-mode/detail switches which rebuild the engine.
-const QUAKE_GLYPH_PALETTES = [
-  { name: "Solid", palette: "solid" },
-  { name: "ASCII", palette: "detail" },
-  { name: "Blocks", palette: "blocks" },
-  { name: "Dots", palette: "dots" },
-  { name: "Lines", palette: "lines" },
-  { name: "Binary", palette: "binary" },
-  { name: "Hex", palette: "hex" },
-  { name: "Braille", palette: "braille" },
-  { name: "Runes", palette: "runes" },
-  { name: "Stars", palette: "stars" },
-] as const;
+// ASCII-ONLY by policy (see asciiGlyphPolicy.ts): the list lives there and is
+// filtered through the same checker the URL/storage sanitizer uses, so the
+// menu can never cycle onto a Unicode ramp.
+const QUAKE_GLYPH_PALETTES = QUAKE_ASCII_GLYPH_PALETTES;
 
 // `?glyphPalette=` wins (shareable/debug), then the persisted choice, then the
 // ASCII ramp — this is asciiQuake, so the default has to render as characters.
+// Both sources pass through the ASCII-only sanitizer: a non-ASCII or unknown
+// palette (an old persisted "solid"/"blocks" choice, a hand-typed URL) logs
+// and falls back instead of rendering Unicode.
 function resolveQuakeGlyphPalette(): string {
   const fromUrl = new URLSearchParams(window.location.search).get("glyphPalette");
-  if (fromUrl) return fromUrl;
-  return quakeStorageValue(QUAKE_GLYPH_PALETTE_STORAGE_KEY) ?? "detail";
+  return sanitizeQuakeGlyphPalette(fromUrl ?? quakeStorageValue(QUAKE_GLYPH_PALETTE_STORAGE_KEY));
 }
 
 // Render backend is picked once at startup: `?renderMode=` wins (shareable,
@@ -805,7 +803,8 @@ function defaultQuakeMultiplayerPartyHost(): string {
 const asciiQuakeVersionLabel = `v${__ASCIIQUAKE_VERSION__}`;
 const QUAKE_LOADING_CONSOLE_INITIALIZED_LINE = `=== asciiQuake ${asciiQuakeVersionLabel} initialized ===`;
 
-if (versionLabel) versionLabel.textContent = asciiQuakeVersionLabel;
+// Drawn by the glyph overlay beside the logo (quakeMenuVersionPos).
+updateQuakeMenuSceneTexts({ version: asciiQuakeVersionLabel });
 
 const QUAKE_JUMP_VELOCITY = 270 * QUAKE_COLLISION_UNIT_SCALE;
 const QUAKE_GRAVITY = 800 * QUAKE_COLLISION_UNIT_SCALE;
@@ -820,20 +819,21 @@ const QUAKE_MONSTER_RUNTIME_ENABLED = true;
 const QUAKE_MONSTER_MOUNT_VIEW_DOT_MIN = -0.1;
 const quakeStartupUrlParams = new URLSearchParams(window.location.search);
 const quakeRenderMode = resolveQuakeRenderMode();
+// The ASCII backend draws bitmap text as real characters rather than conchars
+// sprite slices — set before any bitmap text is built.
+setQuakeBitmapTextAsCharacters(quakeRenderMode === "glyphcss");
+setQuakeLoadingRendererLine(quakeRenderMode);
 const quakeDebugMonsterMotionMaterial = quakeDebugMonsterMotionMaterialPolicy(quakeStartupUrlParams);
 const quakeDebugMonsterPlayerClearance = quakeDebugMonsterPlayerClearancePolicy(quakeStartupUrlParams);
 const quakeDebugMonsterCameraStandoff = quakeDebugMonsterCameraStandoffPolicy(quakeStartupUrlParams);
-const quakeAssetCatalog = createQuakeAssetCatalogFlow({
-  levelList,
-  mountBitmapText: mountQuakeBitmapText,
-});
-let quakeEnemiesDisabled = quakeUrlBoolean("disableEnemies") || (disableEnemiesOption?.checked ?? false);
-let quakeDamageDisabled = quakeUrlBoolean("disableDamage") || (disableDamageOption?.checked ?? false);
-let quakeEnemiesFrozen = quakeUrlBoolean("freezeEnemies") || (debugFreezeEnemiesOption?.checked ?? false);
-let quakeAttacksDisabled = quakeUrlBoolean("disableAttacks") || (debugDisableAttacksOption?.checked ?? false);
+const quakeAssetCatalog = createQuakeAssetCatalogFlow();
+let quakeEnemiesDisabled = quakeUrlBoolean("disableEnemies");
+let quakeDamageDisabled = quakeUrlBoolean("disableDamage");
+let quakeEnemiesFrozen = quakeUrlBoolean("freezeEnemies");
+let quakeAttacksDisabled = quakeUrlBoolean("disableAttacks");
 const quakeDebugPointerTraceConsole = quakeUrlBoolean("debugPointer");
 const quakeDebugRecordingPanelEnabled = quakeUrlBoolean("debugRecording");
-const quakeInitialDebugFlyMode = quakeUrlBoolean("debugFly") || (debugFlyModeOption?.checked ?? false);
+const quakeInitialDebugFlyMode = quakeUrlBoolean("debugFly");
 if (debugRecordingRow) debugRecordingRow.hidden = !quakeDebugRecordingPanelEnabled;
 const quakeMultiplayerCompactInvite = parseQuakeMultiplayerCompactInvite(
   quakeStartupUrlParams.get("room"),
@@ -922,11 +922,11 @@ const QUAKE_MULTIPLAYER_REMOTE_ATTACK_FRAME_NAMES_BY_WEAPON: Record<string, read
 const quakeMultiplayerScoreboard = QUAKE_MULTIPLAYER_ENABLED && quakeHud
   ? mountQuakeMultiplayerScoreboard(quakeHud)
   : null;
-let quakeInvertMouse = invertMouseOption?.checked ?? false;
-let quakeAlwaysRun = alwaysRunOption?.checked ?? true;
-let quakeShowGun = showGunOption?.checked ?? true;
-let quakeDynamicLighting = dynamicLightingOption?.checked ?? true;
-let quakeImpactParticles = impactParticlesOption?.checked ?? true;
+let quakeInvertMouse = false;
+let quakeAlwaysRun = true;
+let quakeShowGun = true;
+let quakeDynamicLighting = true;
+let quakeImpactParticles = true;
 let quakeMultiplayerSpectating = false;
 let quakeMultiplayerSpectatorFollowedPlayerId: string | null = null;
 let quakeMultiplayerSpectatorCenterPrint = "";
@@ -1014,9 +1014,8 @@ async function copyCurrentQuakeViewUrl(): Promise<string> {
 }
 
 function setQuakeAssetManifest(manifest: QuakeAssetManifest): void {
-  quakeAssetCatalog.setManifest(manifest, { renderBitmapText: true });
+  quakeAssetCatalog.setManifest(manifest);
   mountQuakeMultiplayerMapSelector();
-  syncQuakeMultiplayerControlGlyph(multiplayerMapSelect);
   menu.setCurrentLevel(currentMapName);
 }
 
@@ -1071,7 +1070,6 @@ function syncQuakeMultiplayerMenu(): void {
   if (multiplayerMapSelect) multiplayerMapSelect.value = quakeMultiplayerDefaultCreateMapName();
   if (multiplayerFragLimitInput) multiplayerFragLimitInput.value = String(QUAKE_MULTIPLAYER_FRAG_LIMIT);
   if (multiplayerMaxPlayersInput) multiplayerMaxPlayersInput.value = String(QUAKE_MULTIPLAYER_MAX_PLAYERS);
-  syncQuakeMultiplayerControlGlyphs();
 }
 
 let quakeMultiplayerGeneratedMenuRoom: {
@@ -1258,66 +1256,7 @@ function startQuakeMultiplayerFromMenu(): void {
   window.location.assign(url.toString());
 }
 
-type QuakeMultiplayerGlyphControl = HTMLInputElement | HTMLSelectElement;
-
-function quakeMultiplayerGlyphControls(): QuakeMultiplayerGlyphControl[] {
-  return [
-    multiplayerNameInput,
-    multiplayerMapSelect,
-    multiplayerFragLimitInput,
-    multiplayerMaxPlayersInput,
-  ].filter((control): control is QuakeMultiplayerGlyphControl => Boolean(control));
-}
-
-function syncQuakeMultiplayerControlGlyphs(): void {
-  for (const control of quakeMultiplayerGlyphControls()) syncQuakeMultiplayerControlGlyph(control);
-}
-
-function syncQuakeMultiplayerControlGlyph(control: QuakeMultiplayerGlyphControl | null): void {
-  if (!control) return;
-  const glyph = control.parentElement?.querySelector<HTMLElement>(".quake-multiplayer-control-glyph");
-  if (!glyph) return;
-  glyph.textContent = quakeMultiplayerControlGlyphText(control);
-  glyph.classList.add("quake-bm-label", "quake-bm-alt");
-  mountQuakeBitmapText(glyph);
-}
-
-function quakeMultiplayerControlGlyphText(control: QuakeMultiplayerGlyphControl): string {
-  if (control instanceof HTMLSelectElement) {
-    return control.selectedOptions[0]?.textContent?.trim() || control.value;
-  }
-  return control.value;
-}
-
-function handleQuakeMultiplayerControlGlyphInput(event: Event): void {
-  const control = event.currentTarget;
-  if (control instanceof HTMLInputElement || control instanceof HTMLSelectElement) {
-    syncQuakeMultiplayerControlGlyph(control);
-  }
-}
-
-function attachQuakeMultiplayerControlGlyphs(): void {
-  for (const control of quakeMultiplayerGlyphControls()) {
-    control.addEventListener("input", handleQuakeMultiplayerControlGlyphInput);
-    control.addEventListener("change", handleQuakeMultiplayerControlGlyphInput);
-  }
-}
-
-function disposeQuakeMultiplayerControlGlyphs(): void {
-  for (const control of quakeMultiplayerGlyphControls()) {
-    control.removeEventListener("input", handleQuakeMultiplayerControlGlyphInput);
-    control.removeEventListener("change", handleQuakeMultiplayerControlGlyphInput);
-  }
-}
-
-function handleQuakeMultiplayerFormSubmit(event: SubmitEvent): void {
-  event.preventDefault();
-  event.stopPropagation();
-  startQuakeMultiplayerFromMenu();
-}
-
 injectQuakeWorldAnimations();
-quakeAssetCatalog.mountLevelSelector();
 
 const quakeRenderEngine = createQuakeRenderEngine(quakeRenderMode, quakeApp, {
   camera: {
@@ -1376,7 +1315,7 @@ if (import.meta.env?.DEV) {
 if (quakeSceneRoot) {
   quakeSceneRoot.appendChild(host);
 } else {
-  quakeApp.insertBefore(host, weapon ?? quakeMenu);
+  quakeApp.insertBefore(host, weapon);
 }
 host.tabIndex = 0;
 installInspectableQuakePolycssCamera(scene, host);
@@ -1385,6 +1324,52 @@ installInspectableQuakePolycssCamera(scene, host);
 const sceneElement = quakeRenderEngine.sceneElement;
 sceneElement.removeAttribute("data-polycss-lighting");
 
+// Both glyph overlays encode against glyphcss's ASCII-only atlas variant:
+// 94 printable-ASCII glyphs, which frees the shared PUA budget for 68 palette
+// slots instead of the universal atlas's 30. The menus' desaturation and
+// page-to-page colour shift were both 30-slot median-cut error; the world and
+// UI here only ever emit `detail`-ramp ASCII, so the universal set's Greek/
+// braille/box-drawing coverage bought nothing. `?glyphAtlas=universal` opts
+// back into the universal atlas for comparison. Configs needing non-ASCII
+// glyphs (braille charMode, exotic `?glyphPalette=`) fall back to the span
+// encoder — the same fallback they already hit under the universal atlas.
+const quakeGlyphFontAtlas = quakeStartupUrlParams.get("glyphAtlas") === "universal"
+  ? undefined
+  : GLYPH_FONT_ATLAS_ASCII;
+
+// The tuning-panel knobs' startup values: URL param when present, shipped
+// default otherwise — resolved through the same spec table the `?debug`
+// tuning panel builds its sliders from (see glyphTuningSpec.ts).
+const quakeWorldGlyphTuning = readQuakeGlyphTuningValues(QUAKE_GLYPH_WORLD_TUNING_KNOBS, quakeStartupUrlParams);
+const quakeUiGlyphTuning = readQuakeGlyphTuningValues(QUAKE_GLYPH_UI_TUNING_KNOBS, quakeStartupUrlParams);
+// UI (menu/console/HUD-art) scene ramp palette, `?glyphImagePalette=`.
+// ASCII-only sanitized; mutable so the `?debug` panel's palette select can
+// swap it live (the UI scene remounts per adjustment anyway).
+let quakeUiGlyphPalette = sanitizeQuakeGlyphPalette(quakeStartupUrlParams.get("glyphImagePalette"));
+// Corner-logo glyph ramp, `?glyphImageLogoPalette=` — the LOGO's own per-mesh
+// palette (glyphcss per-mesh glyphPalette via the overlay's meshStyles),
+// default "dense": the user-tuned logo look (glyph lab, 2026-08) alongside the
+// logo tone knobs in glyphTuningSpec.ts. Same ASCII-only sanitizer as every
+// other palette path; mutable so the `?debug` panel can swap it live. (The old
+// DPR-based logo DENSITY lift is gone with the retune — see the spec's
+// logoDensity entry: the tuned look is deliberately coarse on every display.)
+const QUAKE_LOGO_PALETTE_DEFAULT = "dense";
+let quakeUiLogoPalette = quakeStartupUrlParams.get("glyphImageLogoPalette")
+  ? sanitizeQuakeGlyphPalette(quakeStartupUrlParams.get("glyphImageLogoPalette"))
+  : QUAKE_LOGO_PALETTE_DEFAULT;
+// The other per-element ramps (2026-08 retune): boot console, menu plaque,
+// menu title, menu label sheet — all tuned to "dense" in the glyph lab, each
+// overridable per element. Same ASCII-only sanitizer as every palette path.
+const QUAKE_ELEMENT_PALETTE_DEFAULT = "dense";
+function quakeElementPalette(param: string): string {
+  const raw = quakeStartupUrlParams.get(param);
+  return raw ? sanitizeQuakeGlyphPalette(raw) : QUAKE_ELEMENT_PALETTE_DEFAULT;
+}
+let quakeUiTextPalette = quakeElementPalette("glyphImageTextPalette");
+let quakeUiPlaquePalette = quakeElementPalette("glyphImagePlaquePalette");
+let quakeUiTitlePalette = quakeElementPalette("glyphImageTitlePalette");
+let quakeUiLabelPalette = quakeElementPalette("glyphImageLabelPalette");
+
 // glyphcss world overlay (Phase 3 milestone): when the ASCII backend is
 // selected, polycss still drives all game logic/camera/controls while this
 // overlay mirrors the world geometry as ASCII driven by the live camera.
@@ -1392,7 +1377,8 @@ const quakeGlyphOverlay: QuakeGlyphWorldOverlay | null =
   quakeRenderMode === "glyphcss"
     ? createQuakeGlyphWorldOverlay({
         host: quakeApp,
-        insertBefore: weapon ?? quakeMenu,
+        fontAtlas: quakeGlyphFontAtlas,
+        insertBefore: weapon,
         // Skip the (fully hidden) polycss world render while the opaque ASCII is
         // up — polycss was still rasterizing every textured DOM polygon behind it.
         // Toggling composite to poly/both brings the layer straight back.
@@ -1400,7 +1386,10 @@ const quakeGlyphOverlay: QuakeGlyphWorldOverlay | null =
         // Live-tunable, e.g. ?glyphCell=18&glyphTaa=0.6&ssaa=2&glyphBright=4
         supersample: quakeUrlNumberParam(quakeStartupUrlParams, "ssaa", 1, 4) ?? undefined,
         temporalBlend: quakeUrlNumberParam(quakeStartupUrlParams, "glyphTaa", 0, 0.9) ?? undefined,
-        cellPx: quakeUrlNumberParam(quakeStartupUrlParams, "glyphCell", 6, 40) ?? undefined,
+        // Budgeted, not fixed: the cell is derived from the viewport so "Normal"
+        // costs the same on a laptop and a 4K window. `?glyphCell=` pins the px.
+        cellPx: quakeUrlNumberParam(quakeStartupUrlParams, "glyphCell", 6, 40)
+          ?? quakeGlyphCellForBudget(quakeGlyphDetailBudget),
         lineHeight: quakeUrlNumberParam(quakeStartupUrlParams, "glyphLine", 4, 40) ?? undefined,
         // PARITY, out of the box: glyphcss's camera is now polycss-native (zoom =
         // CSS px/unit, perspective = CSS px) and projects with measured cell metrics,
@@ -1410,10 +1399,20 @@ const quakeGlyphOverlay: QuakeGlyphWorldOverlay | null =
         perspective: quakeUrlNumberParam(quakeStartupUrlParams, "glyphPersp", 100, 40000) ?? quakeCameraViewConfig.perspective,
         zoom: quakeUrlNumberParam(quakeStartupUrlParams, "glyphZoom", 0.01, 500) ?? quakeCameraViewConfig.zoom,
         fovScale: quakeUrlNumberParam(quakeStartupUrlParams, "glyphFovScale", 0.1, 10) ?? undefined,
-        flat: quakeUrlNumberParam(quakeStartupUrlParams, "glyphFlat", 0, 1) ?? undefined,
-        brighten: quakeUrlNumberParam(quakeStartupUrlParams, "glyphBright", 1, 12) ?? undefined,
-        ambientLight: quakeUrlNumberParam(quakeStartupUrlParams, "glyphAmbient", 0, 1) ?? undefined,
-        directionalLight: quakeUrlNumberParam(quakeStartupUrlParams, "glyphDir", 0, 1) ?? undefined,
+        flat: quakeWorldGlyphTuning.flat,
+        brighten: quakeWorldGlyphTuning.brighten,
+        // Hue-preserving tone lift after the brighten multiply (below 1 lifts
+        // mids/darks, clip guard holds highlights). `?glyphGamma=`.
+        gamma: quakeWorldGlyphTuning.gamma,
+        // Levels on the tone curve's target luminance (dynamic-range stretch;
+        // see the overlay option docs). `?glyphBlack=` / `?glyphWhite=`.
+        blackPoint: quakeWorldGlyphTuning.black,
+        whitePoint: quakeWorldGlyphTuning.white,
+        // Sub-pixel glyph stroke — perceived-luminance coverage boost.
+        // `?glyphStroke=` (0 disables).
+        strokePx: quakeWorldGlyphTuning.stroke,
+        ambientLight: quakeWorldGlyphTuning.ambient,
+        directionalLight: quakeWorldGlyphTuning.dir,
         depthEpsilon: quakeUrlNumberParam(quakeStartupUrlParams, "glyphEps", 0, 0.1) ?? undefined,
         // Glyph ramp palette (intensity → char). Defaults to "blocks" (solid
         // block elements → walls read as surfaces, not letters).
@@ -1441,20 +1440,15 @@ const quakeGlyphOverlay: QuakeGlyphWorldOverlay | null =
         // exact, reproducible view (to pin a flicker spot to coordinates).
         debug: quakeStartupUrlParams.get("glyphDebug") === "1",
         fixedView: quakeParseGlyphView(quakeStartupUrlParams.get("glyphView")),
-        // Cell character encoding: `?glyphCharMode=braille` renders the world as
-        // Unicode Braille dot patterns (2x4 subcell mask per cell). Braille only
-        // applies to glyphcss's WIREFRAME output, so the overlay flips the scene
-        // mode along with it unless `?glyphSceneMode=` says otherwise.
-        // `halfblock`/`quadrant` are the solid-mode subcell encodings.
-        charMode: ((m): QuakeGlyphCharMode | undefined =>
-          m === "braille" || m === "halfblock" || m === "quadrant" || m === "ascii" ? m : undefined)(
-          quakeStartupUrlParams.get("glyphCharMode"),
-        ),
-        // Scene render mode: `?glyphSceneMode=wireframe|voxel|ink|solid`.
-        sceneMode: ((m): QuakeGlyphSceneMode | undefined =>
-          m === "wireframe" || m === "voxel" || m === "ink" || m === "solid" ? m : undefined)(
-          quakeStartupUrlParams.get("glyphSceneMode"),
-        ),
+        // Cell character encoding, `?glyphCharMode=`. ASCII-only policy: the
+        // sanitizer accepts "ascii" alone — glyphcss's braille (Unicode dot
+        // patterns) and halfblock/quadrant (block elements) encodings are
+        // rejected with a console warning (see asciiGlyphPolicy.ts).
+        charMode: sanitizeQuakeGlyphCharMode(quakeStartupUrlParams.get("glyphCharMode")),
+        // Scene render mode, `?glyphSceneMode=`. ASCII-only policy: "solid"
+        // alone — wireframe/voxel emit box-drawing junctions, ink a fixed
+        // non-ASCII oriented set (see asciiGlyphPolicy.ts).
+        sceneMode: sanitizeQuakeGlyphSceneMode(quakeStartupUrlParams.get("glyphSceneMode")),
         // Colour-run merge tolerance (redmean 0..765, 0 = off): fewer <span>s per
         // row at the cost of colour fidelity. `?glyphColorTolerance=24`.
         colorTolerance: quakeUrlNumberParam(quakeStartupUrlParams, "glyphColorTolerance", 0, 765) ?? undefined,
@@ -1478,6 +1472,341 @@ const quakeGlyphOverlay: QuakeGlyphWorldOverlay | null =
         ),
       })
     : null;
+// The menu's sprite art AND text rendered as ONE ASCII image: every sprite is a
+// textured quad in a single glyphcss scene, layered along Z and composited by
+// the rasterizer's depth test. The scene manifest below is ALSO the menu
+// controller's hit-map, so it is created once and shared.
+//
+// Unconditional now (previously glyphcss-mode only): the HTML menu this used
+// to fall back to is gone, so the glyph UI scene is the ONLY menu renderer —
+// in polycss world-render mode too.
+const quakeMenuManifest = createQuakeMenuSceneManifest({
+  density: quakeUiGlyphTuning.density,
+  backdropBrightness: quakeUiGlyphTuning.backdrop,
+  logoDensity: quakeUiGlyphTuning.logoDensity,
+});
+// A DEDICATED, always-present host — not the loading overlay. Hosting the
+// scene on `#quake-loading-overlay` tied its life to that overlay's `hidden`
+// flag: the moment gameplay started the host collapsed to zero size, sync()
+// bailed, and neither the in-game Esc menu nor the HUD could ever draw.
+// Placement: immediately BEFORE the overlay at the overlay's own z-index (2),
+// so during boot/loading the overlay's interior HTML (the progress bar) still
+// paints above the glyph grid exactly as it did when the grid lived inside
+// it, while `#quake-menu` (z-index 3) keeps its interactive HTML on top. The
+// overlay's own black ground moves to the glyph surface (see the overlay's
+// chrome handling) — quake.css makes the overlay itself transparent.
+const quakeGlyphUiHost = document.createElement("div");
+quakeGlyphUiHost.id = "quake-glyph-ui-host";
+quakeGlyphUiHost.setAttribute("aria-hidden", "true");
+quakeGlyphUiHost.style.cssText = "position:absolute;inset:0;z-index:2;pointer-events:none;overflow:hidden";
+quakeApp.appendChild(quakeGlyphUiHost);
+
+let quakeGlyphUiOverlayHandle: QuakeGlyphUiOverlay | null = null;
+/**
+ * (Re)create the UI glyph scene with a tuning-values record (keys =
+ * glyphTuningSpec's UI knobs). Called once at startup with the URL-resolved
+ * values; the `?debug` tuning panel calls it again per adjustment — the
+ * overlay's options are baked at construction (tone caches, the pre-lifted
+ * conchars sheet, manifest densities), so a full dispose+recreate IS the
+ * live-update path, and the overlay was built to make that cheap.
+ *
+ * The overlay gets its OWN manifest instance per mount: `quakeMenuManifest`
+ * above stays with the menu controller (hit-map identity), and both are pure
+ * functions of the same layout constants, so the geometry cannot diverge —
+ * only density/brightness differ.
+ */
+function mountQuakeGlyphUiOverlay(t: QuakeGlyphTuningValues): void {
+  quakeGlyphUiOverlayHandle?.dispose();
+  quakeGlyphUiOverlayHandle = createQuakeGlyphUiOverlay({
+    host: quakeGlyphUiHost,
+    // ONE occlusion domain across the two stacked scenes: the UI scene
+    // publishes its opaque coverage (Esc menu art, HUD, crosshair) after
+    // every render, and the world scene blanks its cells under it — the
+    // same effect the landing gets from backdrop + art sharing a scene.
+    // The viewmodel yields too (it is part of the world scene).
+    onCoverage: (coverage) => quakeGlyphOverlay?.setUiOcclusion(coverage),
+    // The declarative menu scene: every screen, its text and the chrome
+    // render from this manifest + the shared menu scene state. No DOM reads.
+    menu: createQuakeMenuSceneManifest({
+      density: t.density,
+      backdropBrightness: t.backdrop,
+      logoDensity: t.logoDensity,
+      plaqueDensity: t.plaqueDensity,
+      titleDensity: t.titleDensity,
+      labelDensity: t.labelDensity,
+    }),
+    maxCells: t.maxCells,
+    minCellPx: t.minCellPx,
+    glyphPalette: quakeUiGlyphPalette,
+    // ── The per-element style table (2026-08 retune, glyph lab) ──
+    // One row per user-tuned element, keyed by its mesh styleTag. Each row
+    // reproduces that element's approved LAB SESSION (see the spec's tone
+    // groups): `ambient` reaches glyphcss as the mesh's own ambient light
+    // (glyph choice tracks it exactly), and `colorBoost` replays the lab's
+    // styled-branch residual — the lab composes colours ×(1.65/scene ambient)
+    // over every sprite it previews, so an element tuned there at ambient A
+    // was approved with colours ×max(1, 1.65/A). Sprite rows use it; the
+    // console row doesn't (its lab path had no residual). Styled meshes also
+    // opt OUT of occlusion (see QuakeGlyphMeshStyle.occlude): measured, the
+    // opaque backdrop stole their partial-alpha cells at base-cell
+    // granularity and eroded the art (corner logo: 215 of ~650 ink cells
+    // survived; the lab keeps them all).
+    meshStyles: {
+      logo: {
+        palette: quakeUiLogoPalette,
+        ambient: t.logoAmbient,
+        gamma: t.logoGamma,
+        saturation: t.logoSaturation,
+        colorBoost: Math.max(1, 1.65 / t.logoAmbient),
+        occlusionMarginPx: t.logoOcclusionMargin,
+      },
+      // ONE profile for every conchars run — boot console AND menu row text
+      // (same font, same path; see drawGlyphRun). Seeded from the user's
+      // console lab session; densities stay per element.
+      text: {
+        palette: quakeUiTextPalette,
+        ambient: t.textAmbient,
+        gamma: t.textCellGamma,
+        saturation: t.textCellSaturation,
+        inkComp: t.textInkComp,
+        strokePx: t.textStroke,
+        sheetGamma: t.textSheetGamma,
+        sheetSaturation: t.textSheetSaturation,
+        occlusionMarginPx: t.textOcclusionMargin,
+      },
+      plaque: {
+        palette: quakeUiPlaquePalette,
+        ambient: t.plaqueAmbient,
+        gamma: t.plaqueGamma,
+        saturation: t.plaqueSaturation,
+        black: t.plaqueBlack,
+        inkComp: t.plaqueInkComp,
+        strokePx: t.plaqueStroke,
+        colorBoost: Math.max(1, 1.65 / t.plaqueAmbient),
+        occlusionMarginPx: t.plaqueOcclusionMargin,
+      },
+      title: {
+        palette: quakeUiTitlePalette,
+        ambient: t.titleAmbient,
+        gamma: t.titleGamma,
+        saturation: t.titleSaturation,
+        black: t.titleBlack,
+        inkComp: t.titleInkComp,
+        strokePx: t.titleStroke,
+        colorBoost: Math.max(1, 1.65 / t.titleAmbient),
+        occlusionMarginPx: t.titleOcclusionMargin,
+      },
+      labels: {
+        palette: quakeUiLabelPalette,
+        ambient: t.labelAmbient,
+        gamma: t.labelGamma,
+        saturation: t.labelSaturation,
+        black: t.labelBlack,
+        inkComp: t.labelInkComp,
+        strokePx: t.labelStroke,
+        colorBoost: Math.max(1, 1.65 / t.labelAmbient),
+        occlusionMarginPx: t.labelOcclusionMargin,
+      },
+    },
+    // Measured against the cssquake.wtf reference menu (perceived-luminance
+    // region stats, 2026-08): 3.0 + the 0.6px glyph stroke + gamma 0.4 +
+    // backdropGamma 0.6 lands the banner/plaque within ~70% of the
+    // reference where the old 2.0/0.55/0.8 sat at ~35%. The earlier "3.0
+    // clips the bronze" observation predates the gamma clip guard, which
+    // now holds those channels. `?glyphImageAmbient=`.
+    ambient: t.ambient,
+    // Hue-preserving tone lift (below 1 brightens; see the overlay's `gamma`
+    // doc). This carries the brightness the linear levers cannot: ambient
+    // past ~2.4 clips the art's bright channels and washes the bronze grey,
+    // while the curve spends its lift on the dark backdrop and midtones.
+    gamma: t.gamma,
+    // Art-layer vibrancy (see the overlay's `saturation` doc).
+    // `?glyphImageSaturation=`.
+    saturation: t.saturation,
+    // Levels: dynamic-range stretch per layer group (see the overlay docs).
+    // `?glyphImageBlack=`/`?glyphImageWhite=` (art),
+    // `?glyphImageBackdropBlack=`/`?glyphImageBackdropWhite=` (backdrop).
+    blackPoint: t.black,
+    whitePoint: t.white,
+    backdropBlackPoint: t.backdropBlack,
+    backdropWhitePoint: t.backdropWhite,
+    // The backdrop's own, MILDER curve. One shared curve lifted the dark
+    // backdrop proportionally more than the art, which read as the
+    // background sitting in front of the menu. 0.6 keeps the backdrop's
+    // concrete texture visible (the reference backdrop reads ~50 perceived
+    // luma) while the art's stronger lift + ink compensation stays ahead.
+    // `?glyphImageBackdropGamma=`.
+    backdropGamma: t.backdropGamma,
+    colorEncoding: quakeStartupUrlParams.get("glyphImageEncoding") === "spans" ? "spans" : "atlas",
+    fontAtlas: quakeGlyphFontAtlas,
+    // The INTERMISSION card is the one surface still built as DOM (it is
+    // gameplay-only and assembled at show time): its bitmap runs render as
+    // conchars quads exactly as all menu text used to. Everything else is
+    // manifest text now (see the overlay's emitManifestTexts).
+    textArt: [{
+      selector: "#quake-intermission .quake-bitmap-run",
+      layer: 2,
+      density: t.textDensity,
+    }],
+    // Manifest text shares the text density knob (`?glyphImageTextDensity=`);
+    // the boot console alone can be pushed further (`?glyphImageConsoleDensity=`).
+    manifestTextDensity: t.textDensity,
+    consoleTextDensity: t.consoleDensity,
+    // Ink-coverage compensation strength for the art/text detail layers —
+    // `?glyphImageInkComp=` (0 disables, 1 full). See the overlay option.
+    inkCompensation: t.inkComp,
+    // Sub-pixel glyph stroke — perceived-luminance coverage boost for the
+    // whole UI scene. `?glyphImageStroke=` (0 disables).
+    strokePx: t.stroke,
+    // Text-only brightness and vibrancy — both applied once to the conchars
+    // sheet the text quads sample, so neither can affect the art or backdrop.
+    textGamma: t.textGamma,
+    textSaturation: t.textSaturation,
+    //
+    // The LANDING screen, the backdrop and the corner logo are gone from
+    // this list: they render from the scene manifest above. What remains is
+    // the not-yet-migrated screens' art, still discovered by tracing.
+    sprites: [
+      // `?glyphImageDensity=` puts small art in its own higher-density detail
+      // layer, and `segment: true` makes that layer OCCLUDE correctly: the
+      // sprite is split into one tight quad per connected opaque region, so
+      // glyphcss's occlusion id-map blanks the base grid only under the
+      // artwork itself (the art sits on clean black, like a world entity)
+      // while the backdrop keeps painting between the letterforms. Without
+      // segment the quad is the sprite's whole rectangle — occluding punches
+      // a black box around the art, so the overlay renders an unsegmented
+      // density sprite `transparent` instead, and the bright backdrop then
+      // leaks straight through the art's transparent texels.
+      // The classic HUD renders from the scene state + hud.ts's slot table
+      // now (see the overlay's emitHudScene) — no HUD sprite rules here.
+      { selector: ".quake-intermission-value-glyph", layer: 2, fit: "css" },
+      { selector: ".quake-glyph-pseudo", layer: 2, fit: "css", density: t.density, segment: true },
+    ],
+  });
+}
+mountQuakeGlyphUiOverlay(quakeUiGlyphTuning);
+
+// ── `?debug` live tuning panel ───────────────────────────────────────────────
+// A disposable, off-theme floating panel of sliders over every glyph tuning
+// knob (see glyphTuningSpec.ts), for finding better defaults by eye. Gated on
+// the URL param and loaded lazily so the normal path carries ZERO extra DOM
+// and no module cost.
+// Live select-values for the panel's palette dropdowns (mutated in place by
+// the panel, read by each section's `apply`). ASCII-legal values only — both
+// initial values are already sanitized, and `apply` re-sanitizes.
+const quakeUiGlyphPanelSelects: Record<string, string> = {
+  palette: quakeUiGlyphPalette,
+  logoPalette: quakeUiLogoPalette,
+  textPalette: quakeUiTextPalette,
+  plaquePalette: quakeUiPlaquePalette,
+  titlePalette: quakeUiTitlePalette,
+  labelPalette: quakeUiLabelPalette,
+};
+const quakeWorldGlyphPanelSelects: Record<string, string> = {
+  palette: quakeGlyphOverlay?.getGlyphPalette() ?? resolveQuakeGlyphPalette(),
+};
+if (quakeStartupUrlParams.has("debug")) {
+  void import("./runtime/debug/glyphTuningPanel").then(({ installQuakeGlyphTuningPanel }) => {
+    installQuakeGlyphTuningPanel([
+      {
+        title: "Menu / UI scene",
+        knobs: QUAKE_GLYPH_UI_TUNING_KNOBS,
+        values: quakeUiGlyphTuning,
+        // Ramp palette dropdown — ASCII-legal palettes only (the policy
+        // module enumerates them, so a non-ASCII glyphcss palette can never
+        // appear here). `?glyphImagePalette=` pins it via "copy URL".
+        selects: [{
+          key: "palette",
+          param: "glyphImagePalette",
+          label: "ramp palette",
+          options: asciiOnlyGlyphPaletteNames(),
+          def: "detail",
+        }, {
+          key: "logoPalette",
+          param: "glyphImageLogoPalette",
+          label: "logo ramp palette",
+          options: asciiOnlyGlyphPaletteNames(),
+          def: QUAKE_LOGO_PALETTE_DEFAULT,
+        }, {
+          key: "textPalette",
+          param: "glyphImageTextPalette",
+          label: "text ramp palette",
+          options: asciiOnlyGlyphPaletteNames(),
+          def: QUAKE_ELEMENT_PALETTE_DEFAULT,
+        }, {
+          key: "plaquePalette",
+          param: "glyphImagePlaquePalette",
+          label: "plaque ramp palette",
+          options: asciiOnlyGlyphPaletteNames(),
+          def: QUAKE_ELEMENT_PALETTE_DEFAULT,
+        }, {
+          key: "titlePalette",
+          param: "glyphImageTitlePalette",
+          label: "title ramp palette",
+          options: asciiOnlyGlyphPaletteNames(),
+          def: QUAKE_ELEMENT_PALETTE_DEFAULT,
+        }, {
+          key: "labelPalette",
+          param: "glyphImageLabelPalette",
+          label: "label ramp palette",
+          options: asciiOnlyGlyphPaletteNames(),
+          def: QUAKE_ELEMENT_PALETTE_DEFAULT,
+        }],
+        selectValues: quakeUiGlyphPanelSelects,
+        // Recreating the UI scene re-probes textures + re-segments art; keep
+        // it off the slider's every input event.
+        debounceMs: 180,
+        apply: (v) => {
+          quakeUiGlyphPalette = sanitizeQuakeGlyphPalette(quakeUiGlyphPanelSelects.palette);
+          quakeUiLogoPalette = sanitizeQuakeGlyphPalette(quakeUiGlyphPanelSelects.logoPalette);
+          quakeUiTextPalette = sanitizeQuakeGlyphPalette(quakeUiGlyphPanelSelects.textPalette);
+          quakeUiPlaquePalette = sanitizeQuakeGlyphPalette(quakeUiGlyphPanelSelects.plaquePalette);
+          quakeUiTitlePalette = sanitizeQuakeGlyphPalette(quakeUiGlyphPanelSelects.titlePalette);
+          quakeUiLabelPalette = sanitizeQuakeGlyphPalette(quakeUiGlyphPanelSelects.labelPalette);
+          mountQuakeGlyphUiOverlay(v);
+        },
+      },
+      ...(quakeGlyphOverlay
+        ? [{
+            title: "World scene",
+            knobs: QUAKE_GLYPH_WORLD_TUNING_KNOBS,
+            values: { ...quakeWorldGlyphTuning, cell: quakeGlyphOverlay.getCellPx() },
+            // Same ASCII-legal palette dropdown for the world's ramp.
+            selects: [{
+              key: "palette",
+              param: "glyphPalette",
+              label: "ramp palette",
+              options: asciiOnlyGlyphPaletteNames(),
+              def: "detail",
+            }],
+            selectValues: quakeWorldGlyphPanelSelects,
+            // The world's budget-derived cell is the real default; the spec's
+            // literal is only a fallback. Overriding keeps "copy URL" from
+            // pinning a cell the user never touched.
+            defaults: { cell: quakeGlyphOverlay.getCellPx() },
+            debounceMs: 120,
+            apply: (v: QuakeGlyphTuningValues) => {
+              quakeGlyphOverlay.setGlyphPalette(
+                sanitizeQuakeGlyphPalette(quakeWorldGlyphPanelSelects.palette),
+              );
+              quakeGlyphOverlay.setTuning({
+                brighten: v.brighten,
+                gamma: v.gamma,
+                blackPoint: v.black,
+                whitePoint: v.white,
+                flat: v.flat,
+                strokePx: v.stroke,
+                ambientLight: v.ambient,
+                directionalLight: v.dir,
+              });
+              quakeGlyphOverlay.setCellPx(v.cell);
+            },
+          }]
+        : []),
+    ]);
+  });
+}
+
 if (quakeGlyphOverlay) {
   // polycss keeps driving camera/controls/collision underneath; the opaque
   // ASCII overlay (z-index 1, after the camera) paints over its world.
@@ -1500,7 +1829,7 @@ if (quakeGlyphOverlay) {
       document.body.appendChild(quakeGlyphCompositeToast);
     }
     const label =
-      mode === "glyph" ? "glyphcss (ASCII)" : mode === "poly" ? "polycss" : "BOTH — glyph 50% over poly";
+      mode === "glyph" ? "glyphcss (ASCII)" : mode === "poly" ? "polycss" : "BOTH - glyph 50% over poly";
     quakeGlyphCompositeToast.textContent = `render: ${label}   [V]`;
     quakeGlyphCompositeToast.style.opacity = "1";
     window.clearTimeout(quakeGlyphCompositeToastTimer);
@@ -1816,13 +2145,28 @@ const menu = createQuakeMenuController({
   enabled: QUAKE_MENU_ENABLED,
   host,
   controls,
-  mainMenu,
-  mainMenuArt,
-  singlePlayerPanel,
-  multiplayerPanel,
-  levelPanel,
-  aboutPanel,
-  optionsPanel,
+  // The same manifest the overlay draws from — hit-testing and rendering
+  // share one geometry source.
+  manifest: quakeMenuManifest,
+  optionRows: () => quakeOptions.rows(),
+  levels: () =>
+    quakeAssetCatalog.selectableLevels().map((level) => ({
+      map: level.mapName,
+      code: level.mapName.toUpperCase(),
+      title: quakeAssetCatalog.mapTitle(level),
+      current: level.mapName === currentMapName,
+    })),
+  multiplayerControls: () =>
+    ([
+      ["mp-name", multiplayerNameInput],
+      ["mp-color", multiplayerColorInput],
+      ["mp-map", multiplayerMapSelect],
+      ["mp-fraglimit", multiplayerFragLimitInput],
+      ["mp-maxplayers", multiplayerMaxPlayersInput],
+    ] as const)
+      .filter((entry): entry is [typeof entry[0], HTMLElement] => entry[1] !== null)
+      .map(([id, element]) => ({ id, element })),
+  onMultiplayerSubmit: startQuakeMultiplayerFromMenu,
   onSelectNewGame: startQuakeNewGame,
   onShowMultiplayer: syncQuakeMultiplayerMenu,
   onLoadGame: () => quakeSaveSession.load(),
@@ -1863,7 +2207,7 @@ const quakeRoute = createQuakeRouteFlow<QuakeCssView>({
   viewToUrlView: quakeCameraView.urlViewFromCssView,
 });
 let quakeStatsOverlay!: QuakeStatsOverlayFlow;
-let quakeEnemyAnimationsEnabled = debugEnableAnimationsOption?.checked ?? true;
+let quakeEnemyAnimationsEnabled = true;
 const quakeDebugPanelFlow = createQuakeDebugPanelFlow({
   clearDebugUrlParams: clearQuakeDebugUrlParams,
   currentMapName: () => currentMapName,
@@ -1872,24 +2216,24 @@ const quakeDebugPanelFlow = createQuakeDebugPanelFlow({
     rotX: scene.camera.state.rotX ?? 90,
     rotY: scene.camera.state.rotY ?? 270,
   }),
-  debugEnabledOption,
-  debugEnableAnimationsOption,
-  debugPanel,
-  debugShowFpsOption,
-  debugShowLabelsOption,
-  debugShowMenuOption,
-  debugShowOutlinesOption,
-  debugStack,
-  debugShowTexturesOption,
+  debugEnabledOption: null,
+  debugEnableAnimationsOption: null,
+  debugPanel: null,
+  debugShowFpsOption: null,
+  debugShowLabelsOption: null,
+  debugShowMenuOption: null,
+  debugShowOutlinesOption: null,
+  debugStack: null,
+  debugShowTexturesOption: null,
   debugStatElements,
   hideMainMenu: () => menu.hideMainMenu(),
-  initialHideTextures: debugShowTexturesOption ? !debugShowTexturesOption.checked : false,
+  initialHideTextures: false,
   initialAnimationsEnabled: quakeEnemyAnimationsEnabled,
   initialMode: quakeUrlBoolean("debugPolys"),
-  initialShowFps: debugShowFpsOption?.checked ?? false,
-  initialShowLabels: debugShowLabelsOption?.checked ?? false,
-  initialShowMenu: debugShowMenuOption?.checked ?? true,
-  initialShowOutlines: debugShowOutlinesOption?.checked ?? false,
+  initialShowFps: true,
+  initialShowLabels: false,
+  initialShowMenu: true,
+  initialShowOutlines: false,
   pickupMeshCounts: () => {
     const pickupMeshes = Array.from(document.querySelectorAll<HTMLElement>(".polycss-mesh.pickup"));
     return {
@@ -1968,7 +2312,7 @@ const quakeDebugRecordingSnapshot = createQuakeDebugRecordingSnapshotFlow({
     alwaysRun: quakeAlwaysRun,
     animationsEnabled: quakeEnemyAnimationsEnabled,
     attackDown: quakePointerGameplay.isAttackDown(),
-    crosshair: crosshairOption?.checked ?? true,
+    crosshair: getQuakeMenuSceneState().hud.crosshair !== "off",
     debugFly: document.body.classList.contains("quake-debug-fly"),
     invertMouse: quakeInvertMouse,
     mobileControls: quakePointerGameplay.isMobileAvailable(),
@@ -2088,49 +2432,36 @@ const quakeEffectSpriteFlow: QuakeEffectSpriteFlow = impactParticlesLayer
 quakeImpactParticleFlow.setEnabled(quakeImpactParticles);
 quakeEffectSpriteFlow.setEnabled(quakeImpactParticles);
 const quakeOptions = createQuakeOptionsFlow({
-  alwaysRun: () => quakeAlwaysRun,
-  alwaysRunOption,
   audioMuted: () => audio.isMuted(),
-  crosshair,
-  crosshairOption,
-  crosshairOptionValue,
   damageDisabled: () => quakeDamageDisabled,
-  disableDamageOption,
-  disableEnemiesOption,
-  disableSoundOption,
   dynamicLightingEnabled: () => quakeDynamicLighting,
-  dynamicLightingOption,
   renderModeIsGlyph: () => quakeRenderMode === "glyphcss",
-  renderModeOption,
-  glyphDetailOption,
-  glyphDetailOptionValue,
+  enemiesDisabled: () => quakeEnemiesDisabled,
+  enemiesFrozen: () => quakeEnemiesFrozen,
+  attacksDisabled: () => quakeAttacksDisabled,
+  impactParticlesEnabled: () => quakeImpactParticles,
+  invertMouse: () => quakeInvertMouse,
+  showOutlines: () => quakeDebugPanelFlow.showOutlinesEnabled(),
+  statsPanelEnabled: () => quakeDebugPanelFlow.isModeEnabled(),
+  showFps: () => quakeDebugPanelFlow.showFpsEnabled(),
   glyphDetailLabel: quakeGlyphDetailLabel,
   cycleGlyphDetail: cycleQuakeGlyphDetail,
-  glyphPaletteOption,
-  glyphPaletteOptionValue,
   glyphPaletteLabel: quakeGlyphPaletteLabel,
   cycleGlyphPalette: cycleQuakeGlyphPalette,
-  enemiesDisabled: () => quakeEnemiesDisabled,
-  impactParticlesEnabled: () => quakeImpactParticles,
-  impactParticlesOption,
-  invertMouse: () => quakeInvertMouse,
-  invertMouseOption,
-  mountBitmapText: mountQuakeBitmapText,
-  setAlwaysRun: setQuakeAlwaysRun,
+  unlockAudio: () => audio.unlock(),
   setAudioMuted: setQuakeAudioMuted,
   setDamageDisabled: setQuakeDamageDisabled,
   setDynamicLighting: setQuakeDynamicLighting,
   setRenderMode: setQuakeRenderMode,
   setEnemiesDisabled: setQuakeEnemiesDisabled,
+  setEnemiesFrozen: setQuakeEnemiesFrozen,
+  setAttacksDisabled: setQuakeAttacksDisabled,
   setImpactParticles: setQuakeImpactParticles,
   setInvertMouse: setQuakeInvertMouse,
-  setShowGun: setQuakeShowGun,
+  setShowOutlines: (enabled) => quakeDebugPanelFlow.setShowOutlines(enabled),
+  setStatsPanel: (enabled) => quakeDebugPanelFlow.setMode(enabled),
+  setShowFps: (enabled) => quakeDebugPanelFlow.setShowFps(enabled),
   setStaticLightingClass: (staticLighting) => setQuakeBodyClass("quake-static-lighting", staticLighting),
-  showGun: () => quakeShowGun,
-  showGunOption,
-  syncDebugControls: () => quakeDebugPanelFlow.syncControls(),
-  syncDebugFlyMode: syncQuakeDebugFlyMode,
-  unlockAudio: () => audio.unlock(),
 });
 const quakeHudFlow = createQuakeHudFlow({
   bonusOverlay,
@@ -2418,7 +2749,8 @@ quakePointerGameplay = createQuakePointerGameplayFlow({
   isDebugFlyModeActive: isQuakeDebugFlyModeActive,
   isDeathUnlockControlsEndTraceSuppressed: isQuakeDeathUnlockControlsEndTraceSuppressed,
   isDisposed: () => quakeAppDisposed,
-  isInteractiveOverlayTarget: (target) => target instanceof Node && debugPanel?.contains(target) === true,
+  isInteractiveOverlayTarget: (target) =>
+    target instanceof Node && document.getElementById("quake-debug-panel")?.contains(target) === true,
   isPlayerDead: () => quakePlayerDead,
   mobileRoot: quakeApp,
   onAvailabilityChange: () => quakeStatsOverlay.syncAvailability(),
@@ -2445,7 +2777,7 @@ quakeStatsOverlay = createQuakeStatsOverlayFlow({
   isDisposed: () => quakeAppDisposed,
   isLoading: () => quakeAppLoading,
   isMobileAvailable: quakePointerGameplay.isMobileAvailable,
-  root: quakeMenu ?? quakeApp,
+  root: quakeApp,
   showFpsEnabled: () => quakeDebugPanelFlow.showFpsEnabled(),
 });
 
@@ -2648,7 +2980,6 @@ const quakeLoading = createQuakeLoadingFlow({
   clearMoveInput: quakeGameplayInput.clearMoveInput,
   clearWeaponViewPunch: quakeCameraView.clearWeaponViewPunch,
   currentMapName: () => currentMapName,
-  dom: quakeDom,
   hasCurrentResult: () => currentResult !== null,
   hideStatsOverlay: quakeStatsOverlay.hide,
   initialLoading: quakeAppLoading,
@@ -2661,7 +2992,6 @@ const quakeLoading = createQuakeLoadingFlow({
     quakeAppLoading = loading;
   },
   previewEnabled: QUAKE_LOADING_PREVIEW_ENABLED,
-  renderBitmapText: mountQuakeBitmapText,
   setControlsLoading: () => controls.update({ moveEnabled: false, jumpEnabled: false, gravity: 0 }),
   syncCrosshairTarget: syncQuakeCrosshairTarget,
   syncDebugFlyMode: syncQuakeDebugFlyMode,
@@ -2995,7 +3325,7 @@ function resumeQuakeGameplayTimers(pausedForMs: number): void {
 
 function setQuakeAudioMuted(muted: boolean): void {
   audio.setMuted(muted);
-  quakeOptions.syncAudioToggle();
+  menu.syncOptionTexts();
   if (!muted) void quakeSoundManifest.ensureLoaded();
 }
 
@@ -3015,48 +3345,48 @@ function toggleQuakeAudioMutedShortcut(): void {
 function setQuakeEnemiesDisabled(disabled: boolean): void {
   quakeEnemiesDisabled = disabled;
   shootables.syncMonsterRuntime();
-  quakeOptions.syncControls();
+  menu.syncOptionTexts();
 }
 
 function setQuakeDamageDisabled(disabled: boolean): void {
   quakeDamageDisabled = disabled;
-  quakeOptions.syncControls();
+  menu.syncOptionTexts();
 }
 
 function setQuakeAttacksDisabled(disabled: boolean): void {
   quakeAttacksDisabled = disabled;
   shootables.syncMonsterRuntime();
-  syncQuakeDebugDisableAttacksOption();
+  menu.syncOptionTexts();
 }
 
 function setQuakeEnemiesFrozen(frozen: boolean): void {
   quakeEnemiesFrozen = frozen;
   shootables.syncMonsterRuntime();
-  syncQuakeDebugFreezeEnemiesOption();
-}
-
-function syncQuakeDebugFreezeEnemiesOption(): void {
-  if (debugFreezeEnemiesOption) debugFreezeEnemiesOption.checked = quakeEnemiesFrozen;
-}
-
-function syncQuakeDebugDisableAttacksOption(): void {
-  if (debugDisableAttacksOption) debugDisableAttacksOption.checked = quakeAttacksDisabled;
+  menu.syncOptionTexts();
 }
 
 function setQuakeDynamicLighting(enabled: boolean): void {
   quakeDynamicLighting = enabled;
-  quakeOptions.syncDynamicLightingOption();
+  menu.syncOptionTexts();
 }
 
 // ASCII (glyph) detail presets — cell size in px (smaller = finer + slower).
 // Cell = font-size in px; the overlay derives a ~square line-height from it, so a
 // smaller cell packs both more columns AND more rows (≈square cells = far more
 // vertical detail than the old tall cells). Finer + an Ultra tier for max detail.
+// ASCII (glyph) detail presets, expressed as a TOTAL CELL BUDGET rather than a
+// cell size in px. Render cost tracks cols x rows, and cols x rows scales with
+// viewport AREA — so a fixed cell size silently means wildly different work on
+// different monitors. Measured on the recorded e1m1 play path: cell 12 is ~10.6k
+// cells at 1280x720 (a clean 60fps, p95 17.5ms) and ~42k cells at 2560x1440,
+// where p95 doubles to 33ms — the same "Normal" setting stuttering purely
+// because the window got bigger. Budgeting the cells instead keeps a preset
+// meaning the same frame cost everywhere, and picks the px for you.
 const QUAKE_GLYPH_DETAIL_LEVELS = [
-  { name: "Coarse", cell: 18 },
-  { name: "Normal", cell: 12 },
-  { name: "Fine", cell: 9 },
-  { name: "Ultra", cell: 6 },
+  { name: "Coarse", cells: 10_000 },
+  { name: "Normal", cells: QUAKE_GLYPH_CELL_BUDGET },
+  { name: "Fine", cells: 32_000 },
+  { name: "Ultra", cells: 48_000 },
 ] as const;
 
 function quakeCurrentGlyphCell(): number {
@@ -3064,7 +3394,7 @@ function quakeCurrentGlyphCell(): number {
   // place); the URL is only the startup seed and the shareable record.
   return quakeGlyphOverlay?.getCellPx()
     ?? quakeUrlNumberParam(quakeStartupUrlParams, "glyphCell", 6, 40)
-    ?? QUAKE_GLYPH_OVERLAY_CELL_PX;
+    ?? quakeGlyphCellForBudget(QUAKE_GLYPH_CELL_BUDGET);
 }
 
 function quakeNearestGlyphDetailIndex(): number {
@@ -3072,7 +3402,9 @@ function quakeNearestGlyphDetailIndex(): number {
   let bestIndex = 1;
   let bestDistance = Infinity;
   QUAKE_GLYPH_DETAIL_LEVELS.forEach((level, index) => {
-    const distance = Math.abs(level.cell - cell);
+    // Compare against what each budget resolves to in the CURRENT viewport, so
+    // the label still matches the render after a resize moved every preset's px.
+    const distance = Math.abs(quakeGlyphCellForBudget(level.cells) - cell);
     if (distance < bestDistance) { bestDistance = distance; bestIndex = index; }
   });
   return bestIndex;
@@ -3086,8 +3418,10 @@ function cycleQuakeGlyphDetail(direction: number): void {
   const step = direction < 0 ? -1 : 1;
   const length = QUAKE_GLYPH_DETAIL_LEVELS.length;
   const next = QUAKE_GLYPH_DETAIL_LEVELS[(quakeNearestGlyphDetailIndex() + step + length) % length]!;
+  const nextCell = quakeGlyphCellForBudget(next.cells);
+  quakeGlyphDetailBudget = next.cells;
   const url = new URL(window.location.href);
-  url.searchParams.set("glyphCell", String(next.cell));
+  url.searchParams.set("glyphCell", String(nextCell));
   if (!quakeGlyphOverlay) {
     // No ASCII overlay yet (we're in polycss): switching detail implies switching
     // backend, which swaps the whole engine/DOM graph — that still needs a reload.
@@ -3098,7 +3432,7 @@ function cycleQuakeGlyphDetail(direction: number): void {
   // Live resize — the cell is a font metric, so the grid re-fits in place. Record
   // the choice in the URL (still shareable, still the reload seed) WITHOUT
   // navigating, mirroring how the glyph set swaps without a reload.
-  quakeGlyphOverlay.setCellPx(next.cell);
+  quakeGlyphOverlay.setCellPx(nextCell);
   window.history.replaceState(window.history.state, "", url);
 }
 
@@ -3137,13 +3471,12 @@ function setQuakeImpactParticles(enabled: boolean): void {
   quakeImpactParticles = enabled;
   quakeImpactParticleFlow.setEnabled(enabled);
   quakeEffectSpriteFlow.setEnabled(enabled);
-  quakeOptions.syncImpactParticlesOption();
+  menu.syncOptionTexts();
 }
 
 function setQuakeShowGun(enabled: boolean): void {
   quakeShowGun = enabled;
   syncQuakeViewmodelVisibility();
-  quakeOptions.syncControls();
 }
 
 function syncQuakeViewmodelVisibility(): void {
@@ -3264,13 +3597,7 @@ function syncQuakeClickToPlayCenterPrint(visible: boolean): void {
   if (!quakeMultiplayerSpectating) quakeTextPresentation.clearCenterPrint();
 }
 
-function handleQuakeDebugDisableAttacksOptionChange(event: Event): void {
-  setQuakeAttacksDisabled((event.currentTarget as HTMLInputElement).checked);
-}
 
-function handleQuakeDebugFreezeEnemiesOptionChange(event: Event): void {
-  setQuakeEnemiesFrozen((event.currentTarget as HTMLInputElement).checked);
-}
 
 function quitQuakeToMainMenu(): void {
   quakePlayerLifecycle.quitToMainMenu();
@@ -3295,18 +3622,16 @@ function respawnQuakePlayerFromFlyMode(): boolean {
 function setQuakeInvertMouse(invert: boolean): void {
   quakeInvertMouse = invert;
   controls.update({ invertY: invert });
-  quakeOptions.syncControls();
+  menu.syncOptionTexts();
 }
 
 function setQuakeAlwaysRun(alwaysRun: boolean): void {
   quakeAlwaysRun = alwaysRun;
-  quakeOptions.syncControls();
 }
 
 function syncQuakeOptionControls(): void {
   quakeOptions.syncControls();
-  syncQuakeDebugFreezeEnemiesOption();
-  syncQuakeDebugDisableAttacksOption();
+  menu.syncOptionTexts();
 }
 
 function clearQuakeLevelLoadTimer(): void {
@@ -5690,9 +6015,6 @@ function clearQuakeCrosshairTarget(): void {
   quakeCrosshairInteraction?.clear();
 }
 
-function handleQuakeDebugFlyModeOptionChange(event: Event): void {
-  setQuakeDebugFlyMode((event.currentTarget as HTMLInputElement).checked);
-}
 
 function syncQuakeHazards(
   origin = controls.getOrigin(),
@@ -5827,6 +6149,7 @@ async function loadQuake(): Promise<void> {
 
 function clearQuakeMainMenuStartupState(): void {
   removeQuakeBodyClasses("quake-main-menu-pending", "quake-main-menu-deferred");
+  updateQuakeMenuSceneState({ pending: false, deferred: false });
 }
 
 function syncQuakeRoutePresentation(route: QuakeUrlRoute, options: { preferMenu?: boolean } = {}): void {
@@ -5840,6 +6163,13 @@ function handleQuakePopState(): void {
 function handleViewportResize(): void {
   quakeCameraView.syncViewportProjection();
   viewmodel.queueViewportSync();
+  // Hold the cell budget across a resize. Without this, growing the window grows
+  // cols x rows with its AREA and the frame cost climbs quadratically behind an
+  // unchanged "Normal" label — the exact stutter this budget exists to stop.
+  // A pinned `?glyphCell=` opts out and keeps its literal px.
+  if (quakeGlyphOverlay && !quakeGlyphCellIsPinned()) {
+    quakeGlyphOverlay.setCellPx(quakeGlyphCellForBudget(quakeGlyphDetailBudget));
+  }
 }
 
 function syncPlayerCollision(): void {
@@ -5872,18 +6202,6 @@ function disposeQuakeApp(): void {
   quakeHudFlow.dispose();
   quakeCrosshairInteraction?.dispose();
   quakeOptions.dispose();
-  disposeQuakeMultiplayerControlGlyphs();
-  multiplayerForm?.removeEventListener("submit", handleQuakeMultiplayerFormSubmit);
-  debugShowMenuOption?.removeEventListener("change", quakeDebugPanelFlow.handleShowMenuOptionChange);
-  debugEnabledOption?.removeEventListener("change", quakeDebugPanelFlow.handleEnabledOptionChange);
-  debugEnableAnimationsOption?.removeEventListener("change", quakeDebugPanelFlow.handleEnableAnimationsOptionChange);
-  debugFreezeEnemiesOption?.removeEventListener("change", handleQuakeDebugFreezeEnemiesOptionChange);
-  debugDisableAttacksOption?.removeEventListener("change", handleQuakeDebugDisableAttacksOptionChange);
-  debugShowFpsOption?.removeEventListener("change", quakeDebugPanelFlow.handleShowFpsOptionChange);
-  debugShowTexturesOption?.removeEventListener("change", quakeDebugPanelFlow.handleShowTexturesOptionChange);
-  debugFlyModeOption?.removeEventListener("change", handleQuakeDebugFlyModeOptionChange);
-  debugShowOutlinesOption?.removeEventListener("change", quakeDebugPanelFlow.handleShowOutlinesOptionChange);
-  debugShowLabelsOption?.removeEventListener("change", quakeDebugPanelFlow.handleShowLabelsOptionChange);
   if (quakeDebugRecordingPanelEnabled) {
     debugRecordingButton?.removeEventListener("click", handleQuakeDebugRecordingButtonClick);
   }
@@ -5966,7 +6284,6 @@ const quakeMapLoader = createQuakeAppMapLoader<QuakeCssView, QuakeViewmodelModel
     currentMapName = mapName;
     menu.setCurrentLevel(mapName);
     if (multiplayerMapSelect) multiplayerMapSelect.value = mapName;
-    syncQuakeMultiplayerControlGlyph(multiplayerMapSelect);
   },
   preloadMapAssets: preloadQuakeMapModelRenderBundleAssets,
   preloadSceneAssets: preloadQuakeSceneModelRenderBundleAssets,
@@ -6059,19 +6376,6 @@ window.addEventListener("popstate", handleQuakePopState);
 window.addEventListener("resize", handleViewportResize);
 window.visualViewport?.addEventListener("resize", handleViewportResize);
 quakePointerGameplay.attach();
-quakeOptions.attach();
-attachQuakeMultiplayerControlGlyphs();
-multiplayerForm?.addEventListener("submit", handleQuakeMultiplayerFormSubmit);
-debugShowMenuOption?.addEventListener("change", quakeDebugPanelFlow.handleShowMenuOptionChange);
-debugEnabledOption?.addEventListener("change", quakeDebugPanelFlow.handleEnabledOptionChange);
-debugEnableAnimationsOption?.addEventListener("change", quakeDebugPanelFlow.handleEnableAnimationsOptionChange);
-debugFreezeEnemiesOption?.addEventListener("change", handleQuakeDebugFreezeEnemiesOptionChange);
-debugDisableAttacksOption?.addEventListener("change", handleQuakeDebugDisableAttacksOptionChange);
-debugShowFpsOption?.addEventListener("change", quakeDebugPanelFlow.handleShowFpsOptionChange);
-debugShowTexturesOption?.addEventListener("change", quakeDebugPanelFlow.handleShowTexturesOptionChange);
-debugFlyModeOption?.addEventListener("change", handleQuakeDebugFlyModeOptionChange);
-debugShowOutlinesOption?.addEventListener("change", quakeDebugPanelFlow.handleShowOutlinesOptionChange);
-debugShowLabelsOption?.addEventListener("change", quakeDebugPanelFlow.handleShowLabelsOptionChange);
 if (quakeDebugRecordingPanelEnabled) {
   debugRecordingButton?.addEventListener("click", handleQuakeDebugRecordingButtonClick);
 }
@@ -6080,8 +6384,6 @@ controls.addEventListener("end", quakeGameplayInput.clearCrouchInput);
 
 syncQuakeHud();
 syncQuakeOptionControls();
-if (multiplayerPanel) mountQuakeBitmapText(multiplayerPanel);
-if (debugPanel) mountQuakeBitmapText(debugPanel);
 installQuakeAppDebugHooks();
 
 (window as typeof window & { __cssQuakeShowLoadingError?: (error: unknown) => void })

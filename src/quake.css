@@ -21,7 +21,6 @@ body {
   isolation: isolate;
 }
 #quake-scene,
-#quake-menu,
 #quake-weapon {
   position: absolute;
   inset: 0;
@@ -35,21 +34,7 @@ body {
   outline: none;
   touch-action: none;
 }
-#quake-menu {
-  z-index: 3;
-  pointer-events: none;
-}
-#quake-menu::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  z-index: 1;
-  background: transparent;
-  pointer-events: none;
-}
-body.quake-menu-open.quake-gameplay-started #quake-menu::before {
-  background: rgba(0, 0, 0, 0.65);
-}
+
 #quake-app .polycss-mesh b,
 #quake-app .polycss-mesh i,
 #quake-app .polycss-mesh s,
@@ -349,42 +334,7 @@ body.quake-dead #quake-damage-overlay {
 body.quake-menu-open.quake-dead #quake-damage-overlay {
   opacity: 0;
 }
-.asciiquake-logo {
-  position: absolute;
-  top: 8px;
-  left: 8px;
-  z-index: 40;
-  display: block;
-  width: auto;
-  height: min(45px, calc((100vw - 92px) * 0.1951));
-  opacity: 1;
-  filter: drop-shadow(2px 2px 0 rgba(0, 0, 0, 0.62));
-  image-rendering: pixelated;
-  shape-rendering: crispEdges;
-  user-select: none;
-}
-body.quake-loading .asciiquake-logo {
-  display: block;
-}
-body.quake-loading .asciiquake-version {
-  display: block;
-}
-body.quake-loading #quake-crosshair,
-body.quake-loading #quake-classic-hud {
-  display: none;
-}
-.asciiquake-version {
-  position: absolute;
-  top: 30px;
-  left: calc(16px + min(231px, calc((100vw - 92px) * 0.9)));
-  z-index: 40;
-  color: #ffffff;
-  font: 400 12px/1 ui-monospace, "SFMono-Regular", "Roboto Mono", Menlo, Consolas, monospace;
-  letter-spacing: 0;
-  opacity: 0.4;
-  text-shadow: 0 1px 0 #000000;
-  user-select: none;
-}
+
 .btn-github {
   position: absolute;
   top: 12px;
@@ -482,175 +432,11 @@ body.quake-menu-open .quake-css-logo {
   outline: 2px solid #f0ad5c;
   outline-offset: 3px;
 }
-#quake-loading-overlay {
-  position: absolute;
-  inset: 0;
-  z-index: 2;
-  display: block;
-  overflow: hidden;
-  padding: 0;
-  background-color: #000000;
-  background-image: url("/q/menu-background.png");
-  background-position: center;
-  background-repeat: no-repeat;
-  background-size: cover;
-  color: #f6f1df;
-  image-rendering: pixelated;
-  pointer-events: auto;
-  user-select: none;
-}
+
 body.quake-loading .dn-stats-overlay {
   display: none !important;
 }
-#quake-loading-overlay[hidden] {
-  display: none;
-}
-#quake-loading-overlay.quake-loading-death {
-  z-index: 4;
-  display: grid;
-  place-items: center;
-  background: transparent;
-  pointer-events: none;
-}
-body.quake-menu-open #quake-loading-overlay.quake-loading-death {
-  display: none;
-}
-.quake-loading-mark {
-  position: absolute;
-  inset: 0;
-  display: block;
-  width: 100%;
-  height: 100%;
-}
-.quake-loading-mark::before {
-  display: none;
-  content: none;
-}
-.quake-loading-mark > * {
-  position: relative;
-  z-index: 1;
-}
-.quake-loading-readout {
-  position: absolute;
-  top: 64px;
-  left: 12px;
-  right: 12px;
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  justify-content: flex-start;
-  gap: 8px;
-}
-#quake-loading-status {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  justify-content: flex-start;
-  width: min(720px, calc(100vw - 24px));
-  color: #e8d8ad;
-  font: 400 14px/1.2 ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
-  letter-spacing: 0;
-  text-shadow: 2px 2px 0 #000000;
-}
-#quake-loading-status::before {
-  display: none;
-  content: none;
-}
-#quake-loading-status .quake-bitmap-text {
-  --quake-bitmap-glyph-size: 16px;
-  --quake-bitmap-sheet-size: 256px;
-  --quake-bitmap-space-size: 16px;
-  justify-content: flex-start;
-  gap: 0 var(--quake-bitmap-space-size);
-}
-.quake-loading-console-line {
-  display: block;
-  min-height: 16px;
-  margin: 0 0 2px;
-  overflow-wrap: anywhere;
-}
-#quake-loading-action {
-  display: block;
-  color: #d7422f;
-  text-shadow: 0 2px 0 #000000;
-}
-#quake-loading-action[hidden] {
-  display: none;
-}
-#quake-loading-overlay.quake-loading-death #quake-loading-status {
-  color: #d7422f;
-}
-#quake-loading-overlay.quake-loading-death #quake-loading-progress {
-  display: none;
-}
-#quake-loading-overlay.quake-loading-death .quake-loading-readout {
-  position: static;
-  align-items: center;
-  gap: 22px;
-}
-#quake-loading-overlay.quake-loading-death .quake-loading-mark {
-  position: absolute;
-  inset: 0;
-  display: grid;
-  place-items: center;
-  width: 100%;
-  height: 100%;
-  aspect-ratio: auto;
-}
-#quake-loading-overlay.quake-loading-death #quake-loading-status {
-  align-items: center;
-  justify-content: center;
-  width: min(960px, calc(100vw - 32px));
-  text-align: center;
-}
-#quake-loading-overlay.quake-loading-death #quake-loading-status .quake-bitmap-text {
-  --quake-bitmap-glyph-size: 40px;
-  --quake-bitmap-sheet-size: 640px;
-  --quake-bitmap-space-size: 40px;
-  justify-content: center;
-  gap: 0 var(--quake-bitmap-space-size);
-}
-#quake-loading-progress {
-  --quake-loading-progress: 0;
-  display: none;
-  position: relative;
-  width: min(250px, 72vw);
-  height: 14px;
-  padding: 2px;
-  overflow: hidden;
-  border: 2px solid #523821;
-  background: #120b07;
-  box-shadow:
-    4px 4px 0 #000000,
-    0 2px 0 #000000,
-    inset 0 1px 0 rgba(240, 173, 92, 0.25),
-    inset 0 -1px 0 rgba(0, 0, 0, 0.75);
-}
-#quake-loading-progress-fill {
-  display: block;
-  width: 100%;
-  height: 100%;
-  transform: scaleX(var(--quake-loading-progress));
-  transform-origin: left center;
-  background: #7f4a2f;
-  image-rendering: pixelated;
-  transition: transform 120ms steps(8, end);
-}
-#quake-loading-progress.quake-loading-progress-indeterminate #quake-loading-progress-fill {
-  width: 36%;
-  transform: translateX(-100%);
-  animation: quake-loading-progress-indeterminate 900ms steps(12, end) infinite;
-}
-#quake-loading-overlay.quake-loading-console-persisted {
-  z-index: 2;
-  pointer-events: none;
-  cursor: default;
-}
-@media (any-pointer: coarse), (max-width: 960px) and (orientation: landscape) {
-  #quake-loading-overlay.quake-loading-console-persisted .quake-loading-readout {
-    display: none;
-  }
-}
+
 @keyframes quake-loading-progress-indeterminate {
   to {
     transform: translateX(280%);
@@ -662,72 +448,7 @@ body.quake-menu-open #quake-loading-overlay.quake-loading-death {
     bottom: calc(8vw + 12px);
   }
 }
-#quake-notify {
-  position: absolute;
-  left: 8px;
-  top: var(--quake-notify-top);
-  z-index: 7;
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  width: min(760px, calc(100vw - 16px));
-  pointer-events: none;
-}
-#quake-notify[hidden] {
-  display: none;
-}
-.quake-notify-line {
-  display: block;
-  height: 24px;
-}
-#quake-notify .quake-bitmap-text {
-  --quake-bitmap-glyph-size: 24px;
-  --quake-bitmap-sheet-size: 384px;
-  --quake-bitmap-space-size: 24px;
-  flex-wrap: nowrap;
-  gap: 0;
-}
-#quake-centerprint {
-  position: absolute;
-  left: 50%;
-  top: var(--quake-centerprint-safe-top);
-  z-index: 8;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  align-items: center;
-  width: min(760px, calc(100vw - 32px));
-  transform: translateX(-50%);
-  pointer-events: none;
-}
-body.quake-menu-open #quake-notify {
-  left: max(12px, env(safe-area-inset-left));
-  top: max(var(--quake-notify-top), 32dvh);
-  align-items: flex-start;
-  width: min(360px, calc(100vw - 24px));
-  transform: none;
-}
-#quake-centerprint[hidden] {
-  display: none;
-}
-.quake-centerprint-line {
-  display: flex;
-  justify-content: center;
-  min-height: 28px;
-}
-#quake-centerprint .quake-bitmap-text {
-  --quake-bitmap-glyph-size: 28px;
-  --quake-bitmap-sheet-size: 448px;
-  --quake-bitmap-space-size: 28px;
-  flex-wrap: nowrap;
-  justify-content: center;
-  align-items: center;
-  gap: 0;
-}
-#quake-notify .quake-bitmap-glyph,
-#quake-centerprint .quake-bitmap-glyph {
-  filter: drop-shadow(2px 2px 0 #000000);
-}
+
 #quake-intermission {
   --quake-intermission-px: min(2px, calc(100vw / 320), calc(100dvh / 200));
   position: absolute;
@@ -850,379 +571,34 @@ body.quake-menu-open #quake-notify {
 #quake-intermission .quake-bitmap-glyph {
   filter: drop-shadow(2px 2px 0 #000000);
 }
-@media (orientation: portrait) {
-  body.quake-menu-open #quake-notify {
-    top: max(var(--quake-notify-top), 43dvh);
-  }
-}
+
 @media (max-width: 700px) {
   #quake-hud {
     --quake-notify-stack-height: 72px;
   }
-  .quake-centerprint-line {
-    min-height: 22px;
-  }
-  #quake-centerprint .quake-bitmap-text {
-    --quake-bitmap-glyph-size: 22px;
-    --quake-bitmap-sheet-size: 352px;
-    --quake-bitmap-space-size: 22px;
-  }
-  .quake-notify-line {
-    height: 18px;
-  }
-  #quake-notify .quake-bitmap-text {
-    --quake-bitmap-glyph-size: 18px;
-    --quake-bitmap-sheet-size: 288px;
-    --quake-bitmap-space-size: 18px;
-  }
+  
+  
+  
+  
 }
 @media (max-width: 480px) {
   #quake-hud {
     --quake-notify-stack-height: 64px;
   }
-  .quake-centerprint-line {
-    min-height: 16px;
-  }
-  #quake-centerprint .quake-bitmap-text {
-    --quake-bitmap-glyph-size: 16px;
-    --quake-bitmap-sheet-size: 256px;
-    --quake-bitmap-space-size: 16px;
-  }
-  .quake-notify-line {
-    height: 16px;
-  }
-  #quake-notify .quake-bitmap-text {
-    --quake-bitmap-glyph-size: 16px;
-    --quake-bitmap-sheet-size: 256px;
-    --quake-bitmap-space-size: 16px;
-  }
-  #quake-loading-overlay.quake-loading-death #quake-loading-status .quake-bitmap-text {
-    --quake-bitmap-glyph-size: 28px;
-    --quake-bitmap-sheet-size: 448px;
-    --quake-bitmap-space-size: 28px;
-  }
-}
-#quake-main-menu {
-  position: absolute;
-  inset: 0;
-  z-index: 4;
-  display: grid;
-  place-items: center;
-  width: 100%;
-  height: 100%;
-  margin: 0;
-  padding: 0;
-  border: 0;
-  appearance: none;
-  background: rgba(0, 0, 0, 0.65);
-  outline: none;
-  pointer-events: auto;
-  -webkit-tap-highlight-color: transparent;
-}
-body.quake-menu-open.quake-gameplay-started #quake-main-menu {
-  background: transparent;
-}
-body.quake-menu-open:not(.quake-gameplay-started) #quake-main-menu {
-  background: transparent;
-}
-#quake-main-menu.quake-main-menu-hover {
-  cursor: pointer;
-}
-#quake-main-menu:focus,
-#quake-main-menu:focus-visible {
-  outline: none;
-  box-shadow: none;
-}
-#quake-main-menu[hidden] {
-  display: none;
-}
-body.quake-main-menu-deferred #quake-main-menu {
-  display: none;
-}
-body.quake-main-menu-pending #quake-main-menu {
-  pointer-events: none;
-}
-#quake-main-menu-art {
-  --quake-main-menu-px: calc(100cqw / 320);
-  --quake-main-menu-row-height: 6.25cqw;
-  --quake-main-menu-row-gap: 0cqw;
-  --quake-main-menu-cursor-gap: 0.625cqw;
-  --quake-main-menu-list-top: 10cqw;
-  --quake-menu-offset-y: 13.5%;
-  position: relative;
-  display: grid;
-  justify-items: center;
-  align-items: start;
-  width: min(860px, calc(100vw - 64px), calc(150dvh - 52px));
-  aspect-ratio: 320 / 200;
-  image-rendering: pixelated;
-  transform: translateY(var(--quake-menu-offset-y));
-  container-type: inline-size;
-}
-@media (max-width: 680px) {
-  #quake-main-menu-art {
-    width: min(calc(100vw - 24px), calc(150dvh - 52px));
-  }
-}
-@media (max-height: 560px) {
-  #quake-main-menu-art {
-    --quake-menu-offset-y: 6.5%;
-    width: min(860px, calc(100vw - 64px), calc(132dvh - 45px));
-  }
-}
-#quake-main-menu-plaque,
-#quake-main-menu-title {
-  position: absolute;
-  z-index: 2;
-  display: block;
-  height: auto;
-  opacity: 1;
-  image-rendering: pixelated;
-  user-select: none;
-}
-#quake-main-menu-plaque {
-  top: 1.25cqw;
-  left: 5cqw;
-  width: 10cqw;
-}
-#quake-main-menu-title {
-  top: 1.25cqw;
-  left: 35cqw;
-  width: 30cqw;
+  
+  
+  
+  
+  
 }
 
 @media (prefers-reduced-motion: reduce) {
   #quake-damage-overlay,
-  #quake-bonus-overlay,
-  .quake-main-menu-item,
-  .quake-main-menu-label {
+  #quake-bonus-overlay{
     transition: none;
   }
 }
 
-#quake-main-menu-list {
-  position: absolute;
-  top: var(--quake-main-menu-list-top);
-  left: 22.5cqw;
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: var(--quake-main-menu-row-gap);
-  width: 75cqw;
-  margin: 0;
-  user-select: none;
-}
-.quake-main-menu-item {
-  position: relative;
-  display: flex;
-  align-items: flex-start;
-  justify-content: center;
-  width: fit-content;
-  min-height: var(--quake-main-menu-row-height);
-}
-.quake-main-menu-item-selectable {
-  cursor: pointer;
-  pointer-events: auto;
-}
-.quake-main-menu-item[data-quake-main-menu-action="level-select"] {
-  display: none;
-}
-.quake-main-menu-label {
-  display: block;
-  width: calc(var(--quake-main-menu-label-width) * var(--quake-main-menu-px));
-  height: calc(var(--quake-main-menu-label-height) * var(--quake-main-menu-px));
-  image-rendering: pixelated;
-  overflow: visible;
-  pointer-events: none;
-}
-.quake-main-menu-note {
-  position: absolute;
-  top: 50%;
-  left: calc(100% + 1.25cqw);
-  display: none;
-  width: calc(31 * var(--quake-main-menu-px));
-  transform: translateY(-50%);
-  pointer-events: none;
-}
-.quake-main-menu-note .quake-bitmap-text {
-  --quake-bitmap-glyph-size: calc(5 * var(--quake-main-menu-px));
-  --quake-bitmap-sheet-size: calc(80 * var(--quake-main-menu-px));
-  --quake-bitmap-space-size: calc(1 * var(--quake-main-menu-px));
-  align-content: center;
-  gap: calc(1 * var(--quake-main-menu-px)) var(--quake-bitmap-space-size);
-}
-#quake-main-menu-list > .quake-main-menu-item-disabled[data-quake-main-menu-action="multiplayer"] .quake-main-menu-note-coming-soon:not([hidden]) {
-  display: block;
-}
-#quake-main-menu-list > .quake-main-menu-item-disabled {
-  cursor: default;
-  pointer-events: auto;
-}
-#quake-main-menu-list > .quake-main-menu-item-disabled .quake-main-menu-label {
-  opacity: 0.46;
-}
-body.quake-main-menu-pending #quake-main-menu-list > .quake-main-menu-item {
-  opacity: 0.46;
-  cursor: default;
-}
-body.quake-main-menu-pending #quake-main-menu-list > .quake-main-menu-item-selectable {
-  pointer-events: none;
-}
-body.quake-main-menu-pending #quake-main-menu-list .quake-main-menu-note {
-  display: none;
-}
-body.quake-main-menu-pending #quake-main-menu-list .quake-main-menu-item-cursor {
-  display: none;
-}
-body:not(.quake-main-menu-pending) #quake-main-menu-list > .quake-main-menu-item {
-  transition: opacity 260ms steps(6, end);
-}
-@media (prefers-reduced-motion: reduce) {
-  body:not(.quake-main-menu-pending) #quake-main-menu-list > .quake-main-menu-item {
-    transition: none;
-  }
-}
-.quake-main-menu-label-single-player {
-  --quake-main-menu-label-width: 218;
-  --quake-main-menu-label-height: 20;
-  background-image: url("./assets/main-menu-single-player-sprite.png");
-}
-.quake-main-menu-label-multiplayer {
-  --quake-main-menu-label-width: 190;
-  --quake-main-menu-label-height: 18;
-  --quake-main-menu-label-offset-y: 2;
-  background-image: url("./assets/main-menu-multiplayer-sprite.png");
-}
-.quake-main-menu-label-level-select {
-  --quake-main-menu-label-width: 211;
-  --quake-main-menu-label-height: 20;
-  background-image: url("./assets/main-menu-level-select-sprite.png");
-}
-.quake-main-menu-label-quit {
-  --quake-main-menu-label-width: 70;
-  --quake-main-menu-label-height: 20;
-  --quake-main-menu-label-offset-y: 3;
-  background-image: url("./assets/main-menu-quit-sprite.png");
-}
-.quake-main-menu-label-options {
-  --quake-main-menu-label-width: 123;
-  --quake-main-menu-label-height: 18;
-  --quake-main-menu-label-offset-y: 2;
-  background-image: url("./assets/main-menu-options-sprite.png");
-}
-.quake-main-menu-label-help {
-  --quake-main-menu-label-width: 75;
-  --quake-main-menu-label-height: 16;
-  --quake-main-menu-label-offset-y: 2;
-  background-image: url("./assets/main-menu-help-sprite.png");
-}
-.quake-main-menu-label {
-  background-position: 0 0;
-  background-size: 100% auto;
-  transform: translateY(calc(var(--quake-main-menu-label-offset-y, 0) * var(--quake-main-menu-px)));
-}
-.quake-main-menu-item-active .quake-main-menu-label {
-  background-position: 0 100%;
-}
-.quake-main-menu-item-cursor {
-  position: absolute;
-  top: 0;
-  right: calc(100% + var(--quake-main-menu-cursor-gap));
-  display: none;
-  width: 5cqw;
-  height: 7.5cqw;
-  background-image: url("./assets/main-menu-cursor-baked.png");
-  background-position: 0 0;
-  background-size: 600% 100%;
-  image-rendering: pixelated;
-  transform: none;
-  animation: quake-main-menu-cursor-frame 600ms steps(1, end) infinite;
-  pointer-events: none;
-}
-.quake-main-menu-item-active .quake-main-menu-item-cursor {
-  display: block;
-}
-.quake-menu-panel {
-  position: absolute;
-  inset: 0;
-  z-index: 5;
-  display: grid;
-  place-items: center;
-  overflow: hidden;
-  padding: 0;
-  border: 0;
-  background: rgba(0, 0, 0, 0.72);
-  outline: none;
-  pointer-events: auto;
-  -webkit-tap-highlight-color: transparent;
-}
-body.quake-menu-open.quake-gameplay-started .quake-menu-panel {
-  background: transparent;
-}
-body.quake-menu-open:not(.quake-gameplay-started) .quake-menu-panel {
-  background: transparent;
-}
-.quake-menu-panel[hidden] {
-  display: none;
-}
-.quake-menu-panel:focus,
-.quake-menu-panel:focus-visible {
-  outline: none;
-  box-shadow: none;
-}
-.quake-menu-card {
-  --quake-menu-px: calc(100cqw / 320);
-  --quake-menu-offset-y: 13.5%;
-  --quake-menu-asset-filter: brightness(1.49) saturate(0.95) contrast(0.94);
-  position: relative;
-  width: min(860px, calc(100vw - 64px), calc(150dvh - 52px));
-  aspect-ratio: 320 / 200;
-  overflow: hidden;
-  padding: 0;
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-  color: #f6f1df;
-  font-family: ui-monospace, "SFMono-Regular", "Roboto Mono", Menlo, Consolas, monospace;
-  image-rendering: pixelated;
-  line-height: 1;
-  box-shadow: none;
-  cursor: auto;
-  filter: var(--quake-menu-asset-filter);
-  transform: translateY(var(--quake-menu-offset-y));
-  container-type: inline-size;
-}
-@media (max-width: 680px) {
-  .quake-menu-card {
-    width: min(calc(100vw - 24px), calc(150dvh - 52px));
-  }
-}
-@media (max-height: 560px) {
-  .quake-menu-card {
-    --quake-menu-offset-y: 6.5%;
-    width: min(860px, calc(100vw - 64px), calc(132dvh - 45px));
-  }
-}
-.quake-menu-card::before {
-  content: "";
-  position: absolute;
-  top: 1.25cqw;
-  left: 5cqw;
-  z-index: 0;
-  display: block;
-  width: 10cqw;
-  height: 45cqw;
-  background-image: url("/q/main-menu-plaque.png");
-  background-repeat: no-repeat;
-  background-position: 0 0;
-  background-size: 100% 100%;
-  image-rendering: pixelated;
-  pointer-events: none;
-}
-.quake-menu-card > * {
-  position: relative;
-  z-index: 1;
-}
 .quake-bitmap-source {
   position: absolute;
   width: 1px;
@@ -1287,6 +663,47 @@ body.quake-menu-open:not(.quake-gameplay-started) .quake-menu-panel {
   background-size: var(--quake-bitmap-sheet-size) var(--quake-bitmap-sheet-size);
   image-rendering: pixelated;
 }
+
+/* Character-rendered bitmap text (the ASCII backend). Occupies the same cell box
+   as the sprite it replaces so every layout that positions bitmap text — the
+   console, centerprint, menus, HUD — keeps working untouched. Quake's high-bit
+   "alt" glyphs are the brown variant of the same character, so they stay a
+   colour difference rather than a different glyph. */
+
+/* Word-RUN bitmap text (the ASCII backend's replacement for span-per-character
+   output): one element per word, its box exactly the row of character cells it
+   replaced (explicit width = chars x glyph size), its words carried as a plain
+   text node. The glyph overlay stamps that text INTO the shared character
+   grid, so while the glyph UI surface is up the run must not also paint as
+   HTML — visibility (not display) keeps its box driving layout, wrapping and
+   hit targets. When the surface is hidden (in-game text: notify, centerprint)
+   the run paints as ordinary HTML text, like the character spans it replaced. */
+.quake-bitmap-run {
+  display: block;
+  flex: 0 0 auto;
+  height: var(--quake-bitmap-glyph-size);
+  overflow: hidden;
+  font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  font-size: calc(var(--quake-bitmap-glyph-size) * 0.95);
+  line-height: var(--quake-bitmap-glyph-size);
+  white-space: nowrap;
+  text-transform: uppercase;
+  color: #9c968a;
+}
+.quake-bitmap-run-alt {
+  color: #9a7550;
+}
+/* Unconditional (previously gated on the loading overlay being visible): the
+   glyph UI scene lives on a persistent host now, so its grid is ALWAYS the
+   painter of bitmap text — during gameplay too, where notify/center-print runs
+   are stamped into the same grid as the world sits under. */
+body.quake-glyph-render .quake-bitmap-run {
+  visibility: hidden;
+}
+/* The version tag stays ORDINARY HTML: it is viewport chrome (12px system
+   monospace beside the logo, like the GitHub badge), not scene text. Routing
+   it through the grid rendered it as one dim ~8px cell floating beside the
+   logo — the measured regression — so it paints itself again. */
 .quake-bitmap-col-0 {
   background-position-x: 0;
 }
@@ -1383,698 +800,33 @@ body.quake-menu-open:not(.quake-gameplay-started) .quake-menu-panel {
 .quake-bitmap-row-15 {
   background-position-y: calc(var(--quake-bitmap-glyph-size) * -15);
 }
-.quake-menu-panel-header {
-  position: absolute;
-  inset: 0;
-  display: block;
-  margin: 0;
-  pointer-events: none;
-}
-.quake-menu-panel-title {
-  position: absolute;
-  top: calc(4 * var(--quake-menu-px));
-  left: 35cqw;
-  margin: 0;
-  line-height: 0;
-}
+
 #quake-level-title {
   left: calc(54.5 * var(--quake-menu-px));
 }
-#quake-single-player-title {
-  left: calc(96 * var(--quake-menu-px));
-}
-#quake-options-title {
-  left: calc(88 * var(--quake-menu-px));
-}
-#quake-about-title {
-  left: calc(112 * var(--quake-menu-px));
-}
+
 #quake-multiplayer-title {
   left: calc(64 * var(--quake-menu-px));
 }
-.quake-menu-panel-title img {
-  display: block;
-  width: auto;
-  height: calc(20 * var(--quake-menu-px));
-  image-rendering: pixelated;
-  filter: none;
-}
-#quake-options-title img {
-  height: calc(24 * var(--quake-menu-px));
-}
-#quake-about-title img {
-  height: calc(24 * var(--quake-menu-px));
-}
-#quake-single-player-title img {
-  height: calc(24 * var(--quake-menu-px));
-}
-.quake-menu-panel-title.quake-bitmap-host .quake-bitmap-text {
-  --quake-bitmap-glyph-size: calc(20 * var(--quake-menu-px));
-  --quake-bitmap-sheet-size: calc(320 * var(--quake-menu-px));
-  --quake-bitmap-space-size: calc(14 * var(--quake-menu-px));
-  gap: calc(5 * var(--quake-menu-px)) var(--quake-bitmap-space-size);
-  filter: none;
-}
+
 #quake-multiplayer-title.quake-bitmap-host .quake-bitmap-text {
   --quake-bitmap-glyph-size: calc(14 * var(--quake-menu-px));
   --quake-bitmap-sheet-size: calc(224 * var(--quake-menu-px));
   --quake-bitmap-space-size: calc(9 * var(--quake-menu-px));
   gap: calc(3 * var(--quake-menu-px)) var(--quake-bitmap-space-size);
 }
-.quake-menu-panel-header p,
-.quake-menu-panel-sections p {
-  display: none;
-}
-.quake-menu-panel-header p .quake-bitmap-text {
-  filter: none;
-}
-.quake-menu-panel-sections {
-  position: absolute;
-  top: 10cqw;
-  left: 5cqw;
-  display: block;
-  width: 90cqw;
-  padding: 0;
-  border: 0;
-}
-.quake-menu-panel-sections section {
-  min-width: 0;
-}
-.quake-menu-panel-sections h2 {
-  display: none;
-}
-.quake-menu-panel-sections h2 .quake-bitmap-text {
-  filter: none;
-}
-.quake-menu-panel-sections p + p {
-  margin-top: 0;
-}
-.quake-menu-svg-defs {
-  position: absolute;
-  width: 0;
-  height: 0;
-  overflow: hidden;
-  pointer-events: none;
-}
-.quake-single-player-list {
-  position: absolute;
-  top: 10cqw;
-  left: 22.5cqw;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  gap: 0;
-  width: calc(232 * var(--quake-menu-px));
-  margin: 0;
-  padding: 0;
-}
-.quake-single-player-button {
-  position: relative;
-  display: block;
-  width: calc(232 * var(--quake-menu-px));
-  height: calc(20 * var(--quake-menu-px));
-  min-height: calc(20 * var(--quake-menu-px));
-  padding: 0;
-  border: 0;
-  border-radius: 0;
-  appearance: none;
-  background-color: transparent;
-  font-size: 0;
-  line-height: 0;
-  cursor: pointer;
-}
-.quake-single-player-button-level-select {
-  width: calc(211 * var(--quake-menu-px));
-}
-.quake-single-player-label {
-  display: block;
-  width: 100%;
-  height: 100%;
-  overflow: hidden;
-  image-rendering: pixelated;
-  pointer-events: none;
-}
-.quake-single-player-button::before {
-  content: "";
-  position: absolute;
-  top: 0;
-  left: calc(-18 * var(--quake-menu-px));
-  display: none;
-  width: calc(16 * var(--quake-menu-px));
-  height: calc(24 * var(--quake-menu-px));
-  background-image: url("/q/main-menu-cursor.png");
-  background-position: 0 0;
-  background-size: 600% 100%;
-  image-rendering: pixelated;
-  animation: quake-main-menu-cursor-frame 600ms steps(1, end) infinite;
-  pointer-events: none;
-}
-.quake-single-player-button:hover::before,
-.quake-single-player-button:focus-visible::before {
-  display: block;
-}
-.quake-single-player-list:has(.quake-single-player-button:hover)
-  .quake-single-player-button:focus-visible:not(:hover)::before {
-  display: none;
-}
-.quake-single-player-button:hover,
-.quake-single-player-button:focus-visible {
-  outline: none;
-  filter: brightness(1.16);
-}
-.quake-single-player-button:disabled {
-  cursor: default;
-  filter: brightness(0.62) saturate(0.72);
-  opacity: 0.58;
-}
-.quake-single-player-button:disabled::before {
-  display: none;
-}
-.quake-multiplayer-form {
-  --quake-menu-row-text-size: calc(8 * var(--quake-menu-px));
-  position: absolute;
-  top: 12cqw;
-  left: 22.5cqw;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  gap: calc(3 * var(--quake-menu-px));
-  width: 68cqw;
-  margin: 0;
-}
-#quake-multiplayer-panel[data-quake-multiplayer-state="failure"] {
-  background: rgba(0, 0, 0, 0.86);
-}
-#quake-multiplayer-panel[data-quake-multiplayer-state="failure"] .quake-menu-card {
-  --quake-menu-offset-y: 0%;
-  width: min(640px, calc(100vw - 64px), calc(136dvh - 52px));
-  filter: brightness(1.28) saturate(0.92) contrast(0.96);
-}
-#quake-multiplayer-panel[data-quake-multiplayer-state="failure"] .quake-menu-card::before,
-#quake-multiplayer-panel[data-quake-multiplayer-state="failure"] .quake-menu-panel-header {
-  display: none;
-}
-#quake-multiplayer-panel[data-quake-multiplayer-state="failure"] .quake-multiplayer-form {
-  display: none;
-}
-.quake-multiplayer-field {
-  --quake-multiplayer-row-brightness: 0.94;
-  --quake-multiplayer-control-bg: rgba(0, 0, 0, 0.62);
-  --quake-multiplayer-control-border: rgba(216, 137, 63, 0.62);
-  position: relative;
-  display: grid;
-  grid-template-columns: calc(88 * var(--quake-menu-px)) minmax(0, 1fr);
-  align-items: center;
-  gap: calc(6 * var(--quake-menu-px));
-  min-height: calc(13 * var(--quake-menu-px));
-  min-width: 0;
-  color: rgba(246, 241, 223, 0.84);
-}
-.quake-multiplayer-field::before {
-  content: "";
-  position: absolute;
-  top: 50%;
-  left: calc(-12 * var(--quake-menu-px));
-  width: var(--quake-menu-row-text-size);
-  height: var(--quake-menu-row-text-size);
-  background-image: url("/q/conchars.png");
-  background-position: calc(-12 * var(--quake-menu-row-text-size)) 0;
-  background-size: calc(16 * var(--quake-menu-row-text-size)) calc(16 * var(--quake-menu-row-text-size));
-  image-rendering: pixelated;
-  opacity: 0;
-  transform: translateY(-50%);
-  animation: quake-menu-option-cursor-frame 500ms steps(1, end) infinite;
-  pointer-events: none;
-}
-.quake-multiplayer-field:hover,
-.quake-multiplayer-field:focus-within {
-  --quake-multiplayer-row-brightness: 1.28;
-  --quake-multiplayer-control-bg: rgba(28, 13, 5, 0.82);
-  --quake-multiplayer-control-border: #f0ad5c;
-  color: #f6f1df;
-}
-.quake-multiplayer-field:hover::before,
-.quake-multiplayer-field:focus-within::before {
-  opacity: 1;
-}
-.quake-multiplayer-form:has(.quake-multiplayer-field:hover) .quake-multiplayer-field:focus-within:not(:hover)::before {
-  opacity: 0;
-}
-.quake-multiplayer-field-label {
-  display: block;
-  min-width: 0;
-  min-height: var(--quake-menu-row-text-size);
-}
-.quake-multiplayer-field-label .quake-bitmap-text {
-  --quake-bitmap-glyph-size: var(--quake-menu-row-text-size);
-  --quake-bitmap-sheet-size: calc(16 * var(--quake-menu-row-text-size));
-  --quake-bitmap-space-size: var(--quake-menu-row-text-size);
-  gap: 0 var(--quake-bitmap-space-size);
-}
-.quake-multiplayer-control-shell {
-  position: relative;
-  display: block;
-  min-width: 0;
-}
-.quake-multiplayer-field input,
-.quake-multiplayer-field select {
-  width: 100%;
-  min-width: 0;
-  height: calc(12 * var(--quake-menu-px));
-  padding: 0 calc(2 * var(--quake-menu-px));
-  border: calc(1 * var(--quake-menu-px)) solid var(--quake-multiplayer-control-border);
-  border-radius: 0;
-  background: var(--quake-multiplayer-control-bg);
-  color: #f6f1df;
-  font: 400 calc(6 * var(--quake-menu-px))/1 ui-monospace, "SFMono-Regular", "Roboto Mono", Menlo, Consolas, monospace;
-  letter-spacing: 0;
-  outline: none;
-}
-.quake-multiplayer-control-shell input,
-.quake-multiplayer-control-shell select {
-  color: transparent;
-  caret-color: #f6f1df;
-}
-.quake-multiplayer-control-shell select option {
-  color: #f6f1df;
-  background: #050403;
-}
-.quake-multiplayer-control-glyph {
-  position: absolute;
-  top: 50%;
-  left: calc(3 * var(--quake-menu-px));
-  right: calc(2 * var(--quake-menu-px));
-  display: flex;
-  min-width: 0;
-  transform: translateY(-50%);
-  pointer-events: none;
-}
-.quake-multiplayer-control-glyph .quake-bitmap-text {
-  --quake-bitmap-glyph-size: calc(6 * var(--quake-menu-px));
-  --quake-bitmap-sheet-size: calc(96 * var(--quake-menu-px));
-  --quake-bitmap-space-size: calc(5 * var(--quake-menu-px));
-  flex-wrap: nowrap;
-  max-width: 100%;
-  overflow: hidden;
-  gap: 0 var(--quake-bitmap-space-size);
-  filter: brightness(var(--quake-multiplayer-row-brightness));
-}
-.quake-multiplayer-field input:focus,
-.quake-multiplayer-field select:focus {
-  border-color: #ffd089;
-  box-shadow: 0 0 0 calc(1 * var(--quake-menu-px)) rgba(240, 173, 92, 0.2);
-}
+
+/* ASCII backend: the failure text lives IN the glyph grid, which renders
+   BELOW this panel — the HTML wash would bury it (measured: ROOM FULL barely
+   visible through the 0.86 black). The grid's own dimmed backdrop supplies
+   the contrast instead. */
+
 .quake-multiplayer-color-field input {
   width: calc(20 * var(--quake-menu-px));
   padding: 0;
   cursor: pointer;
 }
-.quake-multiplayer-actions {
-  grid-column: 1 / -1;
-  --quake-menu-row-text-size: calc(8 * var(--quake-menu-px));
-  display: grid;
-  grid-template-columns: max-content;
-  gap: calc(1 * var(--quake-menu-px));
-  align-items: center;
-  margin-top: calc(3 * var(--quake-menu-px));
-  padding-left: calc(2 * var(--quake-menu-px));
-}
-.quake-multiplayer-actions button {
-  --quake-multiplayer-action-brightness: 0.94;
-  --quake-multiplayer-action-bg: rgba(0, 0, 0, 0.42);
-  --quake-multiplayer-action-border: rgba(246, 241, 223, 0.68);
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  min-height: calc(14 * var(--quake-menu-px));
-  width: fit-content;
-  padding: calc(2 * var(--quake-menu-px)) calc(4 * var(--quake-menu-px));
-  border: calc(1 * var(--quake-menu-px)) solid var(--quake-multiplayer-action-border);
-  border-radius: 0;
-  appearance: none;
-  background: var(--quake-multiplayer-action-bg);
-  color: #f6f1df;
-  font: inherit;
-  white-space: nowrap;
-  cursor: pointer;
-}
-.quake-multiplayer-actions button::before {
-  content: "";
-  position: absolute;
-  top: 50%;
-  left: calc(-14 * var(--quake-menu-px));
-  width: var(--quake-menu-row-text-size);
-  height: var(--quake-menu-row-text-size);
-  background-image: url("/q/conchars.png");
-  background-position: calc(-12 * var(--quake-menu-row-text-size)) 0;
-  background-size: calc(16 * var(--quake-menu-row-text-size)) calc(16 * var(--quake-menu-row-text-size));
-  image-rendering: pixelated;
-  opacity: 0;
-  transform: translateY(-50%);
-  animation: quake-menu-option-cursor-frame 500ms steps(1, end) infinite;
-  pointer-events: none;
-}
-.quake-multiplayer-actions button:hover,
-.quake-multiplayer-actions button:focus-visible {
-  --quake-multiplayer-action-brightness: 1.34;
-  --quake-multiplayer-action-bg: rgba(8, 4, 2, 0.66);
-  --quake-multiplayer-action-border: #f6f1df;
-  color: #f6f1df;
-  outline: none;
-}
-.quake-multiplayer-actions button:active {
-  --quake-multiplayer-action-brightness: 1.14;
-  --quake-multiplayer-action-bg: rgba(20, 10, 5, 0.74);
-  opacity: 0.86;
-}
-.quake-multiplayer-actions button:hover::before,
-.quake-multiplayer-actions button:focus-visible::before {
-  opacity: 1;
-}
-.quake-multiplayer-actions:has(button:hover) button:focus-visible:not(:hover)::before {
-  opacity: 0;
-}
-.quake-multiplayer-actions button .quake-bitmap-text {
-  --quake-bitmap-glyph-size: var(--quake-menu-row-text-size);
-  --quake-bitmap-sheet-size: calc(16 * var(--quake-menu-row-text-size));
-  --quake-bitmap-space-size: var(--quake-menu-row-text-size);
-  flex-wrap: nowrap;
-  gap: 0 var(--quake-bitmap-space-size);
-  filter: brightness(var(--quake-multiplayer-action-brightness));
-}
-.quake-multiplayer-failure {
-  position: absolute;
-  inset: 0;
-  display: grid;
-  align-content: center;
-  justify-items: center;
-  width: 100%;
-  margin: 0;
-  transform: translateY(calc(-12 * var(--quake-menu-px)));
-}
-#quake-multiplayer-panel:not([data-quake-multiplayer-state="failure"]) .quake-multiplayer-failure {
-  display: none;
-}
-.quake-multiplayer-failure-title {
-  margin: 0;
-  color: #f6f1df;
-}
-.quake-multiplayer-failure-title .quake-bitmap-text {
-  --quake-bitmap-glyph-size: calc(14 * var(--quake-menu-px));
-  --quake-bitmap-sheet-size: calc(224 * var(--quake-menu-px));
-  --quake-bitmap-space-size: calc(10 * var(--quake-menu-px));
-  flex-wrap: nowrap;
-  gap: 0 var(--quake-bitmap-space-size);
-  filter: brightness(1.24);
-}
-#quake-multiplayer-panel-actions {
-  bottom: 4cqw;
-}
-#quake-multiplayer-panel[data-quake-multiplayer-state="failure"] #quake-multiplayer-panel-actions {
-  left: 50%;
-  right: auto;
-  top: 38cqw;
-  bottom: auto;
-  gap: 0;
-  transform: translateX(-50%);
-}
-#quake-multiplayer-panel[data-quake-multiplayer-state="failure"] #quake-multiplayer-panel-actions button {
-  padding: 0;
-  border: 0;
-  color: #f6f1df;
-}
-#quake-multiplayer-panel[data-quake-multiplayer-state="failure"] #quake-multiplayer-panel-actions button:hover,
-#quake-multiplayer-panel[data-quake-multiplayer-state="failure"] #quake-multiplayer-panel-actions button:focus-visible {
-  outline: none;
-}
-.quake-level-list {
-  position: absolute;
-  top: 10cqw;
-  left: 5cqw;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  gap: 0;
-  width: 90cqw;
-  max-height: 45cqw;
-  margin: 0;
-  padding: 0;
-  overflow: auto;
-  border: 0;
-  scrollbar-width: none;
-}
-.quake-level-list::-webkit-scrollbar {
-  display: none;
-}
-.quake-level-button {
-  --quake-menu-row-text-size: calc(8 * var(--quake-menu-px));
-  --quake-level-row-brightness: 1;
-  position: relative;
-  display: grid;
-  grid-template-columns: calc(48 * var(--quake-menu-px)) max-content;
-  align-items: center;
-  gap: calc(8 * var(--quake-menu-px));
-  width: fit-content;
-  max-width: 100%;
-  min-width: 0;
-  min-height: var(--quake-menu-row-text-size);
-  height: var(--quake-menu-row-text-size);
-  padding: 0 calc(16 * var(--quake-menu-px)) 0 calc(40 * var(--quake-menu-px));
-  border: 0;
-  border-radius: 0;
-  appearance: none;
-  background: transparent;
-  color: rgba(246, 241, 223, 0.84);
-  font: inherit;
-  line-height: 1;
-  text-align: left;
-  text-shadow: none;
-  cursor: pointer;
-  transition: opacity 80ms steps(1, end);
-}
-.quake-level-button::before {
-  content: "";
-  position: absolute;
-  top: 0;
-  right: 0;
-  width: var(--quake-menu-row-text-size);
-  height: var(--quake-menu-row-text-size);
-  background-image: url("/q/conchars.png");
-  background-position: calc(-12 * var(--quake-menu-row-text-size)) 0;
-  background-size: calc(16 * var(--quake-menu-row-text-size)) calc(16 * var(--quake-menu-row-text-size));
-  image-rendering: pixelated;
-  transform: scaleX(-1);
-  opacity: 0;
-  animation: quake-menu-option-cursor-frame 750ms steps(1, end) infinite;
-}
-.quake-level-code,
-.quake-level-name {
-  display: flex;
-  min-width: 0;
-  height: var(--quake-menu-row-text-size);
-  overflow: hidden;
-}
-.quake-level-code {
-  color: #f0ad5c;
-}
-.quake-level-name {
-  color: rgba(246, 241, 223, 0.84);
-}
-.quake-level-button .quake-bitmap-text {
-  --quake-bitmap-glyph-size: var(--quake-menu-row-text-size);
-  --quake-bitmap-sheet-size: calc(16 * var(--quake-menu-row-text-size));
-  --quake-bitmap-space-size: var(--quake-menu-row-text-size);
-  flex-wrap: nowrap;
-  gap: 0 var(--quake-bitmap-space-size);
-  filter: brightness(var(--quake-level-row-brightness));
-}
-.quake-level-button:hover,
-.quake-level-button:focus-visible,
-.quake-level-button[aria-current="page"] {
-  --quake-level-row-brightness: 1.34;
-  outline: none;
-}
-.quake-level-button:active {
-  --quake-level-row-brightness: 1.14;
-  opacity: 0.86;
-}
-.quake-level-button:hover::before,
-.quake-level-button:focus-visible::before,
-.quake-level-button[aria-current="page"]::before {
-  opacity: 1;
-}
-.quake-level-list:has(.quake-level-button:hover) .quake-level-button:focus-visible:not(:hover)::before,
-.quake-level-list:has(.quake-level-button:hover) .quake-level-button[aria-current="page"]:not(:hover)::before {
-  opacity: 0;
-}
-.quake-level-button:hover .quake-level-code,
-.quake-level-button:focus-visible .quake-level-code,
-.quake-level-button[aria-current="page"] .quake-level-code {
-  color: #ffbf66;
-}
-.quake-level-button:hover .quake-level-name,
-.quake-level-button:focus-visible .quake-level-name,
-.quake-level-button[aria-current="page"] .quake-level-name {
-  color: #ffffff;
-}
-.quake-level-button[aria-current="page"] {
-  background: transparent;
-}
-.quake-level-button:disabled {
-  --quake-level-row-brightness: 0.76;
-  opacity: 0.54;
-}
-.quake-level-button:disabled::before {
-  opacity: 0;
-}
-.quake-options-list {
-  display: grid;
-  gap: 0;
-  margin: 0;
-}
-#quake-options-panel .quake-options-group-title,
-#quake-about-panel .quake-options-group-title {
-  --quake-menu-row-text-size: calc(8 * var(--quake-menu-px));
-  display: block;
-  height: var(--quake-menu-row-text-size);
-  margin: calc(5 * var(--quake-menu-px)) 0 calc(2 * var(--quake-menu-px));
-  padding: 0 0 0 calc(40 * var(--quake-menu-px));
-  color: #d8893f;
-  font: inherit;
-  line-height: 1;
-}
-#quake-options-panel .quake-options-group-title:first-child,
-#quake-about-panel .quake-options-group-title:first-child {
-  margin-top: 0;
-}
-#quake-options-panel .quake-menu-panel-sections,
-#quake-about-panel .quake-menu-panel-sections {
-  max-height: calc(138 * var(--quake-menu-px));
-  overflow: auto;
-  scrollbar-width: none;
-}
-#quake-options-panel .quake-menu-panel-sections::-webkit-scrollbar,
-#quake-about-panel .quake-menu-panel-sections::-webkit-scrollbar {
-  display: none;
-}
-#quake-options-panel .quake-options-group-title .quake-bitmap-text,
-#quake-about-panel .quake-options-group-title .quake-bitmap-text {
-  --quake-bitmap-glyph-size: var(--quake-menu-row-text-size);
-  --quake-bitmap-sheet-size: calc(16 * var(--quake-menu-row-text-size));
-  --quake-bitmap-space-size: var(--quake-menu-row-text-size);
-  flex-wrap: nowrap;
-  gap: 0 var(--quake-bitmap-space-size);
-  filter: none;
-}
-.quake-option-toggle {
-  --quake-menu-row-text-size: calc(8 * var(--quake-menu-px));
-  position: relative;
-  display: block;
-  height: var(--quake-menu-row-text-size);
-  min-height: var(--quake-menu-row-text-size);
-  width: 100%;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: rgba(246, 241, 223, 0.84);
-  cursor: pointer;
-  font: inherit;
-  text-align: left;
-  outline: none;
-  user-select: none;
-}
-#quake-options-panel .quake-option-toggle {
-  min-height: var(--quake-menu-row-text-size);
-}
-#quake-about-panel .quake-option-toggle {
-  cursor: default;
-}
-.quake-option-toggle input {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  margin: -1px;
-  padding: 0;
-  overflow: hidden;
-  clip: rect(0 0 0 0);
-  white-space: nowrap;
-  border: 0;
-}
-.quake-option-checkbox {
-  display: none;
-}
-.quake-option-toggle::before {
-  content: "";
-  position: absolute;
-  top: 0;
-  left: calc(184 * var(--quake-menu-px));
-  width: var(--quake-menu-row-text-size);
-  height: var(--quake-menu-row-text-size);
-  background-image: url("/q/conchars.png");
-  background-position: calc(-12 * var(--quake-menu-row-text-size)) 0;
-  background-size: calc(16 * var(--quake-menu-row-text-size)) calc(16 * var(--quake-menu-row-text-size));
-  image-rendering: pixelated;
-  opacity: 0;
-  animation: quake-menu-option-cursor-frame 500ms steps(1, end) infinite;
-}
-.quake-option-toggle:hover::before,
-.quake-option-toggle:focus::before,
-.quake-option-toggle:focus-within::before {
-  opacity: 1;
-}
-.quake-options-list:has(.quake-option-toggle:hover) .quake-option-toggle:focus:not(:hover)::before,
-.quake-options-list:has(.quake-option-toggle:hover) .quake-option-toggle:focus-within:not(:hover)::before {
-  opacity: 0;
-}
-.quake-option-text,
-.quake-option-value {
-  position: absolute;
-  top: 0;
-  display: block;
-  height: var(--quake-menu-row-text-size);
-  overflow: hidden;
-}
-.quake-option-text {
-  left: calc(40 * var(--quake-menu-px));
-  max-width: calc(144 * var(--quake-menu-px));
-}
-.quake-option-toggle input:not(:checked) ~ .quake-option-text {
-  opacity: 0.46;
-}
-.quake-option-value {
-  left: calc(204 * var(--quake-menu-px));
-  display: none;
-}
-#quake-options-panel .quake-option-text .quake-bitmap-text,
-#quake-options-panel .quake-option-value .quake-bitmap-text,
-#quake-about-panel .quake-option-text .quake-bitmap-text,
-#quake-about-panel .quake-option-value .quake-bitmap-text {
-  --quake-bitmap-glyph-size: var(--quake-menu-row-text-size);
-  --quake-bitmap-sheet-size: calc(16 * var(--quake-menu-row-text-size));
-  --quake-bitmap-space-size: var(--quake-menu-row-text-size);
-  flex-wrap: nowrap;
-  gap: 0 var(--quake-bitmap-space-size);
-  filter: none;
-}
-.quake-option-toggle input:not(:checked) ~ .quake-option-value-off,
-.quake-option-toggle input:checked ~ .quake-option-value-on,
-.quake-option-cycle .quake-option-value,
-.quake-shortcut-row .quake-option-value {
-  display: block;
-}
-.quake-option-toggle input:checked + .quake-option-checkbox {
-  border-color: transparent;
-}
-.quake-option-toggle:hover .quake-bitmap-text,
-.quake-option-toggle:focus-within .quake-bitmap-text {
-  filter: none;
-}
-.quake-option-toggle:focus-within .quake-option-checkbox {
-  outline: none;
-}
-#quake-about-panel .quake-option-toggle::before,
-#quake-about-panel .quake-option-toggle:hover::before,
-#quake-about-panel .quake-option-toggle:focus::before,
-#quake-about-panel .quake-option-toggle:focus-within::before {
-  opacity: 0;
-}
+
 #quake-debug-stack {
   position: fixed;
   top: max(18px, env(safe-area-inset-top));
@@ -2150,7 +902,7 @@ body.quake-debug-pointer-unlocked #quake-debug-card {
 body.quake-debug-pointer-unlocked #quake-debug-card {
   border-color: rgba(132, 73, 38, 0.82);
 }
-#quake-debug-card::before {
+.quake-glyph-render #quake-debug-card::before {
   content: "";
   position: absolute;
   inset: 0;
@@ -2166,20 +918,7 @@ body.quake-debug-pointer-unlocked #quake-debug-card {
   filter: var(--quake-debug-glyph-filter);
   transition: filter 120ms linear;
 }
-#quake-debug-card .quake-option-checkbox {
-  border-color: var(--quake-debug-checkbox-border);
-  background: var(--quake-debug-checkbox-bg);
-}
-#quake-debug-card .quake-option-checkbox::after {
-  background: var(--quake-debug-checkbox-check);
-}
-#quake-debug-card .quake-option-toggle input:checked + .quake-option-checkbox {
-  border-color: var(--quake-debug-checkbox-checked-border);
-  background: var(--quake-debug-checkbox-checked-bg);
-}
-#quake-debug-card .quake-option-toggle:focus-within .quake-option-checkbox {
-  outline-color: var(--quake-debug-checkbox-focus);
-}
+
 #quake-debug-header {
   display: flex;
   align-items: center;
@@ -2311,90 +1050,11 @@ body.quake-debug-outlines #quake-debug-outline-legend {
 .quake-debug-outline-swatch-enemies {
   background: var(--quake-debug-swatch-enemies, red);
 }
-.quake-menu-actions {
-  --quake-menu-row-text-size: calc(8 * var(--quake-menu-px));
-  position: absolute;
-  left: 5cqw;
-  bottom: 8cqw;
-  display: flex;
-  flex-wrap: nowrap;
-  align-items: center;
-  gap: calc(16 * var(--quake-menu-px));
-  margin: 0;
-  font-size: 0;
-  line-height: 1;
-}
-#quake-level-actions,
-#quake-single-player-actions {
+
+#quake-level-actions{
   display: none;
 }
-.quake-menu-actions a,
-.quake-menu-actions button {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-height: var(--quake-menu-row-text-size);
-  padding: 0;
-  border: 0;
-  border-radius: 0;
-  appearance: none;
-  background: transparent;
-  color: #d8893f;
-  font: inherit;
-  text-decoration: none;
-  text-shadow: none;
-  white-space: nowrap;
-  cursor: pointer;
-}
-.quake-menu-actions a .quake-bitmap-text,
-.quake-menu-actions button .quake-bitmap-text {
-  --quake-bitmap-glyph-size: var(--quake-menu-row-text-size);
-  --quake-bitmap-sheet-size: calc(16 * var(--quake-menu-row-text-size));
-  --quake-bitmap-space-size: var(--quake-menu-row-text-size);
-  flex-wrap: nowrap;
-  gap: 0 var(--quake-bitmap-space-size);
-  filter: none;
-}
-.quake-menu-actions button::before {
-  content: "";
-  position: absolute;
-  top: 0;
-  left: calc(-18 * var(--quake-menu-px));
-  width: var(--quake-menu-row-text-size);
-  height: var(--quake-menu-row-text-size);
-  background-image: url("/q/conchars.png");
-  background-position: calc(-12 * var(--quake-menu-row-text-size)) 0;
-  background-size: calc(16 * var(--quake-menu-row-text-size)) calc(16 * var(--quake-menu-row-text-size));
-  image-rendering: pixelated;
-  opacity: 0;
-  animation: quake-menu-option-cursor-frame 500ms steps(1, end) infinite;
-}
-.quake-menu-actions a:hover,
-.quake-menu-actions a:focus-visible,
-.quake-menu-actions button:hover,
-.quake-menu-actions button:focus-visible {
-  color: #f0ad5c;
-  outline: none;
-}
-.quake-menu-actions button:hover::before,
-.quake-menu-actions button:focus-visible::before {
-  opacity: 1;
-}
-.quake-menu-actions:has(button:hover) button:focus-visible:not(:hover)::before {
-  opacity: 0;
-}
-.quake-menu-actions button {
-  margin-left: auto;
-  background: transparent;
-  color: #f6f1df;
-}
-.quake-menu-actions a:hover .quake-bitmap-text,
-.quake-menu-actions a:focus-visible .quake-bitmap-text,
-.quake-menu-actions button:hover .quake-bitmap-text,
-.quake-menu-actions button:focus-visible .quake-bitmap-text {
-  filter: brightness(1.35) saturate(1.2);
-}
+
 #quake-weapon .polycss-mesh.viewmodel {
   pointer-events: none;
   z-index: 4;
@@ -2443,21 +1103,11 @@ body.quake-debug-outlines #quake-debug-outline-legend {
 .polycss-mesh.shootable.quake-shootable-corpse {
   pointer-events: none;
 }
-body.quake-menu-unlocked #quake-crosshair,
-body.quake-menu-unlocked #quake-classic-hud {
-  display: none;
-}
-body.quake-dead #quake-crosshair,
-body.quake-dead #quake-classic-hud {
-  display: none;
-}
-body.quake-level-complete #quake-crosshair,
-body.quake-level-complete #quake-classic-hud,
+
 body.quake-level-complete #quake-weapon {
   display: none;
 }
-body.quake-level-complete .asciiquake-logo,
-body.quake-level-complete .asciiquake-version,
+
 body.quake-level-complete .quake-id-software-link,
 body.quake-level-complete .dn-stats-overlay,
 body.quake-level-complete #quake-debug-stack {
@@ -2586,185 +1236,11 @@ body.quake-menu-unlocked #quake-weapon {
     display: none !important;
   }
 }
-#quake-crosshair {
-  --quake-crosshair-size: clamp(8px, 2.08vh, 80px);
-  --quake-crosshair-bg-x: calc(var(--quake-crosshair-size) * -11);
-  --quake-crosshair-bg-y: calc(var(--quake-crosshair-size) * -2);
-  --quake-crosshair-x: -50%;
-  --quake-crosshair-y: -50%;
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  width: var(--quake-crosshair-size);
-  height: var(--quake-crosshair-size);
-  z-index: 2;
-  pointer-events: none;
-  background-image: url("./assets/quake-crosshair-conchars.png");
-  background-position: var(--quake-crosshair-bg-x) var(--quake-crosshair-bg-y);
-  background-repeat: no-repeat;
-  background-size: calc(var(--quake-crosshair-size) * 16) calc(var(--quake-crosshair-size) * 16);
-  image-rendering: pixelated;
-  transform: translate(var(--quake-crosshair-x), var(--quake-crosshair-y));
-}
-#quake-crosshair[data-quake-crosshair="dot"] {
-  --quake-crosshair-bg-x: calc(var(--quake-crosshair-size) * -14);
-  --quake-crosshair-bg-y: calc(var(--quake-crosshair-size) * -2);
-  --quake-crosshair-x: -28.125%;
-  --quake-crosshair-y: -68.75%;
-}
-#quake-crosshair[data-quake-crosshair="x"] {
-  --quake-crosshair-bg-x: calc(var(--quake-crosshair-size) * -8);
-  --quake-crosshair-bg-y: calc(var(--quake-crosshair-size) * -7);
-}
-#quake-crosshair[data-quake-crosshair="o"] {
-  --quake-crosshair-bg-x: calc(var(--quake-crosshair-size) * -15);
-  --quake-crosshair-bg-y: calc(var(--quake-crosshair-size) * -6);
-}
-#quake-crosshair[data-quake-crosshair="caret"] {
-  --quake-crosshair-bg-x: calc(var(--quake-crosshair-size) * -14);
-  --quake-crosshair-bg-y: calc(var(--quake-crosshair-size) * -5);
-  --quake-crosshair-y: 12.5%;
-}
-#quake-crosshair[data-quake-crosshair="vee"] {
-  --quake-crosshair-bg-x: calc(var(--quake-crosshair-size) * -6);
-  --quake-crosshair-bg-y: calc(var(--quake-crosshair-size) * -7);
-  --quake-crosshair-x: -58.125%;
-  --quake-crosshair-y: -40.625%;
-}
-#quake-crosshair[data-quake-crosshair="off"] {
-  display: none;
-}
-#quake-classic-hud {
-  position: absolute;
-  left: 50%;
-  bottom: 0;
-  z-index: 3;
-  width: min(max(320px, 83.2vh), 100vw);
-  --quake-hud-red: #c93a24;
-  --quake-hud-red-bright: #f04a2b;
-  --quake-hud-orange: #d46b28;
-  --quake-hud-shadow: #110503;
-  --quake-hud-px: calc(100cqw / 320);
-  --quake-hud-px-y: var(--quake-hud-px);
-  --quake-hud-status-y: calc(24 * var(--quake-hud-px-y));
-  --quake-hud-readout-top: 0;
-  --quake-hud-readout-width: calc(72 * var(--quake-hud-px));
-  --quake-hud-armor-x: calc(24 * var(--quake-hud-px));
-  --quake-hud-health-x: calc(136 * var(--quake-hud-px));
-  --quake-hud-ammo-x: calc(248 * var(--quake-hud-px));
-  --quake-hud-icons-width: 432;
-  transform: translateX(-50%);
-  aspect-ratio: 320 / 24;
-  background: #050302;
-  overflow: hidden;
-  line-height: 0;
-  container-type: inline-size;
-  image-rendering: pixelated;
-  filter: brightness(1.58) saturate(1.07) hue-rotate(-1deg) contrast(0.96) brightness(0.96);
-}
-#quake-loading-status::before,
-#quake-main-menu-art,
-.quake-main-menu-label,
-.quake-main-menu-item-cursor,
-.quake-bitmap-glyph,
-#quake-classic-hud,
-.quake-hud-slot,
-.quake-hud-digit {
+
+.quake-bitmap-glyph{
   background-repeat: no-repeat;
 }
-#quake-classic-hud-image {
-  display: none;
-}
-#quake-hud-inventory,
-#quake-hud-status-row {
-  position: absolute;
-  left: 0;
-  width: 100%;
-  height: var(--quake-hud-status-y);
-  background-repeat: no-repeat;
-  background-size: 100% 100%;
-  pointer-events: none;
-}
-#quake-hud-inventory {
-  top: 0;
-  background-image: url("/q/hud-inventory.png");
-  display: none;
-}
-#quake-hud-status-row {
-  top: 0;
-  background-image: url("/q/hud-base.png");
-}
-#quake-hud-frame {
-  position: absolute;
-  inset: 0;
-  transform: translateY(calc(-1 * var(--quake-hud-status-y)));
-  pointer-events: none;
-}
-.quake-hud-slot {
-  position: absolute;
-  left: calc(var(--quake-hud-slot-x) * var(--quake-hud-px));
-  top: calc(var(--quake-hud-slot-y) * var(--quake-hud-px-y));
-  width: calc(var(--quake-hud-slot-width) * var(--quake-hud-px));
-  height: calc(var(--quake-hud-slot-height) * var(--quake-hud-px-y));
-  background-image: url("/q/hud-icons.png");
-  background-size:
-    calc(var(--quake-hud-icons-width) * var(--quake-hud-px))
-    calc(24 * var(--quake-hud-px-y));
-  background-position:
-    calc(var(--quake-hud-slot-source-x) * -1 * var(--quake-hud-px))
-    calc(var(--quake-hud-slot-source-y) * -1 * var(--quake-hud-px-y));
-  image-rendering: pixelated;
-}
-.quake-hud-slot[hidden] {
-  display: none;
-}
-#quake-hud-values {
-  position: absolute;
-  inset: 0;
-  transform: translateY(calc(-1 * var(--quake-hud-status-y)));
-  line-height: 1;
-  pointer-events: none;
-}
-.quake-hud-readout {
-  position: absolute;
-  top: calc(var(--quake-hud-status-y) + var(--quake-hud-readout-top) * var(--quake-hud-px-y));
-  display: flex;
-  width: var(--quake-hud-readout-width);
-  height: var(--quake-hud-status-y);
-  background: transparent;
-}
-.quake-hud-digit {
-  display: block;
-  width: calc(24 * var(--quake-hud-px));
-  height: 100%;
-  background-image: url("/q/hud-numbers.png");
-  background-size: calc(240 * var(--quake-hud-px)) calc(24 * var(--quake-hud-px-y));
-  background-position-x: calc(var(--quake-hud-digit-index, 0) * -24 * var(--quake-hud-px));
-  background-position-y: 0;
-  image-rendering: pixelated;
-  opacity: 0;
-}
-.quake-hud-readout-armor {
-  left: var(--quake-hud-armor-x);
-}
-.quake-hud-readout-health {
-  left: var(--quake-hud-health-x);
-}
-.quake-hud-readout-health-damage {
-  visibility: hidden;
-}
-#quake-classic-hud.quake-hud-damage .quake-hud-readout-health:not(.quake-hud-readout-health-damage) {
-  visibility: hidden;
-}
-#quake-classic-hud.quake-hud-damage .quake-hud-readout-health-damage {
-  visibility: visible;
-}
-.quake-hud-readout-health-damage .quake-hud-digit {
-  background-image: url("/q/hud-numbers-damage.png");
-}
-.quake-hud-readout-ammo {
-  left: var(--quake-hud-ammo-x);
-}
+
 body.quake-menu-open .dn-stats-overlay {
   display: none !important;
 }
@@ -2804,3 +1280,38 @@ body.quake-menu-open .dn-stats-overlay {
     background-position: calc(-13 * var(--quake-menu-row-text-size)) 0;
   }
 }
+
+/* ── ASCII backend: the art is drawn by glyphcss, so the HTML must never paint it
+   ──────────────────────────────────────────────────────────────────────────────
+   Hiding these from JS after the overlay mounts leaves a window where the PNG
+   paints first — visible as the backdrop flashing when a page opens. The class is
+   set before the menu is built, so declaring it here means the browser never
+   paints this art at all; the elements stay in the DOM purely as layout anchors
+   telling the overlay where to draw. */
+
+.quake-glyph-render #quake-debug-card::before,
+.quake-glyph-render .quake-option-crosshair::before,
+.quake-glyph-render .quake-option-glyph-detail::before,
+.quake-glyph-render .quake-option-glyph-palette::before{
+  background-image: none !important;
+}
+/* The intermission card's baked art images: the glyph scene draws their
+   content (the value-glyph sprite rule and the conchars text runs), so the
+   HTML art must never paint. `visibility`, not `display` — layout stays. */
+.quake-glyph-render .quake-intermission-label-art,
+.quake-glyph-render .quake-intermission-complete-art {
+  visibility: hidden;
+}
+/* The glyph UI host sits UNDER the overlay and carries the scene's own black
+   ground now — the overlay itself must stop painting one, or it would cover
+   the grid. Its interior (console text, progress bar) still paints above. */
+
+/* ── Input VALUES stay real text ─────────────────────────────────────────────
+   Every other menu label is glyph-rendered, but the text inside a field is live
+   and editable. Mirroring it through the conchars sheet made it read far darker
+   than the labels beside it: the mirror span inherits the input's
+   `rgba(246, 241, 223, 0.84)`, and the overlay folds that alpha into the quad's
+   brightness, landing dim on top of an already-dim sheet. Showing the native
+   text at full opacity instead is both brighter and more correct — a caret and
+   a selection need real text, not a rasterized copy of it. */
+

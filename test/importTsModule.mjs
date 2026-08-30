@@ -12,6 +12,9 @@ export async function importTsModule(specifier, options = {}) {
     define: options.define,
     entryPoints: [entryPoint],
     format: "esm",
+    // Asset imports (the scene manifest imports its sprite sheets) bundle as
+    // data URLs — tests never fetch them, they only need the module to load.
+    loader: { ".png": "dataurl", ".svg": "dataurl" },
     logLevel: "silent",
     platform: "node",
     target: "node22",

@@ -1,16 +1,28 @@
+import { updateQuakeMenuSceneState } from "./menuSceneState";
+
 export const QUAKE_ASSETS_REGENERATING_STATUS = "Assets regenerating";
 export const QUAKE_ASSETS_REGENERATING_ACTION =
   "Wait for pnpm prepare:quake to finish, then reload.";
 export const QUAKE_LOADING_CONSOLE_PAK_LINE = "Assets from id1/pak0.pak";
 
 declare const __POLYCSS_VERSION__: string;
+declare const __GLYPHCSS_VERSION__: string;
 
-const QUAKE_LOADING_CONSOLE_BOOT_LINES = [
+/** Set by the app once the render backend is resolved. */
+let quakeLoadingRendererLine = `Using PolyCSS renderer v${__POLYCSS_VERSION__}`;
+
+export function setQuakeLoadingRendererLine(mode: "polycss" | "glyphcss"): void {
+  quakeLoadingRendererLine = mode === "glyphcss"
+    ? `Using GlyphCSS renderer v${__GLYPHCSS_VERSION__}`
+    : `Using PolyCSS renderer v${__POLYCSS_VERSION__}`;
+}
+
+const quakeLoadingConsoleBootLines = (): readonly string[] => [
   "Quake (C) 1996 id Software, Inc.",
   "Shareware version 1.06",
-  `Using PolyCSS renderer v${__POLYCSS_VERSION__}`,
+  quakeLoadingRendererLine,
   "Host_Init",
-] as const;
+];
 const QUAKE_LOADING_CONSOLE_LINE_DELAY_MS = 55;
 const QUAKE_LOADING_CONSOLE_LINE_DELAYS_MS = [38, 104, 26, 78, 33, 118, 24, 69] as const;
 const QUAKE_LOADING_CONSOLE_MAX_LINES = 28;
@@ -29,14 +41,13 @@ export interface QuakeLoadingProgressTracker {
 }
 
 interface QuakeLoadingConsoleOptions {
-  overlay: HTMLElement | null;
-  status: HTMLElement | null;
-  progress: HTMLElement | null;
-  progressFill: HTMLElement | null;
-  action: HTMLElement | null;
+  /** Whether the loading surface (the scene chrome) is up — the old
+   *  `!overlay.hidden`. Owned by the loading flow. */
+  isOverlayVisible: () => boolean;
+  /** Whether the death card is active (lines keep queueing there). */
+  isDeathActive: () => boolean;
   hasCurrentResult: () => boolean;
   isLoading: () => boolean;
-  renderBitmapText: (element: HTMLElement) => void;
 }
 
 export interface QuakeLoadingConsole {
@@ -64,6 +75,8 @@ export function createQuakeLoadingConsole(options: QuakeLoadingConsoleOptions): 
   let currentStatus = "";
   let lineTimer: number | null = null;
   let drainResolvers: (() => void)[] = [];
+  let progressShown = true;
+  let lastProgressFraction = 0;
 
   function createProgressTracker(status = "Loading"): QuakeLoadingProgressTracker {
     let completed = 0;
@@ -124,7 +137,7 @@ export function createQuakeLoadingConsole(options: QuakeLoadingConsoleOptions): 
     currentStatus = "";
     render();
     if (!options.hasCurrentResult() && status === "Loading") {
-      for (const line of QUAKE_LOADING_CONSOLE_BOOT_LINES) {
+      for (const line of quakeLoadingConsoleBootLines()) {
         queueLine(line);
       }
     }
@@ -328,27 +341,19 @@ export function createQuakeLoadingConsole(options: QuakeLoadingConsoleOptions): 
     render();
   }
 
+  // The console renders as DATA: the glyph overlay draws these lines at the
+  // manifest's console layout. No DOM is built.
   function render(): void {
-    if (!options.status || !canRender()) return;
-    options.status.textContent = "";
-    const fragment = document.createDocumentFragment();
-    for (const line of lines) {
-      const element = document.createElement("span");
-      element.className = "quake-loading-console-line quake-bm-copy";
-      element.textContent = line;
-      fragment.append(element);
-    }
-    options.status.append(fragment);
-    options.status.setAttribute("aria-label", lines.join("\n"));
-    options.renderBitmapText(options.status);
+    if (!canRender()) return;
+    updateQuakeMenuSceneState({ consoleLines: [...lines] });
   }
 
   function canRender(): boolean {
-    return Boolean(options.overlay && !options.overlay.hidden);
+    return options.isOverlayVisible() || options.isDeathActive();
   }
 
   function canQueue(): boolean {
-    return options.isLoading() || options.overlay?.classList.contains("quake-loading-death") === true;
+    return options.isLoading() || options.isDeathActive();
   }
 
   function updateConsoleStatus(status: string, completed: number, total: number): void {
@@ -424,40 +429,26 @@ export function createQuakeLoadingConsole(options: QuakeLoadingConsoleOptions): 
     const visualProgress = Math.max(0, Math.min(1, progress.visualProgress ?? actualProgress));
     const percent = Math.round(visualProgress * 100);
     updateConsoleStatus(status, completed, total);
-    if (options.progress) {
-      options.progress.style.setProperty("--quake-loading-progress", String(percent / 100));
-      if (total > 0) {
-        options.progress.classList.remove("quake-loading-progress-indeterminate");
-        options.progress.setAttribute("aria-valuenow", String(percent));
-        options.progress.setAttribute("aria-valuetext", `${completed} of ${total}`);
-      } else {
-        options.progress.classList.add("quake-loading-progress-indeterminate");
-        options.progress.removeAttribute("aria-valuenow");
-        options.progress.setAttribute("aria-valuetext", "Loading");
-      }
-    }
-    if (options.progressFill) options.progressFill.hidden = false;
+    lastProgressFraction = percent / 100;
+    if (progressShown) updateQuakeMenuSceneState({ consoleProgress: lastProgressFraction });
   }
 
   function hideAction(): void {
-    if (!options.action) return;
-    options.action.textContent = "";
-    options.action.hidden = true;
+    updateQuakeMenuSceneState({ consoleAction: null });
   }
 
   function showAction(message: string): void {
-    if (!options.action) return;
-    options.action.textContent = message;
-    options.action.hidden = false;
-    options.renderBitmapText(options.action);
+    updateQuakeMenuSceneState({ consoleAction: message });
   }
 
   function hideProgress(): void {
-    if (options.progress) options.progress.hidden = true;
+    progressShown = false;
+    updateQuakeMenuSceneState({ consoleProgress: null });
   }
 
   function showProgress(): void {
-    if (options.progress) options.progress.hidden = false;
+    progressShown = true;
+    updateQuakeMenuSceneState({ consoleProgress: lastProgressFraction });
   }
 
   return {

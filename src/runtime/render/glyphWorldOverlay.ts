@@ -1,5 +1,5 @@
-import { createGlyphPerspectiveCamera, createGlyphScene } from "glyphcss";
-import type { GlyphMeshHandle, GlyphMeshTransform } from "glyphcss";
+import { createGlyphPerspectiveCamera, createGlyphScene, quantizeGlyphAtlasPalette, type GlyphFontAtlas } from "glyphcss";
+import type { GlyphMeshHandle, GlyphMeshTransform, GlyphOcclusionCoverage } from "glyphcss";
 import { BASE_TILE, type Vec3 } from "@layoutit/polycss";
 
 /**
@@ -64,6 +64,16 @@ export interface QuakeGlyphWorldOverlayOptions {
    *  no-op configs: `halfblock`/`quadrant` charMode (two colours per cell) and
    *  `useColors: false`. `?glyphColorEncoding=spans` opts back out. */
   readonly colorEncoding?: QuakeGlyphColorEncoding;
+  /**
+   * Font atlas the `atlas` encoding maps against. The app passes glyphcss's
+   * ASCII-only variant (94 printable-ASCII glyphs, 68 palette slots vs the
+   * universal atlas's 212/30): this overlay only ever emits `detail`-ramp
+   * ASCII in its default configuration, so the freed glyph axis buys ~2.3x
+   * the colour resolution. A config that needs non-ASCII glyphs (braille
+   * charMode, an exotic `?glyphPalette=`) falls back to the span encoder —
+   * the same fallback those configs already hit under the universal atlas.
+   */
+  readonly fontAtlas?: GlyphFontAtlas;
   /** Hidden-line removal for the wireframe/braille path — "hide" depth-tests each
    *  stroke against a solid prepass so far edges stop painting over near ones.
    *  No-op in solid mode. `?glyphHiddenLines=hide`. */
@@ -105,6 +115,37 @@ export interface QuakeGlyphWorldOverlayOptions {
   readonly flat?: number;
   /** Colour brighten multiplier for the dark baked Quake colours. */
   readonly brighten?: number;
+  /**
+   * Hue-preserving tone-curve lift applied AFTER {@link brighten} (below 1
+   * lifts the mids and darks the way a display gamma does, while a per-channel
+   * clip guard keeps highlights from washing past white — the same curve the
+   * UI overlay's `gamma` uses). This is the lever the linear `brighten` cannot
+   * express: measured against the polycss reference, raising `brighten` past
+   * ~6.5 lifts the perceived MEAN but clips/compresses the perceived RANGE
+   * (channel clamp turns brights flat yellow) — the curve instead spends its
+   * lift on the mids and holds the top end. `?glyphGamma=` overrides.
+   */
+  readonly gamma?: number;
+  /**
+   * Levels applied to the tone curve's target luminance:
+   * `t' = (t - blackPoint) / (whitePoint - blackPoint)`, clamped 0..1.
+   * The black point crushes the near-black floor to true black and the white
+   * point pushes the brightest surfaces to full — the dynamic-range stretch
+   * `brighten`/`gamma` cannot express (both only ever LIFT, so the whole
+   * frame drifts into one midtone band). Defaults 0/1 = off.
+   * `?glyphBlack=` / `?glyphWhite=`.
+   */
+  readonly blackPoint?: number;
+  readonly whitePoint?: number;
+  /**
+   * `-webkit-text-stroke` width (px) applied to the overlay's glyph output.
+   * ASCII letterforms ink only a fraction of their cell, so the same colours
+   * read far darker than a solid render — measured against the polycss
+   * reference, a sub-pixel stroke raises perceived luminance ~50% while
+   * preserving hue, where pushing colour lift alone clips. 0 disables.
+   * `?glyphStroke=` overrides.
+   */
+  readonly strokePx?: number;
   /** Ambient light (the floor of brightness; baked colours are the truth). `?glyphAmbient=`. */
   readonly ambientLight?: number;
   /** Directional light intensity (orientation shading for ASCII shape). `?glyphDir=`. */
@@ -144,9 +185,15 @@ export interface QuakeGlyphEntityTransform {
   depthBias?: number;
   /** Per-entity glyph detail multiplier (overrides the overlay's default). */
   density?: number;
-  /** Never occluded by the world (glyphcss `transparent`). Quake draws the
-   *  viewmodel after a depth clear, so the gun is never swallowed by the wall
-   *  the player is standing against — mirror that here. */
+  /** Never occluded by the world — but OCCLUDING it. Quake draws the viewmodel
+   *  after a depth clear: the gun is never swallowed by the wall the player is
+   *  standing against, yet the world IS hidden behind the gun. Implemented via
+   *  glyphcss `occlusionPriority` (the mesh stays opaque and claims its cells
+   *  in the shared occlusion id-map regardless of depth), so the gun's real
+   *  triangle silhouette punches the world exactly like any entity — one
+   *  directional, unlike the old `transparent` mapping which removed the gun
+   *  from occlusion entirely and let the world show through it. Falls back to
+   *  `transparent` when the entity has no detail layer (entityDensity=1). */
   neverOccluded?: boolean;
 }
 
@@ -194,6 +241,17 @@ export interface QuakeGlyphWorldOverlay {
   setEntityTransform(id: string, transform: QuakeGlyphEntityTransform): boolean;
   /** Remove an entity mesh. */
   removeEntity(id: string): void;
+  /**
+   * Feed the UI overlay's opaque coverage (its `getOpaqueCoverage()` result)
+   * into this scene as a FOREIGN occluder: the world — base grid, entity
+   * detail layers and the viewmodel alike — blanks its cells under the Esc
+   * menu's segmented art, the HUD and the crosshair, exactly the way the
+   * landing backdrop blanks under the menu art. This is what joins the two
+   * stacked glyph scenes into ONE occlusion domain. `null` clears (menu/HUD
+   * gone). Schedules a render itself — the game may be paused under the menu,
+   * so waiting for the next camera sync would freeze a stale frame.
+   */
+  setUiOcclusion(coverage: GlyphOcclusionCoverage | null): void;
   /** Diagnostic: render an exact frozen view (used by the flicker probes). */
   setFixedView(eyeX: number, eyeY: number, eyeZ: number, rotX: number, rotY: number): void;
   setVisible(visible: boolean): void;
@@ -223,6 +281,23 @@ export interface QuakeGlyphWorldOverlay {
   setCellPx(cellPx: number): void;
   /** Current character cell size in px (= the `<pre>` font size). */
   getCellPx(): number;
+  /**
+   * Live re-tune of the colour/light pipeline — the `?debug` tuning panel's
+   * entry point. Provided fields replace the current values; the world mesh
+   * and every registered entity are recoloured from their RAW baked colours
+   * (kept for exactly this), the pinned atlas palette retrains, and a frame
+   * is scheduled. No reload, no geometry re-upload.
+   */
+  setTuning(tuning: {
+    brighten?: number;
+    gamma?: number;
+    blackPoint?: number;
+    whitePoint?: number;
+    flat?: number;
+    strokePx?: number;
+    ambientLight?: number;
+    directionalLight?: number;
+  }): void;
   dispose(): void;
 }
 
@@ -232,9 +307,22 @@ export interface QuakeGlyphWorldOverlay {
 const QUAKE_GLYPH_OVERLAY_PERSPECTIVE = 1400;
 const QUAKE_GLYPH_OVERLAY_ZOOM = 50;
 // Quake's baked texture colours are very dark; lift them so the ASCII reads.
-// (Kept modest: supersampling now fills coverage fully, so over-bright colours
-// no longer hide behind sparse sampling — they wash the whole frame out.)
-const QUAKE_GLYPH_OVERLAY_BRIGHTEN = 3.6;
+// Raised from 3.6 when the default glyph set moved from "solid" to the ASCII
+// ramp: a `█` painted the WHOLE cell, so the cell's full area carried the
+// colour, while a letter inks a fraction of it and the black background shows
+// through the rest. Same colours, much lower apparent luminance — so the ramp
+// change has to be paid for here. 6.5 is the measured ceiling before the linear
+// multiply starts clamping bright surfaces to a flat yellow and collapsing the
+// ceiling's tonal separation (a gamma curve would hold highlights better; this
+// stays a straight multiply). `?glyphBright=` overrides.
+const QUAKE_GLYPH_OVERLAY_BRIGHTEN = 6.5;
+// Hue-preserving tone curve applied after the brighten multiply (see the
+// `gamma` option). 0.7, measured against the cssquake.wtf polycss reference
+// at the e1m1 spawn: with the 0.4px stroke it lands the perceived mean on
+// the reference (43 vs 43) where the plain multiply stalled at 29.
+const QUAKE_GLYPH_OVERLAY_GAMMA = 0.7;
+// Sub-pixel glyph stroke (see the `strokePx` option).
+const QUAKE_GLYPH_OVERLAY_STROKE_PX = 0.4;
 // Depth-test deadband for near-coplanar world surfaces (see scene `depthEpsilon`).
 // Default OFF: the real grazing-angle z-fighting came from glyphcss dropping the
 // perspective-correct zbuf under supersampling (cssQuake runs SS=2), which is now
@@ -370,7 +458,46 @@ export function createQuakeGlyphWorldOverlay(
   // entity should be in the world. `?glyphEntityOutline=1`.
   const entityOutline = options.entityOutline ?? false;
   const temporalBlend = Math.max(0, Math.min(0.9, options.temporalBlend ?? 0));
-  const brighten = options.brighten ?? QUAKE_GLYPH_OVERLAY_BRIGHTEN;
+  // `let`, not `const`: setTuning() swaps these live and recolours the meshes.
+  let brighten = options.brighten ?? QUAKE_GLYPH_OVERLAY_BRIGHTEN;
+  let gamma = Math.min(1, Math.max(0.2, options.gamma ?? QUAKE_GLYPH_OVERLAY_GAMMA));
+  // Levels on the curve's target luminance — see the option docs.
+  let blackPoint = Math.min(0.5, Math.max(0, options.blackPoint ?? 0));
+  let whitePoint = Math.min(1, Math.max(blackPoint + 0.05, options.whitePoint ?? 1));
+  // Memoized (the sources are palettized Quake art: tens of thousands of polys,
+  // a few hundred distinct colours, stable across frames — same rationale as
+  // the UI overlay's lift cache).
+  const toneCache = new Map<string, string>();
+  const toneHex = (hex: string): string => {
+    if (gamma >= 1 && blackPoint <= 0 && whitePoint >= 1) return hex;
+    let lifted = toneCache.get(hex);
+    if (lifted === undefined) {
+      const match = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex);
+      if (!match) return hex;
+      const r = parseInt(match[1]!, 16);
+      const g = parseInt(match[2]!, 16);
+      const b = parseInt(match[3]!, 16);
+      const luma = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+      if (luma <= 0) lifted = hex;
+      else {
+        // Target luminance: the gamma curve's output, then the levels stretch
+        // (black point crushes the floor, white point pushes the top). Scale
+        // toward it, but never past the point where the largest channel would
+        // clip — the guard that keeps bright surfaces from washing to flat
+        // yellow/white.
+        const t = Math.min(1, Math.max(0,
+          (Math.pow(luma / 255, gamma) - blackPoint) / (whitePoint - blackPoint)));
+        const scale = Math.min(
+          (255 * t) / luma,
+          255 / Math.max(r, g, b),
+        );
+        const h = (v: number) => Math.round(v * scale).toString(16).padStart(2, "0");
+        lifted = `#${h(r)}${h(g)}${h(b)}`;
+      }
+      toneCache.set(hex, lifted);
+    }
+    return lifted;
+  };
   const ambientLight = options.ambientLight ?? 0.5;
   const directionalLight = options.directionalLight ?? 0.6;
   const depthEpsilon = Math.max(0, Math.min(0.1, options.depthEpsilon ?? QUAKE_GLYPH_OVERLAY_DEPTH_EPSILON));
@@ -378,7 +505,7 @@ export function createQuakeGlyphWorldOverlay(
   // floor scrolls. Blending each colour toward a common tone by `flatten` (0..1)
   // collapses adjacent faces toward the same colour → the crawl can't show. The
   // glyph char (lighting) still gives shape. Tunable via `?glyphFlat=`.
-  const flatten = Math.max(0, Math.min(1, options.flat ?? 0));
+  let flatten = Math.max(0, Math.min(1, options.flat ?? 0));
   // PolyCSS first-person controls define the look target this far in front of
   // the eye, independent of zoom. Mirror that when a live target is not supplied
   // (fixed-view/debug paths).
@@ -395,6 +522,12 @@ export function createQuakeGlyphWorldOverlay(
   element.style.overflow = "hidden";
   element.style.background = "#000";
   element.style.fontFamily = '"Menlo", "Consolas", monospace';
+  // Coverage, not colour: ASCII ink fills ~a third of a cell, so the same
+  // colours read far darker than polycss's solid raster. The sub-pixel stroke
+  // fattens every letterform (COLR atlas glyphs keep their palette colours;
+  // span-mode strokes inherit each span's own colour via currentColor).
+  const strokePx = Math.max(0, Math.min(2, options.strokePx ?? QUAKE_GLYPH_OVERLAY_STROKE_PX));
+  if (strokePx > 0) element.style.setProperty("-webkit-text-stroke", `${strokePx}px currentColor`);
   element.style.fontSize = `${cellPx}px`;
   element.style.lineHeight = `${lineHeightPx}px`;
   element.style.letterSpacing = "0";
@@ -419,6 +552,7 @@ export function createQuakeGlyphWorldOverlay(
     hiddenLines,
     colorTolerance,
     colorEncoding,
+    fontAtlas: options.fontAtlas,
     useColors: true,
     autoSize: true,
     // Dense intensity ramp (≈70 levels vs the 10-char default) for smooth tonal
@@ -449,6 +583,35 @@ export function createQuakeGlyphWorldOverlay(
     depthEpsilon,
     camera,
   });
+
+  // PINNED atlas palette. The scene's own pooled quantizer trains on whatever
+  // is on screen when its gates open and then holds that palette until enough
+  // drift accumulates — measured here as the "first render" colour bug: the
+  // first world frame encodes against a palette trained during load, and the
+  // colours only snap right after the camera moves. This overlay knows the
+  // map's ENTIRE final colour universe (every polygon runs through the
+  // memoized tone caches above), so it pins a palette quantized over all of
+  // it: correct from the first frame, stable across camera moves, and immune
+  // to the population-weighted highlight crush of view-trained palettes
+  // (each distinct colour votes once — rare brights keep their slots).
+  const paletteBudget = Math.max(1, options.fontAtlas?.maxPaletteSize ?? 68);
+  const paletteColors = new Set<string>();
+  let palettePinnedCount = -1;
+  let paletteTimer = 0;
+  function schedulePinnedAtlasPalette(): void {
+    if (colorEncoding !== "atlas") return;
+    if (paletteColors.size === palettePinnedCount || paletteTimer) return;
+    // Coalesce bursts (world mesh + the initial entity wave) into one rebuild.
+    paletteTimer = window.setTimeout(() => {
+      paletteTimer = 0;
+      if (paletteColors.size === palettePinnedCount) return;
+      palettePinnedCount = paletteColors.size;
+      const colors = [...paletteColors];
+      scene.setOptions({
+        atlasPalette: quantizeGlyphAtlasPalette(colors.map(() => "x"), colors, colors.length, paletteBudget),
+      });
+    }, 100);
+  }
 
   // The scene's autoSize measures the cell box from its <pre> (scene.output), so
   // set the line-height there (not just the container) and re-fit so the row
@@ -482,7 +645,13 @@ export function createQuakeGlyphWorldOverlay(
   let worldLeaves: (number[] | null)[] | null = null;
   let lastVisibleLeaves: Set<number> | null | undefined;
 
+  // Raw (untoned) inputs, kept so setTuning() can recolour without the caller:
+  // the world geometry as handed in, and each entity's last geometry+transform.
+  let lastWorldGeometry: QuakeGlyphWorldGeometry | null = null;
+  const rawEntities = new Map<string, { geometry: QuakeGlyphEntityGeometry; transform: QuakeGlyphEntityTransform }>();
+
   function setGeometry(geometry: QuakeGlyphWorldGeometry | null): void {
+    lastWorldGeometry = geometry;
     if (meshHandle) {
       meshHandle.dispose();
       meshHandle = null;
@@ -494,10 +663,12 @@ export function createQuakeGlyphWorldOverlay(
       scene.rerender();
       return;
     }
-    const polygons: GlyphPolygon[] = geometry.polygons.map((polygon) => ({
-      vertices: polygon.v as Vec3[],
-      color: flattenHex(brightenHex(polygon.c, brighten), flatten),
-    }));
+    const polygons: GlyphPolygon[] = geometry.polygons.map((polygon) => {
+      const color = flattenHex(toneHex(brightenHex(polygon.c, brighten)), flatten);
+      paletteColors.add(color);
+      return { vertices: polygon.v as Vec3[], color };
+    });
+    schedulePinnedAtlasPalette();
     if (pvsVisibleLeavesAt) {
       worldPolys = polygons;
       worldLeaves = geometry.polygons.map((p) => (Array.isArray(p.l) && p.l.length ? p.l : null));
@@ -537,12 +708,15 @@ export function createQuakeGlyphWorldOverlay(
   const entities = new Map<string, GlyphMeshHandle>();
 
   function toGlyphPolygons(geometry: QuakeGlyphEntityGeometry): GlyphPolygon[] {
-    return geometry.polygons.map((polygon) => ({
-      vertices: polygon.v as Vec3[],
+    const polygons = geometry.polygons.map((polygon) => {
       // Entities keep their own colour variation (no world flatten); just lift
       // the dark baked Quake palette like the world does so they read.
-      color: brightenHex(polygon.c, brighten),
-    }));
+      const color = toneHex(brightenHex(polygon.c, brighten));
+      paletteColors.add(color);
+      return { vertices: polygon.v as Vec3[], color };
+    });
+    schedulePinnedAtlasPalette();
+    return polygons;
   }
 
   // Per-mesh detail: render an entity at a higher glyph density than the world
@@ -573,40 +747,99 @@ export function createQuakeGlyphWorldOverlay(
         : (transform.scale as number | undefined),
       ...(transform.depthBias ? { depthBias: transform.depthBias } : {}),
       ...(density ? { density } : {}),
-      ...(transform.neverOccluded || (density && entityTransparent) ? { transparent: true } : {}),
+      // DEBUG `?glyphEntityTransparent=1`: all density entities skip occlusion.
+      ...(density && entityTransparent ? { transparent: true } : {}),
+      // `neverOccluded` (the viewmodel): opaque + cross-layer priority — the
+      // mesh occludes the world but can never be occluded by it (see the
+      // option's doc). Only detail meshes participate in the shared id-map,
+      // so a density-1 config keeps the legacy `transparent` exclusion.
+      ...(transform.neverOccluded
+        ? (density && !entityTransparent ? { occlusionPriority: 1 } : { transparent: true })
+        : {}),
     };
   }
 
+  // ── Staged entity mutations ────────────────────────────────────────────────
+  //
+  // glyphcss coalesces its renders on a MICROTASK (`createGlyphScene.ts`'s
+  // `scheduleRender`), and a microtask checkpoint drains at the end of EVERY
+  // task. Mutating a mesh therefore costs a full rasterize+encode+DOM write for
+  // each task that touches the scene — and Quake touches it from several tasks
+  // per frame: the game loop's rAF, the pointer-look handler, the 30Hz pickup
+  // interval, weapon-fire timeouts. Measured in real gameplay: 3.0 complete
+  // renders per displayed frame, of which only the last is ever painted. The
+  // weapon viewmodel alone accounted for two of them, because it is synced from
+  // both the mousemove path and the game-loop path.
+  //
+  // So mutations are STAGED here and applied inside `renderFrame`, immediately
+  // before `scene.rerender()`. That placement is load-bearing, not tidiness:
+  // `rerender()` bumps glyphcss's `renderGeneration`, which supersedes the
+  // microtask this same task queued — flushing anywhere else (even its own rAF)
+  // leaves that microtask alive and still costs 2 renders per frame.
+  //
+  // Measured effect: 3.00 -> 1.04 renders per frame.
+  type StagedEntity =
+    | { kind: "set"; geometry: QuakeGlyphEntityGeometry | null; transform: QuakeGlyphEntityTransform }
+    | { kind: "transform"; transform: QuakeGlyphEntityTransform }
+    | { kind: "remove" };
+  const staged = new Map<string, StagedEntity>();
+
+  /** Ids that will exist once `staged` is applied — `setEntityTransform` has to
+   *  answer "is this entity registered?" synchronously, and the honest answer is
+   *  about the POST-flush world, not the pre-flush one. Getting this wrong makes
+   *  the caller re-register a live entity every frame. */
+  function stagedEntityExists(id: string): boolean {
+    const pending = staged.get(id);
+    if (pending) return pending.kind === "set" ? !!pending.geometry?.polygons?.length : pending.kind !== "remove";
+    return entities.has(id);
+  }
+
+  function applyStagedEntities(): void {
+    if (!staged.size) return;
+    for (const [id, op] of staged) {
+      const existing = entities.get(id);
+      if (op.kind === "remove") {
+        if (existing) { existing.dispose(); entities.delete(id); }
+        continue;
+      }
+      if (op.kind === "transform") {
+        existing?.setTransform(toMeshTransform(id, op.transform));
+        continue;
+      }
+      if (existing) { existing.dispose(); entities.delete(id); }
+      if (!op.geometry?.polygons?.length) continue;
+      entities.set(id, scene.add(toGlyphPolygons(op.geometry), toMeshTransform(id, op.transform)));
+    }
+    staged.clear();
+  }
+
   function setEntity(id: string, geometry: QuakeGlyphEntityGeometry | null, transform: QuakeGlyphEntityTransform): void {
-    const existing = entities.get(id);
-    if (existing) {
-      existing.dispose();
-      entities.delete(id);
-    }
-    if (!geometry?.polygons?.length) {
-      scheduleRender();
-      return;
-    }
-    entities.set(id, scene.add(toGlyphPolygons(geometry), toMeshTransform(id, transform)));
+    if (geometry?.polygons?.length) rawEntities.set(id, { geometry, transform });
+    else rawEntities.delete(id);
+    staged.set(id, { kind: "set", geometry, transform });
     scheduleRender();
   }
 
   function setEntityTransform(id: string, transform: QuakeGlyphEntityTransform): boolean {
-    const handle = entities.get(id);
     // No mesh under this id: report it instead of silently doing nothing, so the
     // caller can re-register. A silent no-op here turns any transient drop into a
     // permanent one — the entity freezes/vanishes and never recovers.
-    if (!handle) return false;
-    handle.setTransform(toMeshTransform(id, transform));
+    if (!stagedEntityExists(id)) return false;
+    const pending = staged.get(id);
+    // A staged `set` already carries this frame's geometry; only update its
+    // transform so a later transform in the same frame can't drop the geometry.
+    if (pending?.kind === "set") pending.transform = transform;
+    else staged.set(id, { kind: "transform", transform });
+    const raw = rawEntities.get(id);
+    if (raw) raw.transform = transform;
     scheduleRender();
     return true;
   }
 
   function removeEntity(id: string): void {
-    const handle = entities.get(id);
-    if (!handle) return;
-    handle.dispose();
-    entities.delete(id);
+    rawEntities.delete(id);
+    if (!stagedEntityExists(id)) return;
+    staged.set(id, { kind: "remove" });
     scheduleRender();
   }
 
@@ -670,7 +903,14 @@ export function createQuakeGlyphWorldOverlay(
     pendingFrame = 0;
     // In "poly" composite the overlay is hidden (you see polycss underneath), so
     // skip the expensive rasterize entirely — the camera still syncs cheaply.
-    if (composite === "poly") return;
+    if (composite === "poly") {
+      // Still apply staged mutations: the scene is hidden, not frozen, and
+      // dropping them here would leave entity state stale until the next glyph
+      // frame — a monster that moved while you were in poly composite would
+      // teleport on the way back.
+      applyStagedEntities();
+      return;
+    }
     // First real (game-driven) frame is guaranteed post-layout: re-measure the
     // cell so the projection uses the true cell size, not the BASE_TILE fallback
     // (a stale pre-layout measurement blows the FOV out — see the fit below).
@@ -681,6 +921,9 @@ export function createQuakeGlyphWorldOverlay(
     camera.rotX = latestRotX;
     camera.rotY = latestRotY;
     camera.target = latestTarget ?? derivedTarget();
+    // Before rerender(), so this task's own queued microtask render is superseded
+    // rather than run in addition to it. See the staging note above.
+    applyStagedEntities();
     applyPvsCull();
     scene.rerender();
     if (readout) {
@@ -691,7 +934,7 @@ export function createQuakeGlyphWorldOverlay(
       readout.textContent =
         `eye  ${f(latestEye[0])}, ${f(latestEye[1])}, ${f(latestEye[2])}\n` +
         `rotX ${f(latestRotX)}  rotY ${f(latestRotY)}\n` +
-        `?glyphView=${lastGlyphView}   (click → copy full URL)`;
+        `?glyphView=${lastGlyphView}   (click -> copy full URL)`;
     }
   }
   // Coalesce renders to at most one per animation frame: the camera is applied
@@ -702,6 +945,17 @@ export function createQuakeGlyphWorldOverlay(
   function scheduleRender(): void {
     if (!pendingFrame) pendingFrame = window.requestAnimationFrame(renderFrame);
   }
+  function setUiOcclusion(coverage: GlyphOcclusionCoverage | null): void {
+    // Linked-dev version skew: a dev server whose prebundled glyphcss predates
+    // `setForeignOcclusion` degrades to the old no-punch compositing instead of
+    // throwing on every UI publish.
+    if (typeof scene.setForeignOcclusion !== "function") return;
+    scene.setForeignOcclusion(coverage);
+    // The Esc menu pauses the game — no camera syncs arrive, so this mutation
+    // must drive its own frame or the punched/unpunched world never repaints.
+    scheduleRender();
+  }
+
   function syncCamera(eye: Vec3, rotX: number, rotY: number, target?: Vec3): void {
     // In fixed-view mode the player camera is ignored; render the frozen view
     // once so the readout/output reflect exactly the requested coordinates.
@@ -785,6 +1039,61 @@ export function createQuakeGlyphWorldOverlay(
     return cellPx;
   }
 
+  // Live colour/light re-tune — see the interface doc. The heavy part is the
+  // recolour: every world polygon and entity polygon re-runs the (memoized)
+  // tone pipeline from its RAW baked colour, and the pinned atlas palette
+  // retrains over the new colour universe. Called from the `?debug` tuning
+  // panel only, at human slider speed.
+  function setTuning(tuning: {
+    brighten?: number;
+    gamma?: number;
+    blackPoint?: number;
+    whitePoint?: number;
+    flat?: number;
+    strokePx?: number;
+    ambientLight?: number;
+    directionalLight?: number;
+  }): void {
+    if (tuning.brighten !== undefined) brighten = Math.max(0.1, tuning.brighten);
+    if (tuning.gamma !== undefined) gamma = Math.min(1, Math.max(0.2, tuning.gamma));
+    if (tuning.blackPoint !== undefined) blackPoint = Math.min(0.5, Math.max(0, tuning.blackPoint));
+    if (tuning.whitePoint !== undefined) whitePoint = Math.min(1, tuning.whitePoint);
+    whitePoint = Math.max(blackPoint + 0.05, whitePoint);
+    if (tuning.flat !== undefined) flatten = Math.max(0, Math.min(1, tuning.flat));
+    if (tuning.strokePx !== undefined) {
+      const px = Math.max(0, Math.min(2, tuning.strokePx));
+      if (px > 0) element.style.setProperty("-webkit-text-stroke", `${px}px currentColor`);
+      else element.style.removeProperty("-webkit-text-stroke");
+    }
+    if (tuning.ambientLight !== undefined || tuning.directionalLight !== undefined) {
+      scene.setOptions({
+        ...(tuning.ambientLight !== undefined
+          ? { ambientLight: { intensity: Math.max(0, tuning.ambientLight) } }
+          : {}),
+        ...(tuning.directionalLight !== undefined
+          ? { directionalLight: { intensity: Math.max(0, tuning.directionalLight), direction: [-0.4, -0.55, -0.65] as Vec3 } }
+          : {}),
+      });
+    }
+    const recolour =
+      tuning.brighten !== undefined || tuning.gamma !== undefined ||
+      tuning.blackPoint !== undefined || tuning.whitePoint !== undefined ||
+      tuning.flat !== undefined;
+    if (recolour) {
+      toneCache.clear();
+      // Retrain the pinned palette over the NEW colour universe: the old
+      // colours are stale, and keeping them would both waste slots and let
+      // `palettePinnedCount` short-circuit the rebuild.
+      paletteColors.clear();
+      palettePinnedCount = -1;
+      if (lastWorldGeometry) setGeometry(lastWorldGeometry);
+      for (const [id, raw] of rawEntities) {
+        staged.set(id, { kind: "set", geometry: raw.geometry, transform: raw.transform });
+      }
+    }
+    scheduleRender();
+  }
+
   // Mode/encoding are scene options too, so braille can be toggled live from the
   // console: `__quakeGlyph.setCharMode("braille")`.
   function setCharMode(next: QuakeGlyphCharMode): void {
@@ -817,6 +1126,10 @@ export function createQuakeGlyphWorldOverlay(
 
   function dispose(): void {
     if (pendingFrame) { window.cancelAnimationFrame(pendingFrame); pendingFrame = 0; }
+    if (paletteTimer) { window.clearTimeout(paletteTimer); paletteTimer = 0; }
+    // Drop staged ops rather than flushing them: the render that would have
+    // applied them is cancelled above, and `scene.destroy()` follows.
+    staged.clear();
     for (const handle of entities.values()) handle.dispose();
     entities.clear();
     meshHandle?.dispose();
@@ -831,9 +1144,9 @@ export function createQuakeGlyphWorldOverlay(
   setComposite(composite);
 
   const overlay: QuakeGlyphWorldOverlay = {
-    element, setGeometry, syncCamera, setEntity, setEntityTransform, removeEntity, setFixedView,
+    element, setGeometry, syncCamera, setEntity, setEntityTransform, removeEntity, setUiOcclusion, setFixedView,
     setVisible, setComposite, getComposite, setGlyphPalette, getGlyphPalette,
-    setCharMode, getCharMode, setSceneMode, getSceneMode, setCellPx, getCellPx, dispose,
+    setCharMode, getCharMode, setSceneMode, getSceneMode, setCellPx, getCellPx, setTuning, dispose,
   };
   // Dev-only: expose for the flicker probes / coordinate / entity debugging.
   if (import.meta.env?.DEV) {
