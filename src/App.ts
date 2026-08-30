@@ -16,7 +16,6 @@ import { createQuakeMenuSceneManifest } from "./runtime/render/menuSceneManifest
 import {
   adaptQuakeUiDensitiesToDisplay,
   QUAKE_GLYPH_UI_TUNING_KNOBS,
-  QUAKE_GLYPH_WEAPON_TUNING_KNOBS,
   QUAKE_GLYPH_WORLD_TUNING_KNOBS,
   readQuakeGlyphTuningValues,
   type QuakeGlyphTuningValues,
@@ -33,11 +32,9 @@ import { getQuakeMenuSceneState, updateQuakeMenuSceneState, updateQuakeMenuScene
 import { GLYPH_FONT_ATLAS_ASCII } from "glyphcss";
 import {
   createQuakeGlyphWorldOverlay,
-  createQuakeGlyphWeaponOverlay,
   QUAKE_GLYPH_OVERLAY_CELL_PX,
   type QuakeGlyphColorEncoding,
   type QuakeGlyphComposite,
-  type QuakeGlyphWeaponOverlay,
   type QuakeGlyphWorldOverlay,
 } from "./runtime/render/glyphWorldOverlay";
 import { QUAKE_RENDER_SUPERSAMPLE } from "./prepare/scene";
@@ -1355,7 +1352,6 @@ const quakeGlyphFontAtlas = quakeStartupUrlParams.get("glyphAtlas") === "univers
 // tuning panel builds its sliders from (see glyphTuningSpec.ts).
 const quakeWorldGlyphTuning = readQuakeGlyphTuningValues(QUAKE_GLYPH_WORLD_TUNING_KNOBS, quakeStartupUrlParams);
 const quakeUiGlyphTuning = readQuakeGlyphTuningValues(QUAKE_GLYPH_UI_TUNING_KNOBS, quakeStartupUrlParams);
-const quakeGlyphWeaponTuning = readQuakeGlyphTuningValues(QUAKE_GLYPH_WEAPON_TUNING_KNOBS, quakeStartupUrlParams);
 // Viewport/DPR adaptation for the per-element densities (mobile fix,
 // 2026-08): on displays whose base cell is smaller in DEVICE px than the
 // 1600x900/DPR-2 tuning display, scale the un-pinned densities down so each
@@ -1530,76 +1526,6 @@ const quakeGlyphOverlay: QuakeGlyphWorldOverlay | null =
         ),
       })
     : null;
-
-// Dedicated first-person weapon glyph scene. A near-field viewmodel cannot
-// live in the world camera (glyphcss clips eyeDepth<=0; scale/reach cancel).
-// This overlay mirrors the raster weapon stage's projection and is stacked
-// over the world (inside #quake-weapon, z-index 2). The world overlay is
-// untouched — pickups/enemies/movers still register there.
-const quakeGlyphWeaponCellPinned = quakeUrlNumberParam(quakeStartupUrlParams, "glyphWeaponCell", 6, 40);
-const quakeGlyphWeaponOverlay: QuakeGlyphWeaponOverlay | null =
-  quakeRenderMode === "glyphcss"
-    ? (() => {
-        const hostEl = document.createElement("div");
-        hostEl.style.cssText =
-          "position:absolute;inset:0;pointer-events:none;overflow:hidden;background:transparent";
-        weapon.appendChild(hostEl);
-        return createQuakeGlyphWeaponOverlay({
-          host: hostEl,
-          fontAtlas: quakeGlyphFontAtlas,
-          perspective: quakeUrlNumberParam(quakeStartupUrlParams, "glyphWeaponPersp", 100, 4000) ?? undefined,
-          zoom: quakeUrlNumberParam(quakeStartupUrlParams, "glyphWeaponZoom", 0.01, 500)
-            ?? quakeUrlNumberParam(quakeStartupUrlParams, "glyphZoom", 0.01, 500)
-            ?? quakeCameraViewConfig.zoom,
-          fovScale: quakeUrlNumberParam(quakeStartupUrlParams, "glyphWeaponFovScale", 0.1, 10) ?? undefined,
-          cameraBackoffPx: quakeUrlNumberParam(quakeStartupUrlParams, "glyphWeaponBackoff", 0, 4000) ?? undefined,
-          center: (() => {
-            const x = quakeUrlNumberParam(quakeStartupUrlParams, "glyphWeaponCenterX", 0, 1);
-            const y = quakeUrlNumberParam(quakeStartupUrlParams, "glyphWeaponCenterY", 0, 1);
-            return x !== null && y !== null ? [x, y] as const : undefined;
-          })(),
-          cellPx: quakeGlyphWeaponCellPinned
-            ?? quakeUrlNumberParam(quakeStartupUrlParams, "glyphCell", 6, 40)
-            ?? quakeGlyphCellForBudget(quakeGlyphDetailBudget),
-          lineHeight: quakeUrlNumberParam(quakeStartupUrlParams, "glyphLine", 4, 40) ?? undefined,
-          glyphPalette: resolveQuakeGlyphPalette(),
-          charMode: sanitizeQuakeGlyphCharMode(quakeStartupUrlParams.get("glyphCharMode")),
-          sceneMode: sanitizeQuakeGlyphSceneMode(quakeStartupUrlParams.get("glyphSceneMode")),
-          colorTolerance: quakeUrlNumberParam(quakeStartupUrlParams, "glyphColorTolerance", 0, 765) ?? undefined,
-          colorEncoding: ((e): QuakeGlyphColorEncoding | undefined =>
-            e === "atlas" || e === "spans" ? e : undefined)(
-            quakeStartupUrlParams.get("glyphColorEncoding"),
-          ),
-          supersample: quakeUrlNumberParam(quakeStartupUrlParams, "ssaa", 1, 4) ?? undefined,
-          brighten: quakeWorldGlyphTuning.brighten,
-          gamma: quakeWorldGlyphTuning.gamma,
-          blackPoint: quakeWorldGlyphTuning.black,
-          whitePoint: quakeWorldGlyphTuning.white,
-          strokePx: quakeWorldGlyphTuning.stroke,
-          ambientLight: quakeWorldGlyphTuning.ambient,
-          directionalLight: quakeWorldGlyphTuning.dir,
-        });
-      })()
-    : null;
-if (quakeStartupUrlParams.get("glyphComposite") === "poly") {
-  quakeGlyphWeaponOverlay?.setVisible(false);
-}
-if (quakeGlyphWeaponOverlay) {
-  // Align the panel's live values with what we actually constructed (zoom
-  // follows the world camera; cell follows the world grid unless pinned;
-  // density follows entity density, which is 3 on high-DPI).
-  quakeGlyphWeaponTuning.zoom = quakeUrlNumberParam(quakeStartupUrlParams, "glyphWeaponZoom", 0.01, 500)
-    ?? quakeUrlNumberParam(quakeStartupUrlParams, "glyphZoom", 0.01, 500)
-    ?? quakeCameraViewConfig.zoom;
-  quakeGlyphWeaponTuning.cell = quakeGlyphWeaponCellPinned
-    ?? quakeUrlNumberParam(quakeStartupUrlParams, "glyphCell", 6, 40)
-    ?? quakeGlyphCellForBudget(quakeGlyphDetailBudget);
-  quakeGlyphWeaponTuning.density = quakeUrlNumberParam(quakeStartupUrlParams, "glyphWeaponDensity", 1, 4)
-    ?? quakeUrlNumberParam(quakeStartupUrlParams, "glyphEntityDensity", 1, 4)
-    ?? (window.devicePixelRatio >= 1.5 ? 3 : 2);
-}
-let quakeApplyGlyphWeaponTuning: ((v: QuakeGlyphTuningValues) => void) | null = null;
-
 // The menu's sprite art AND text rendered as ONE ASCII image: every sprite is a
 // textured quad in a single glyphcss scene, layered along Z and composited by
 // the rasterizer's depth test. The scene manifest below is ALSO the menu
@@ -1647,15 +1573,12 @@ function mountQuakeGlyphUiOverlay(t: QuakeGlyphTuningValues): void {
   quakeGlyphUiOverlayHandle?.dispose();
   quakeGlyphUiOverlayHandle = createQuakeGlyphUiOverlay({
     host: quakeGlyphUiHost,
-    // ONE occlusion domain across the stacked scenes: the UI scene
+    // ONE occlusion domain across the two stacked scenes: the UI scene
     // publishes its opaque coverage (Esc menu art, HUD, crosshair) after
-    // every render, and both the world and the dedicated weapon scene
-    // blank their cells under it — the same effect the landing gets from
-    // backdrop + art sharing a scene.
-    onCoverage: (coverage) => {
-      quakeGlyphOverlay?.setUiOcclusion(coverage);
-      quakeGlyphWeaponOverlay?.setUiOcclusion(coverage);
-    },
+    // every render, and the world scene blanks its cells under it — the
+    // same effect the landing gets from backdrop + art sharing a scene.
+    // The viewmodel yields too (it is part of the world scene).
+    onCoverage: (coverage) => quakeGlyphOverlay?.setUiOcclusion(coverage),
     // The declarative menu scene: every screen, its text and the chrome
     // render from this manifest + the shared menu scene state. No DOM reads.
     menu: createQuakeMenuSceneManifest({
@@ -1892,31 +1815,7 @@ if (quakeStartupUrlParams.has("debug")) {
                 ambientLight: v.ambient,
                 directionalLight: v.dir,
               });
-              quakeGlyphWeaponOverlay?.setTuning({
-                brighten: v.brighten,
-                gamma: v.gamma,
-                blackPoint: v.black,
-                whitePoint: v.white,
-                strokePx: v.stroke,
-                ambientLight: v.ambient,
-                directionalLight: v.dir,
-              });
               quakeGlyphOverlay.setCellPx(v.cell);
-              if (quakeGlyphWeaponCellPinned === null) quakeGlyphWeaponOverlay?.setCellPx(v.cell);
-            },
-          }]
-        : []),
-      ...(quakeGlyphWeaponOverlay
-        ? [{
-            title: "Weapon stage",
-            knobs: QUAKE_GLYPH_WEAPON_TUNING_KNOBS,
-            values: quakeGlyphWeaponTuning,
-            defaults: { ...quakeGlyphWeaponTuning },
-            debounceMs: 120,
-            apply: (v: QuakeGlyphTuningValues) => {
-              quakeGlyphWeaponOverlay.setCellPx(v.cell);
-              quakeGlyphWeaponOverlay.setProjection({ zoom: v.zoom });
-              quakeApplyGlyphWeaponTuning?.(v);
             },
           }]
         : []),
@@ -1977,7 +1876,6 @@ if (quakeGlyphOverlay) {
       (quakeGlyphCompositeCycle.indexOf(current) + 1) % quakeGlyphCompositeCycle.length
     ]!;
     quakeGlyphOverlay!.setComposite(next);
-    quakeGlyphWeaponOverlay?.setVisible(next !== "poly");
     showQuakeGlyphCompositeToast(next);
   });
 }
@@ -2122,10 +2020,11 @@ quakeCameraView.compactCameraInlineStyle();
 // update funnels through. The polycss first-person controls call applyCamera()
 // directly on locked mouse-look (bypassing the app's camera flow), so wrapping
 // applyCamera is the only hook that catches both look and movement.
-// The glyph weapon lives in a local screen-space scene, but bob/punch still
-// need a live tick on camera updates (incl. direct mouse-look applyCamera).
+// The glyph weapon is a world-space entity at eye+offset, so it must re-sync on
+// EVERY camera update — including the direct mouse-look applyCamera calls below.
 // `viewmodel` is created later, so route through a mutable hook set after it
-// exists.
+// exists; without this the gun is only re-synced by the game-loop syncTransform,
+// so it visibly lags behind / "detaches" during pure mouse-look and snaps back.
 let quakeGlyphSyncWeapon: (() => void) | null = null;
 if (quakeGlyphOverlay) {
   const applyPolyCamera = scene.applyCamera.bind(scene);
@@ -2519,55 +2418,16 @@ viewmodel = createQuakeViewmodelController({
   getRenderOrigin: quakeCameraView.currentRenderOrigin,
   host,
   layer: weapon,
-  // Dedicated glyph weapon scene (own camera). Must not be the world overlay —
-  // a shared world camera clips the near-field model.
-  glyphWeaponOverlay: quakeGlyphWeaponOverlay ?? undefined,
+  // In glyphcss mode the weapon renders as ASCII in the world overlay's entity
+  // layer instead of the polycss carrier.
+  glyphEntitySink: quakeGlyphOverlay ?? undefined,
   renderModeIsGlyph: () => quakeRenderMode === "glyphcss",
-  glyphWeaponScale: quakeUrlNumberParam(quakeStartupUrlParams, "glyphWeaponScale", 0.01, 20) ?? undefined,
-  glyphWeaponReach: quakeUrlNumberParam(quakeStartupUrlParams, "glyphWeaponReach", 0.02, 20) ?? undefined,
-  glyphWeaponRoll: quakeUrlNumberParam(quakeStartupUrlParams, "glyphWeaponRoll", -180, 180) ?? undefined,
-  glyphWeaponBackoff: quakeUrlNumberParam(quakeStartupUrlParams, "glyphWeaponBackoff", 0, 4000) ?? undefined,
-  glyphWeaponLocalY: quakeUrlNumberParam(quakeStartupUrlParams, "glyphWeaponLocalY", -500, 500) ?? undefined,
-  glyphWeaponPivotX: quakeUrlNumberParam(quakeStartupUrlParams, "glyphWeaponPivotX", -500, 500) ?? undefined,
-  glyphWeaponPivotY: quakeUrlNumberParam(quakeStartupUrlParams, "glyphWeaponPivotY", -500, 500) ?? undefined,
-  glyphWeaponPivotZ: quakeUrlNumberParam(quakeStartupUrlParams, "glyphWeaponPivotZ", -500, 500) ?? undefined,
-  glyphWeaponScreenX: quakeUrlNumberParam(quakeStartupUrlParams, "glyphWeaponScreenX", -500, 500) ?? undefined,
-  glyphWeaponScreenY: quakeUrlNumberParam(quakeStartupUrlParams, "glyphWeaponScreenY", -500, 500) ?? undefined,
-  glyphWeaponScreenScaleX: quakeUrlNumberParam(quakeStartupUrlParams, "glyphWeaponScreenScaleX", 0.01, 20) ?? undefined,
-  glyphWeaponScreenScaleY: quakeUrlNumberParam(quakeStartupUrlParams, "glyphWeaponScreenScaleY", 0.01, 20) ?? undefined,
-  glyphWeaponStageOffset: quakeUrlNumberParam(quakeStartupUrlParams, "glyphWeaponStageOffset", -500, 500) ?? undefined,
-  glyphWeaponDensity: quakeUrlNumberParam(quakeStartupUrlParams, "glyphWeaponDensity", 1, 4)
-    ?? quakeUrlNumberParam(quakeStartupUrlParams, "glyphEntityDensity", 1, 4)
-    ?? (window.devicePixelRatio >= 1.5 ? 3 : 2),
-  glyphWeaponFovScale: quakeUrlNumberParam(quakeStartupUrlParams, "glyphWeaponFovScale", 0.1, 10) ?? undefined,
-  glyphWeaponCenterX: quakeUrlNumberParam(quakeStartupUrlParams, "glyphWeaponCenterX", 0, 1) ?? undefined,
-  glyphWeaponCenterY: quakeUrlNumberParam(quakeStartupUrlParams, "glyphWeaponCenterY", 0, 1) ?? undefined,
-  glyphWeaponPersp: quakeUrlNumberParam(quakeStartupUrlParams, "glyphWeaponPersp", 100, 4000) ?? undefined,
-  glyphWeaponZoom: quakeUrlNumberParam(quakeStartupUrlParams, "glyphWeaponZoom", 0.01, 500) ?? undefined,
+  glyphWeaponScale: quakeUrlNumberParam(quakeStartupUrlParams, "glyphWeaponScale", 0.01, 2) ?? undefined,
+  glyphWeaponReach: quakeUrlNumberParam(quakeStartupUrlParams, "glyphWeaponReach", 0.02, 1) ?? undefined,
 });
-// Now that the viewmodel exists, re-sync the glyph weapon on every camera
-// update (bob/punch). Looking around no longer orbits the gun — the dedicated
-// scene is a local screen-space frame — but punch/bob still need a live tick.
+// Now that the viewmodel exists, let the camera chokepoint re-sync the glyph
+// weapon on every camera update (incl. direct mouse-look) so it tracks the view.
 if (quakeGlyphOverlay) quakeGlyphSyncWeapon = () => viewmodel.syncTransform();
-quakeApplyGlyphWeaponTuning = (v) => {
-  viewmodel.setGlyphWeaponTuning({
-    scale: v.scale,
-    reach: v.reach,
-    density: v.density,
-    zoom: v.zoom,
-    roll: v.roll,
-    backoff: v.backoff,
-    localY: v.localY,
-    pivotX: v.pivotX,
-    pivotY: v.pivotY,
-    pivotZ: v.pivotZ,
-    screenX: v.screenX,
-    screenY: v.screenY,
-    screenScaleX: v.screenScaleX,
-    screenScaleY: v.screenScaleY,
-    stageOffset: v.stageOffset,
-  });
-};
 const quakeViewmodelAssets = createQuakeViewmodelAssetFlow({
   activeWeapon: () => player?.inventory().activeWeapon ?? null,
   assetManifest: quakeAssetCatalog.manifest,
@@ -3634,7 +3494,6 @@ function cycleQuakeGlyphDetail(direction: number): void {
   // the choice in the URL (still shareable, still the reload seed) WITHOUT
   // navigating, mirroring how the glyph set swaps without a reload.
   quakeGlyphOverlay.setCellPx(nextCell);
-  if (quakeGlyphWeaponCellPinned === null) quakeGlyphWeaponOverlay?.setCellPx(nextCell);
   window.history.replaceState(window.history.state, "", url);
 }
 
@@ -3656,7 +3515,6 @@ function cycleQuakeGlyphPalette(direction: number): void {
   // Live swap — the ramp is a scene option, so no reload (unlike ASCII detail,
   // which changes the cell size and rebuilds the grid).
   quakeGlyphOverlay?.setGlyphPalette(next.palette);
-  quakeGlyphWeaponOverlay?.setGlyphPalette(next.palette);
 }
 
 function setQuakeRenderMode(glyph: boolean): void {
@@ -6384,9 +6242,7 @@ function handleViewportResize(): void {
   // unchanged "Normal" label — the exact stutter this budget exists to stop.
   // A pinned `?glyphCell=` opts out and keeps its literal px.
   if (quakeGlyphOverlay && !quakeGlyphCellIsPinned()) {
-    const nextCell = quakeGlyphCellForBudget(quakeGlyphDetailBudget);
-    quakeGlyphOverlay.setCellPx(nextCell);
-    if (quakeGlyphWeaponCellPinned === null) quakeGlyphWeaponOverlay?.setCellPx(nextCell);
+    quakeGlyphOverlay.setCellPx(quakeGlyphCellForBudget(quakeGlyphDetailBudget));
   }
 }
 
@@ -6431,7 +6287,6 @@ function disposeQuakeApp(): void {
   menu.dispose();
   audio.dispose();
   quakeStatsOverlay.hide();
-  quakeGlyphWeaponOverlay?.dispose();
   quakeSceneMount.disposeCurrentScene();
 }
 

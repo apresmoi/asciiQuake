@@ -257,30 +257,6 @@ export const QUAKE_GLYPH_WORLD_TUNING_KNOBS: readonly QuakeGlyphTuningKnob[] = [
   { key: "cell", param: "glyphCell", label: "cell px (detail)", min: 6, max: 40, step: 1, def: 12, group: "World grid" },
 ] as const;
 
-/**
- * Dedicated glyph weapon-stage knobs. Projection overrides
- * (fovScale, center, persp) are URL-only in App.ts — 0/absent means "mirror
- * the raster stage" and a slider would pin a literal over that auto.
- */
-export const QUAKE_GLYPH_WEAPON_TUNING_KNOBS: readonly QuakeGlyphTuningKnob[] = [
-  { key: "scale", param: "glyphWeaponScale", label: "weapon scale", min: 0.01, max: 20, step: 0.01, def: 1, group: "Weapon stage" },
-  { key: "reach", param: "glyphWeaponReach", label: "weapon reach", min: 0.02, max: 20, step: 0.01, def: 1, group: "Weapon stage" },
-  { key: "roll", param: "glyphWeaponRoll", label: "weapon local roll", min: -180, max: 180, step: 0.5, def: 13, group: "Weapon stage" },
-  { key: "backoff", param: "glyphWeaponBackoff", label: "weapon camera backoff", min: 0, max: 4000, step: 5, def: 310, group: "Weapon stage" },
-  { key: "localY", param: "glyphWeaponLocalY", label: "weapon local Y px", min: -500, max: 500, step: 1, def: -25, group: "Weapon pose" },
-  { key: "pivotX", param: "glyphWeaponPivotX", label: "weapon pivot X px", min: -500, max: 500, step: 1, def: 0, group: "Weapon pose" },
-  { key: "pivotY", param: "glyphWeaponPivotY", label: "weapon pivot Y px", min: -500, max: 500, step: 1, def: 0, group: "Weapon pose" },
-  { key: "pivotZ", param: "glyphWeaponPivotZ", label: "weapon pivot Z px", min: -500, max: 500, step: 1, def: 0, group: "Weapon pose" },
-  { key: "screenX", param: "glyphWeaponScreenX", label: "weapon screen X px", min: -500, max: 500, step: 1, def: -1, group: "Weapon projection" },
-  { key: "screenY", param: "glyphWeaponScreenY", label: "weapon screen Y px", min: -500, max: 500, step: 1, def: 12.5, group: "Weapon projection" },
-  { key: "screenScaleX", param: "glyphWeaponScreenScaleX", label: "weapon screen scale X", min: 0.01, max: 20, step: 0.01, def: 0.98, group: "Weapon projection" },
-  { key: "screenScaleY", param: "glyphWeaponScreenScaleY", label: "weapon screen scale Y", min: 0.01, max: 20, step: 0.01, def: 1, group: "Weapon projection" },
-  { key: "stageOffset", param: "glyphWeaponStageOffset", label: "weapon stage offset px", min: -500, max: 500, step: 1, def: 30.887, group: "Weapon projection" },
-  { key: "density", param: "glyphWeaponDensity", label: "weapon density", min: 1, max: 4, step: 1, def: 2, group: "Weapon stage" },
-  { key: "zoom", param: "glyphWeaponZoom", label: "weapon zoom", min: 0.01, max: 500, step: 0.5, def: 50, group: "Weapon stage" },
-  { key: "cell", param: "glyphWeaponCell", label: "weapon cell px", min: 6, max: 40, step: 1, def: 12, group: "Weapon stage" },
-] as const;
-
 /** The UI density knobs whose defaults are EMPIRICAL matches to the user's
  *  2026-08 lab sessions (see each row's comment above). They all express
  *  "cells per base cell", so their approved look is really a detail-cell size

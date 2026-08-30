@@ -7,24 +7,7 @@ import { importTsModule } from "../importTsModule.mjs";
 
 const {
   createQuakeViewmodelController,
-  quakeGlyphWeaponLocalPose,
 } = await importTsModule("src/runtime/viewmodel.ts");
-
-test("glyph weapon geometry carries raster local roll and Y offset before entity placement", () => {
-  const posed = quakeGlyphWeaponLocalPose({
-    version: 1,
-    polygonCount: 1,
-    polygons: [{ c: "#fff", v: [[0, 1, 0]] }],
-  }, {
-    localYOffsetPx: -50,
-    localPitchDeg: 90,
-    localPivotXPx: 0,
-    localPivotYPx: 0,
-    localPivotZPx: 0,
-  });
-
-  assert.deepEqual(posed.polygons[0].v[0].map((value) => Math.round(value * 1e6) / 1e6), [0, -1, 1]);
-});
 
 test("viewmodel layer uses visual viewport placement when browser UI changes viewport height", () => {
   const window = new Window();

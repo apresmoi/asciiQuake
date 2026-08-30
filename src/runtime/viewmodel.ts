@@ -14,7 +14,8 @@ import { crossVec3, normalizeVec3 } from "./math";
 import { mountQuakeRenderBundleMesh, stripPolyMeshMetadata } from "./renderBundleMesh";
 import { quakeRuntimeViewportSize, type QuakeRuntimeViewportSize } from "./viewport";
 import type { QuakeGlyphGeometry } from "../types/quake";
-import type { QuakeGlyphEntityTransform, QuakeGlyphWeaponOverlay } from "./render/glyphWorldOverlay";
+import type { QuakeGlyphEntitySink } from "./pickups";
+import type { QuakeGlyphEntityTransform } from "./render/glyphWorldOverlay";
 
 export interface QuakeViewmodelController {
   mount(model: QuakeViewmodelModel): void;
@@ -29,29 +30,6 @@ export interface QuakeViewmodelController {
   queueViewportSync(): void;
   playFireAnimation(animation?: QuakeViewmodelFireAnimation): void;
   clearFireAnimation(): void;
-  setGlyphWeaponTuning(tuning: QuakeGlyphWeaponTuning): void;
-}
-
-export interface QuakeGlyphWeaponTuning {
-  scale?: number;
-  reach?: number;
-  density?: number;
-  fovScale?: number;
-  centerX?: number;
-  centerY?: number;
-  perspective?: number;
-  zoom?: number;
-  roll?: number;
-  backoff?: number;
-  localY?: number;
-  pivotX?: number;
-  pivotY?: number;
-  pivotZ?: number;
-  screenX?: number;
-  screenY?: number;
-  screenScaleX?: number;
-  screenScaleY?: number;
-  stageOffset?: number;
 }
 
 export interface QuakeViewmodelSyncOptions {
@@ -188,53 +166,25 @@ export interface QuakeViewmodelControllerOptions {
   host: HTMLElement;
   layer: HTMLElement | null;
   /**
-   * Dedicated glyph weapon scene. When present AND `renderModeIsGlyph()` is
-   * true, the weapon is placed in that scene's local camera (mirroring the
-   * raster weapon stage) and the polycss carrier is hidden. Absent / polycss
-   * mode → the raster weapon is used. Must NOT be the world overlay: a shared
-   * world camera clips the near-field model (see createQuakeGlyphWeaponOverlay).
+   * Glyph entity layer (the world overlay) for rendering the weapon as ASCII in
+   * glyphcss mode. When present AND `renderModeIsGlyph()` is true, the weapon is
+   * mirrored into the overlay as a world-space entity at the eye and the raster
+   * canvas is hidden. Absent / polycss mode → the raster weapon is used.
    */
-  glyphWeaponOverlay?: QuakeGlyphWeaponOverlay;
+  glyphEntitySink?: QuakeGlyphEntitySink;
   renderModeIsGlyph?: () => boolean;
   /**
-   * Model-scale multiplier on the raster weapon's per-axis scale. Tunable via
-   * `?glyphWeaponScale=`. Default {@link QUAKE_GLYPH_WEAPON_SCALE} (identity
-   * on the dedicated stage; the old 0.3 was a world-camera fudge).
+   * Empirical size multiplier for the ASCII weapon (the model's own units +
+   * weapon perspective don't map 1:1 onto the world perspective). Tunable via
+   * `?glyphWeaponScale=`. Default {@link QUAKE_GLYPH_WEAPON_SCALE}.
    */
   glyphWeaponScale?: number;
   /**
-   * Fraction of the raster weapon's eye→weapon offset (forward 3.1 etc.).
-   * Tunable via `?glyphWeaponReach=`. Default {@link QUAKE_GLYPH_WEAPON_REACH}
-   * (full raster offset; the old 0.18 contracted the gun into the world
-   * camera's near plane).
+   * Fraction of the raster weapon's eye→weapon offset to apply in the world
+   * frame (brings the weapon from metres away to the hand). Tunable via
+   * `?glyphWeaponReach=`. Default {@link QUAKE_GLYPH_WEAPON_REACH}.
    */
   glyphWeaponReach?: number;
-  /**
-   * Detail-layer density for the weapon mesh. Default matches the world's
-   * entity density. `?glyphWeaponDensity=`. `1` = the scene's base grid.
-   */
-  glyphWeaponDensity?: number;
-  /**
-   * Overrides for the dedicated camera. `undefined` means "compute from the
-   * raster stage" (layerScale as fovScale, viewport-centre as projection
-   * center, weapon-stage perspective). URL pins are passed in from App.
-   */
-  glyphWeaponFovScale?: number;
-  glyphWeaponCenterX?: number;
-  glyphWeaponCenterY?: number;
-  glyphWeaponPersp?: number;
-  glyphWeaponZoom?: number;
-  glyphWeaponRoll?: number;
-  glyphWeaponBackoff?: number;
-  glyphWeaponLocalY?: number;
-  glyphWeaponPivotX?: number;
-  glyphWeaponPivotY?: number;
-  glyphWeaponPivotZ?: number;
-  glyphWeaponScreenX?: number;
-  glyphWeaponScreenY?: number;
-  glyphWeaponScreenScaleX?: number;
-  glyphWeaponScreenScaleY?: number;
-  glyphWeaponStageOffset?: number;
 }
 
 const QUAKE_WEAPON_GLYPH_ID = "viewmodel:weapon";
@@ -245,18 +195,19 @@ const QUAKE_WEAPON_GLYPH_ID = "viewmodel:weapon";
 // measured the glyph gun's ink mean level with the reference gun's under the
 // retuned world tone at the default entity density.
 const QUAKE_WEAPON_GLYPH_TONE_SCALE = 1.6;
-// Identity on the dedicated weapon-stage camera (the raster model's own
-// per-axis scale already carries the size). The old 0.3 was a world-camera
-// fudge and cancelled against reach. Tunable (?glyphWeaponScale).
-const QUAKE_GLYPH_WEAPON_SCALE = 1;
-// Full raster eye→weapon offset (forward 3.1 etc.). The old 0.18 contracted
-// the gun into the world camera's near plane so most of the mesh clipped.
-// Tunable (?glyphWeaponReach).
-const QUAKE_GLYPH_WEAPON_REACH = 1;
-// Local-frame yaw for the dedicated glyph camera. Must match
-// createQuakeGlyphWeaponOverlay (rotX is QUAKE_WEAPON_SCREEN_ROT_X = 90).
-const QUAKE_GLYPH_WEAPON_ROT_Y = 270;
-const QUAKE_GLYPH_WEAPON_ORIGIN: Vec3 = [0, 0, 0];
+// The ASCII weapon is the same model rendered in the WORLD perspective instead
+// of the weapon's dedicated stage perspective, so its on-screen size needs an
+// empirical factor on top of the per-axis weapon scale. Tunable (?glyphWeaponScale).
+const QUAKE_GLYPH_WEAPON_SCALE = 0.3;
+// The raster weapon offset (forwardOffset 3.1 etc.) is tuned for the weapon's
+// own near perspective; in the world frame that lands the weapon metres away.
+// Scale the whole eye→weapon offset down so it sits at the hand near the focal
+// point, preserving the bob/punch proportions baked into it. (?glyphWeaponReach)
+const QUAKE_GLYPH_WEAPON_REACH = 0.18;
+// Small forward depth bias so the close weapon wins the depth test against
+// world geometry right at the muzzle (FPS weapons render on top), matching how
+// the polycss weapon sits in its own layer above the world.
+const QUAKE_GLYPH_WEAPON_DEPTH_BIAS = 0.02;
 const QUAKE_WEAPON_FORWARD_OFFSET = 3.1;
 const QUAKE_WEAPON_RIGHT_OFFSET = 0;
 const QUAKE_WEAPON_UP_OFFSET = -0.3;
@@ -345,59 +296,21 @@ export function createQuakeViewmodelController({
   getRenderOrigin,
   host,
   layer,
-  glyphWeaponOverlay,
+  glyphEntitySink,
   renderModeIsGlyph,
   glyphWeaponScale,
   glyphWeaponReach,
-  glyphWeaponDensity,
-  glyphWeaponFovScale,
-  glyphWeaponCenterX,
-  glyphWeaponCenterY,
-  glyphWeaponPersp,
-  glyphWeaponZoom,
-  glyphWeaponRoll,
-  glyphWeaponBackoff,
-  glyphWeaponLocalY,
-  glyphWeaponPivotX,
-  glyphWeaponPivotY,
-  glyphWeaponPivotZ,
-  glyphWeaponScreenX,
-  glyphWeaponScreenY,
-  glyphWeaponScreenScaleX,
-  glyphWeaponScreenScaleY,
-  glyphWeaponStageOffset,
 }: QuakeViewmodelControllerOptions): QuakeViewmodelController {
   const stage = layer ? createQuakeViewmodelStage(layer) : null;
   let handle: PolyMeshHandle | null = null;
-  // Glyph (ASCII) weapon: dedicated scene with its own camera, not the world
-  // overlay. Render mode is fixed for the controller's lifetime (a mode
-  // change forces a full remount).
-  const glyphMode = (renderModeIsGlyph?.() ?? false) && glyphWeaponOverlay != null;
-  const glyphSink = glyphMode ? (glyphWeaponOverlay ?? null) : null;
-  let glyphScaleFactor = glyphWeaponScale ?? QUAKE_GLYPH_WEAPON_SCALE;
-  let glyphReach = glyphWeaponReach ?? QUAKE_GLYPH_WEAPON_REACH;
-  let glyphDensity = glyphWeaponDensity;
-  let glyphFovScaleOverride = glyphWeaponFovScale;
-  let glyphCenterXOverride = glyphWeaponCenterX;
-  let glyphCenterYOverride = glyphWeaponCenterY;
-  let glyphPerspOverride = glyphWeaponPersp;
-  let glyphZoomOverride = glyphWeaponZoom;
-  let glyphRollOverride = glyphWeaponRoll;
-  let glyphBackoffOverride = glyphWeaponBackoff;
-  let glyphPoseOverrides: QuakeViewmodelTuning = {
-    ...(glyphWeaponLocalY !== undefined ? { localYOffsetPx: glyphWeaponLocalY } : {}),
-    ...(glyphWeaponPivotX !== undefined ? { localPivotXPx: glyphWeaponPivotX } : {}),
-    ...(glyphWeaponPivotY !== undefined ? { localPivotYPx: glyphWeaponPivotY } : {}),
-    ...(glyphWeaponPivotZ !== undefined ? { localPivotZPx: glyphWeaponPivotZ } : {}),
-    ...(glyphWeaponScreenX !== undefined ? { screenXOffsetPx: glyphWeaponScreenX } : {}),
-    ...(glyphWeaponScreenY !== undefined ? { screenYOffsetPx: glyphWeaponScreenY } : {}),
-    ...(glyphWeaponScreenScaleX !== undefined ? { screenScaleX: glyphWeaponScreenScaleX } : {}),
-    ...(glyphWeaponScreenScaleY !== undefined ? { screenScaleY: glyphWeaponScreenScaleY } : {}),
-    ...(glyphWeaponStageOffset !== undefined ? { stageOffsetPx: glyphWeaponStageOffset } : {}),
-  };
-  if (glyphMode && stage) stage.hidden = true;
+  // Glyph (ASCII) weapon: mirror the weapon into the world overlay's entity
+  // layer instead of drawing the polycss carrier. Render mode is fixed for the
+  // controller's lifetime (a mode change forces a full remount).
+  const glyphMode = (renderModeIsGlyph?.() ?? false) && glyphEntitySink != null;
+  const glyphSink: QuakeGlyphEntitySink | null = glyphMode ? (glyphEntitySink ?? null) : null;
+  const glyphScaleFactor = glyphWeaponScale ?? QUAKE_GLYPH_WEAPON_SCALE;
+  const glyphReach = glyphWeaponReach ?? QUAKE_GLYPH_WEAPON_REACH;
   let glyphFrames: QuakeGlyphGeometry[] | null = null;
-  let posedGlyphFrames: QuakeGlyphGeometry[] | null = null;
   let glyphFrameIndex = 0;
   let glyphRegistered = false;
   let lastGlyphWeaponTransform: QuakeGlyphEntityTransform | null = null;
@@ -445,14 +358,12 @@ export function createQuakeViewmodelController({
     carrier.classList.add("viewmodel", "quake-viewmodel-transform");
     stripPolyMeshMetadata(carrier);
     appliedLocalTransform = "";
-    // Glyph mode: hide the polycss stage (the ASCII weapon renders in the
-    // dedicated overlay inside this layer) and load per-frame glyph geometry.
+    // Glyph mode: hide the polycss carrier (the ASCII weapon renders in the
+    // world overlay instead) and load this weapon's per-frame glyph geometry.
     if (glyphMode) {
-      if (stage) stage.hidden = true;
-      if (layer) layer.hidden = !visible;
+      if (layer) layer.hidden = true;
       removeGlyphWeapon();
       glyphFrames = model.glyphFrames ?? null;
-      posedGlyphFrames = null;
       glyphFrameIndex = 0;
       lastGlyphWeaponTransform = null;
     }
@@ -470,7 +381,6 @@ export function createQuakeViewmodelController({
     carrier = null;
     removeGlyphWeapon();
     glyphFrames = null;
-    posedGlyphFrames = null;
     lastGlyphWeaponTransform = null;
     appliedLocalTransform = "";
     mountedSource = null;
@@ -482,12 +392,10 @@ export function createQuakeViewmodelController({
 
   function setVisible(nextVisible: boolean): void {
     visible = nextVisible;
-    // Glyph mode keeps the layer (it hosts the dedicated ASCII scene) and
-    // hides only the polycss stage. Polycss mode hides the whole layer.
-    if (layer) layer.hidden = !visible;
+    // In glyph mode the raster layer stays hidden regardless (the ASCII weapon
+    // lives in the world overlay); toggle the overlay entity instead.
+    if (layer) layer.hidden = !visible || glyphMode;
     if (glyphMode) {
-      if (stage) stage.hidden = true;
-      glyphSink?.setVisible(visible);
       if (!visible) removeGlyphWeapon();
       else if (carrier) syncTransform();
     }
@@ -559,15 +467,8 @@ export function createQuakeViewmodelController({
     return override ? sanitizeViewmodelTuning(override, tuning) : tuning;
   }
 
-  function activeGlyphTuning(): QuakeResolvedViewmodelTuning {
-    const current = activeTuning();
-    return sanitizeViewmodelTuning(glyphPoseOverrides, current);
-  }
-
   function setTuning(next: QuakeViewmodelTuning): QuakeResolvedViewmodelTuning {
     tuning = sanitizeViewmodelTuning(next, tuning);
-    posedGlyphFrames = null;
-    glyphRegistered = false;
     invalidateViewportLayer();
     syncTransform({ stable: true });
     return getTuning();
@@ -575,8 +476,6 @@ export function createQuakeViewmodelController({
 
   function resetTuning(): QuakeResolvedViewmodelTuning {
     tuning = { ...QUAKE_WEAPON_DEFAULT_TUNING };
-    posedGlyphFrames = null;
-    glyphRegistered = false;
     invalidateViewportLayer();
     syncTransform({ stable: true });
     return getTuning();
@@ -593,14 +492,15 @@ export function createQuakeViewmodelController({
     const weapon = weaponTransform(origin, rotX, rotY, bob);
     syncCarrierTransform(weapon);
     syncLayer();
-    // Glyph mode: the polycss carrier is hidden; place the weapon in the
-    // dedicated scene's LOCAL frame (screen pitch 90, yaw 270) so looking
-    // around cannot orbit it out of the frustum — the same contract as the
-    // raster stage.
+    // Glyph mode: the carrier is hidden; mirror the weapon into the world overlay.
+    // NOTE the pitch. `rotX` above is the SCREEN pitch — a constant, because the
+    // polycss weapon lives in its own screen-space stage where looking up/down
+    // must not move the gun. The glyph weapon is a WORLD-space mesh, so it has to
+    // orbit with the real view pitch or it stays pinned to the horizontal plane
+    // and slides out of the frustum the moment you look up ⇒ the gun "drops".
     if (glyphMode) {
-      syncGlyphWeapon(
-        weaponTransform(QUAKE_GLYPH_WEAPON_ORIGIN, QUAKE_WEAPON_SCREEN_ROT_X, QUAKE_GLYPH_WEAPON_ROT_Y, bob),
-      );
+      const viewRotX = scene.camera.state.rotX ?? rotX;
+      syncGlyphWeapon(weaponTransform(origin, viewRotX, rotY, bob), origin);
     }
   }
 
@@ -697,38 +597,37 @@ export function createQuakeViewmodelController({
   function currentGlyphFrame(): QuakeGlyphGeometry | null {
     if (!glyphFrames?.length) return null;
     const index = Math.min(Math.max(glyphFrameIndex, 0), glyphFrames.length - 1);
-    if (!posedGlyphFrames) {
-      const current = activeGlyphTuning();
-      const localTuning = glyphRollOverride === undefined
-        ? current
-        : { ...current, localPitchDeg: glyphRollOverride };
-      posedGlyphFrames = glyphFrames.map((frame) => quakeGlyphWeaponLocalPose(frame, localTuning));
-    }
-    return posedGlyphFrames[index] ?? null;
+    return glyphFrames[index] ?? null;
   }
 
   function weaponGlyphTransform(
     weapon: QuakeViewmodelDebugSnapshot["weapon"],
+    origin: Vec3,
   ): QuakeGlyphEntityTransform {
-    // Local-frame placement: origin is the dedicated camera's eye, so
-    // `glyphReach` scales the raster eye→weapon vector without involving the
-    // world camera. reach=1 is the raster offset (forward 3.1 etc.).
+    // Bring the weapon from the carrier's far placement to the hand: keep the
+    // eye→weapon direction + bob/punch proportions, but apply only `glyphReach`
+    // of the offset so it sits near the focal point in the world perspective.
     return {
       position: [
-        weapon.position[0] * glyphReach,
-        weapon.position[1] * glyphReach,
-        weapon.position[2] * glyphReach,
+        origin[0] + (weapon.position[0] - origin[0]) * glyphReach,
+        origin[1] + (weapon.position[1] - origin[1]) * glyphReach,
+        origin[2] + (weapon.position[2] - origin[2]) * glyphReach,
       ],
       // poly's triple is [pitch, 0, yaw] for a CSS transform whose axes are
       // remapped (`rotateY(-rotX) rotateX(rotY)…`); glyphcss takes world-frame
       // XYZ Euler, so convert rather than reuse it verbatim.
-      rotation: glyphEulerFromYawPitch(-weapon.rotation[2], -weapon.rotation[0]),
+      rotation: glyphEulerFromYawPitch(weapon.rotation[2], weapon.rotation[0]),
       scale: [
         weapon.scale[0] * glyphScaleFactor,
         weapon.scale[1] * glyphScaleFactor,
         weapon.scale[2] * glyphScaleFactor,
       ],
-      ...(glyphDensity != null ? { density: glyphDensity } : {}),
+      depthBias: QUAKE_GLYPH_WEAPON_DEPTH_BIAS,
+      // Quake draws the viewmodel after a depth clear — it is never occluded by
+      // the world. Without this the gun sits at eye+reach in world space, so
+      // standing against a wall/floor buries it inside that surface and the
+      // shared depth buffer hides it: the gun "drops" until you back away.
+      neverOccluded: true,
       // The gun's own lift over the scene tone (2026-08 retune vs the
       // cssquake.wtf gun): under the world tone that matches the walls, the
       // viewmodel's baked colours measured ~0.8x the reference gun's ink —
@@ -737,11 +636,11 @@ export function createQuakeViewmodelController({
     };
   }
 
-  // Place the weapon in the dedicated overlay. First call (or one after a
-  // removal) registers the mesh + frame; later calls only move it.
-  function syncGlyphWeapon(weapon: QuakeViewmodelDebugSnapshot["weapon"]): void {
+  // Mirror the weapon into the world overlay's entity layer. First call (or one
+  // after a removal) registers the mesh + frame; later calls only move it.
+  function syncGlyphWeapon(weapon: QuakeViewmodelDebugSnapshot["weapon"], origin: Vec3): void {
     if (!glyphSink) return;
-    const transform = weaponGlyphTransform(weapon);
+    const transform = weaponGlyphTransform(weapon, origin);
     lastGlyphWeaponTransform = transform;
     const frame = currentGlyphFrame();
     // Self-healing: `glyphRegistered` is our belief about the sink, not the truth.
@@ -835,102 +734,11 @@ export function createQuakeViewmodelController({
 
   function syncLayer(): void {
     if (!layer || !stage) return;
-    if (glyphMode) {
-      syncGlyphWeaponProjection();
-      return;
-    }
     const sceneElement = scene.sceneElement;
     syncViewportLayer();
     setStyleValue(stage, "transform", weaponStageTransform());
     const zoom = sceneElement.style.getPropertyValue("zoom");
     setStyleValue(stage, "zoom", zoom);
-  }
-
-  /**
-   * Push the raster weapon stage's projection onto the dedicated glyph camera.
-   *
-   * - perspective: the stage's CSS perspective (745.108 × perspectiveScale),
-   *   unless `?glyphWeaponPersp=` pins it.
-   * - fovScale: the viewport-derived layerScale (1.25 at 1600×900, ~0.661 at
-   *   846×411) so the gun stays a constant fraction of viewport width, unless
-   *   `?glyphWeaponFovScale=` pins it.
-   * - center: viewport centre (0.5, 0.5) by default — the current glyph gun's
-   *   centre already matches the reference within 0.004; baking the raster
-   *   layer's screen offsets in would move it. `?glyphWeaponCenterX/Y=` pin
-   *   a bottom-anchor / perspective-origin experiment.
-   */
-  function syncGlyphWeaponProjection(): void {
-    if (!glyphSink) return;
-    const viewport = viewmodelViewportSize();
-    const layerScale = refreshWeaponLayerScale(viewport);
-    const fovScale = glyphFovScaleOverride ?? layerScale;
-    const perspectivePx = glyphPerspOverride ?? weaponPerspectivePx();
-    const currentTuning = activeGlyphTuning();
-    const centerX = glyphCenterXOverride ??
-      0.5 + currentTuning.screenXOffsetPx * layerScale /
-        (viewport.width * currentTuning.screenScaleX);
-    const rasterStageCenterY = viewport.height + currentTuning.screenYOffsetPx * layerScale +
-      (-QUAKE_WEAPON_REFERENCE_VIEWPORT_HEIGHT_PX / 2 + currentTuning.stageOffsetPx) *
-        currentTuning.screenScaleY * layerScale;
-    const centerY = glyphCenterYOverride ??
-      0.5 + (rasterStageCenterY / viewport.height - 0.5) / currentTuning.screenScaleY;
-    glyphSink.setProjection({
-      perspective: perspectivePx,
-      fovScale,
-      center: [centerX, centerY],
-      screenScale: [currentTuning.screenScaleX, currentTuning.screenScaleY],
-      cameraBackoffPx: glyphBackoffOverride,
-      zoom: glyphZoomOverride ?? scene.camera.state.zoom,
-    });
-  }
-
-  function setGlyphWeaponTuning(next: QuakeGlyphWeaponTuning): void {
-    if (next.scale !== undefined && Number.isFinite(next.scale)) glyphScaleFactor = next.scale;
-    if (next.reach !== undefined && Number.isFinite(next.reach)) glyphReach = next.reach;
-    if (next.density !== undefined && Number.isFinite(next.density)) {
-      glyphDensity = next.density;
-      glyphRegistered = false;
-    }
-    if (next.fovScale !== undefined) {
-      glyphFovScaleOverride = Number.isFinite(next.fovScale) && next.fovScale > 0 ? next.fovScale : undefined;
-    }
-    if (next.centerX !== undefined) {
-      glyphCenterXOverride = Number.isFinite(next.centerX) ? next.centerX : undefined;
-    }
-    if (next.centerY !== undefined) {
-      glyphCenterYOverride = Number.isFinite(next.centerY) ? next.centerY : undefined;
-    }
-    if (next.perspective !== undefined) {
-      glyphPerspOverride = Number.isFinite(next.perspective) && next.perspective > 0 ? next.perspective : undefined;
-    }
-    if (next.zoom !== undefined) {
-      glyphZoomOverride = Number.isFinite(next.zoom) && next.zoom > 0 ? next.zoom : undefined;
-    }
-    if (next.roll !== undefined) {
-      glyphRollOverride = Number.isFinite(next.roll) ? next.roll : undefined;
-      posedGlyphFrames = null;
-      glyphRegistered = false;
-    }
-    if (next.backoff !== undefined) {
-      glyphBackoffOverride = Number.isFinite(next.backoff) && next.backoff >= 0 ? next.backoff : undefined;
-    }
-    const poseMap: Array<[keyof QuakeGlyphWeaponTuning, keyof QuakeViewmodelTuning]> = [
-      ["localY", "localYOffsetPx"], ["pivotX", "localPivotXPx"],
-      ["pivotY", "localPivotYPx"], ["pivotZ", "localPivotZPx"],
-      ["screenX", "screenXOffsetPx"], ["screenY", "screenYOffsetPx"],
-      ["screenScaleX", "screenScaleX"], ["screenScaleY", "screenScaleY"],
-      ["stageOffset", "stageOffsetPx"],
-    ];
-    for (const [source, target] of poseMap) {
-      const value = next[source];
-      if (value !== undefined && Number.isFinite(value)) glyphPoseOverrides[target] = value;
-    }
-    if (poseMap.some(([source]) => next[source] !== undefined)) {
-      posedGlyphFrames = null;
-      glyphRegistered = false;
-    }
-    invalidateViewportLayer();
-    if (carrier) syncTransform({ stable: true });
   }
 
   function syncViewportLayer(): void {
@@ -987,21 +795,12 @@ export function createQuakeViewmodelController({
     }
   }
 
-  // The tuning names (horizontal/vertical/depth) are SCREEN-axis intent, but
-  // glyphcss's applyTransform scales each vertex's raw MESH-LOCAL component
-  // (v[0]*sx, v[1]*sy, v[2]*sz) before rotation is applied — so this vector
-  // must be permuted to the mesh's own axes, not the screen's. v_shot's
-  // local frame has X as its long axis (the 5.706-unit barrel), Y as the
-  // 0.582-unit transverse width, Z as the 0.925-unit transverse height;
-  // after the model's rotation the mesh Y/Z pair is what reads as
-  // screen width/height, so they take horizontal/vertical, while the
-  // barrel (mesh X) takes depthScale.
   function weaponScaleVec(): Vec3 {
     const currentTuning = activeTuning();
     return [
-      QUAKE_WEAPON_REFERENCE_BASE_SCALE * currentTuning.depthScale,
       QUAKE_WEAPON_REFERENCE_BASE_SCALE * currentTuning.horizontalScale,
       QUAKE_WEAPON_REFERENCE_BASE_SCALE * currentTuning.verticalScale,
+      QUAKE_WEAPON_REFERENCE_BASE_SCALE * currentTuning.depthScale,
     ];
   }
 
@@ -1108,7 +907,6 @@ export function createQuakeViewmodelController({
     queueViewportSync,
     playFireAnimation,
     clearFireAnimation,
-    setGlyphWeaponTuning,
   };
 }
 
@@ -1155,40 +953,6 @@ function weaponLocalTransform(tuning: QuakeResolvedViewmodelTuning): string {
     `rotateX(${tuning.localPitchDeg}deg)`,
     hasPivot ? `translate3d(${-tuning.localPivotXPx}px, ${-tuning.localPivotYPx}px, ${-tuning.localPivotZPx}px)` : "",
   ].filter(Boolean).join(" ");
-}
-
-/** Apply CSS's local `Ty · Tp · Rx · T-p` to glyph model-space vertices. */
-export function quakeGlyphWeaponLocalPose(
-  geometry: QuakeGlyphGeometry,
-  tuning: Pick<QuakeResolvedViewmodelTuning,
-    "localYOffsetPx" | "localPitchDeg" | "localPivotXPx" | "localPivotYPx" | "localPivotZPx">,
-): QuakeGlyphGeometry {
-  const pxToWorld = (value: number) => polyCssDistanceToWorld(value);
-  const pivot: Vec3 = [
-    pxToWorld(tuning.localPivotXPx),
-    pxToWorld(tuning.localPivotYPx),
-    pxToWorld(tuning.localPivotZPx),
-  ];
-  const localY = pxToWorld(tuning.localYOffsetPx);
-  const radians = tuning.localPitchDeg * Math.PI / 180;
-  const cos = Math.cos(radians);
-  const sin = Math.sin(radians);
-  return {
-    ...geometry,
-    polygons: geometry.polygons.map((polygon) => ({
-      ...polygon,
-      v: polygon.v.map((vertex) => {
-        const x = vertex[0]! - pivot[0];
-        const y = vertex[1]! - pivot[1];
-        const z = vertex[2]! - pivot[2];
-        return [
-          x + pivot[0],
-          y * cos - z * sin + pivot[1] + localY,
-          y * sin + z * cos + pivot[2],
-        ];
-      }),
-    })),
-  };
 }
 
 function weaponTransformCss(weapon: QuakeViewmodelDebugSnapshot["weapon"]): string {
