@@ -202,6 +202,70 @@ export const QUAKE_GLYPH_WORLD_TUNING_KNOBS: readonly QuakeGlyphTuningKnob[] = [
   { key: "cell", param: "glyphCell", label: "cell px (detail)", min: 6, max: 40, step: 1, def: 12, group: "World grid" },
 ] as const;
 
+/** The UI density knobs whose defaults are EMPIRICAL matches to the user's
+ *  2026-08 lab sessions (see each row's comment above). They all express
+ *  "cells per base cell", so their approved look is really a detail-cell size
+ *  in DEVICE pixels — the quantity `adaptQuakeUiDensitiesToDisplay` preserves. */
+export const QUAKE_GLYPH_UI_DENSITY_KEYS = [
+  "density",
+  "logoDensity",
+  "textDensity",
+  "plaqueDensity",
+  "titleDensity",
+  "labelDensity",
+  "consoleDensity",
+] as const;
+
+/** Monospace advance fraction — the same measured constant the overlay and
+ *  App.ts use to convert a cell budget into a cell size. */
+const QUAKE_GLYPH_UI_CELL_ASPECT = 0.606;
+
+/** The UI base cell in DEVICE px at the 2026-08 tuning sessions: 1600x900,
+ *  DPR 2 → fitted sqrt(1600*900 / (0.606 * 24000)) = 9.95 CSS px = 19.9. */
+export const QUAKE_GLYPH_UI_TUNING_BASE_CELL_DEVICE_PX = 19.9;
+
+/**
+ * Make the per-element densities viewport/DPR aware: on displays whose UI
+ * base cell is SMALLER (in device px) than the 1600x900/DPR-2 cell the
+ * densities were tuned on, scale them down proportionally so every detail
+ * cell keeps its approved DEVICE-pixel size instead of shrinking into the
+ * sub-device-pixel grey-mush regime.
+ *
+ * Measured need (iPhone-14-class, 390x844, DPR 3): the base cell fits at
+ * 4.76 CSS px = 14.3 device px — 72% of the tuning session's 19.9 — which
+ * put the plaque's detail cells at 1.21 device px (approved: 1.69; rendered:
+ * unreadable mush) and the title's at 4.27 (approved: 5.96). The factor
+ * min(1, baseDevicePx / 19.9) restores exactly the approved sizes; on the
+ * tuning display itself it is 1.0, so desktop renders are bit-identical.
+ *
+ * URL-pinned knobs are the user's explicit choice and are never scaled.
+ * Mutates `values` in place; call between resolve and mount.
+ */
+export function adaptQuakeUiDensitiesToDisplay(
+  values: QuakeGlyphTuningValues,
+  params: URLSearchParams,
+  display: { hostW: number; hostH: number; dpr: number },
+): void {
+  const maxCells = Math.max(256, values.maxCells ?? 24_000);
+  const minCellPx = Math.max(2, values.minCellPx ?? 3);
+  const fitted = Math.sqrt(
+    (Math.max(1, display.hostW) * Math.max(1, display.hostH)) / (QUAKE_GLYPH_UI_CELL_ASPECT * maxCells),
+  );
+  const baseDevicePx = Math.max(minCellPx, fitted) * Math.max(0.5, display.dpr || 1);
+  const factor = Math.min(1, baseDevicePx / QUAKE_GLYPH_UI_TUNING_BASE_CELL_DEVICE_PX);
+  if (factor >= 1) return;
+  const densityKeys = new Set<string>(QUAKE_GLYPH_UI_DENSITY_KEYS);
+  for (const knob of QUAKE_GLYPH_UI_TUNING_KNOBS) {
+    if (!densityKeys.has(knob.key)) continue;
+    // A URL-pinned knob (present and valid — the same acceptance rule the
+    // resolver applies) stays the user's literal value.
+    const raw = params.get(knob.param);
+    const parsed = raw === null ? Number.NaN : Number.parseFloat(raw);
+    if (Number.isFinite(parsed) && parsed >= knob.min && parsed <= knob.max) continue;
+    values[knob.key] = Math.max(knob.min, values[knob.key]! * factor);
+  }
+}
+
 /**
  * Resolve every knob's startup value: the URL param when present and inside
  * the knob's range, the shipped default otherwise — the same contract

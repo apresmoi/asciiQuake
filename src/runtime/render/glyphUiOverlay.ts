@@ -8,15 +8,14 @@ import {
   QUAKE_MENU_SCENE_FRAME_W,
   QUAKE_MENU_SCENE_FRAME_H,
   QUAKE_CONSOLE_GAP,
-  QUAKE_CONSOLE_GLYPH,
   QUAKE_CONSOLE_LEFT,
-  QUAKE_CONSOLE_PITCH,
   QUAKE_CONSOLE_PROGRESS_H,
   QUAKE_CONSOLE_TOP,
   QUAKE_MENU_LEVEL_CODE_X,
   QUAKE_MENU_LEVEL_TITLE_X,
   QUAKE_MENU_MP_FAILURE_TEXTS,
   quakeConsoleProgressWidth,
+  quakeConsoleTextMetrics,
   quakeMenuLevelRowY,
   quakeMenuSceneFrame,
   quakeMenuSceneHotspotsFor,
@@ -2091,7 +2090,10 @@ export function createQuakeGlyphUiOverlay(
     // ── The boot console (chrome up) or the death card (gameplay) ──
     if (st.consoleDeath && !st.chrome) {
       // "you died": centred, display-size, over the live world (no backdrop).
-      const glyph = 40;
+      // Display-size, but never wider than the host: the longest line caps
+      // the glyph on phone-width viewports (40 is the desktop value).
+      const longest = Math.max(1, ...st.consoleLines.map((line) => line.length));
+      const glyph = Math.min(40, (hostBox.width - 16) / longest);
       const total = st.consoleLines.length;
       st.consoleLines.forEach((line, i) => {
         drawGlyphRun(groups, hostBox,
@@ -2103,9 +2105,12 @@ export function createQuakeGlyphUiOverlay(
       });
     } else if (st.chrome) {
       let top = QUAKE_CONSOLE_TOP;
+      // Host-fitted metrics: the shipped 16/18 on desktop, proportionally
+      // smaller on phone-width hosts so 42-col lines stop truncating.
+      const consoleMetrics = quakeConsoleTextMetrics(hostBox.width);
       for (const line of st.consoleLines) {
-        drawGlyphRun(groups, hostBox, line, QUAKE_CONSOLE_LEFT, top, QUAKE_CONSOLE_GLYPH, { density: consoleTextDensity });
-        top += QUAKE_CONSOLE_PITCH;
+        drawGlyphRun(groups, hostBox, line, QUAKE_CONSOLE_LEFT, top, consoleMetrics.glyph, { density: consoleTextDensity });
+        top += consoleMetrics.pitch;
       }
       if (st.consoleProgress !== null) {
         // The shipped progress bar as SOLID quads: border, well, fill.
@@ -2122,7 +2127,7 @@ export function createQuakeGlyphUiOverlay(
       }
       if (st.consoleAction) {
         top += QUAKE_CONSOLE_GAP;
-        drawGlyphRun(groups, hostBox, st.consoleAction, QUAKE_CONSOLE_LEFT, top, QUAKE_CONSOLE_GLYPH, { alt: true, density: consoleTextDensity });
+        drawGlyphRun(groups, hostBox, st.consoleAction, QUAKE_CONSOLE_LEFT, top, consoleMetrics.glyph, { alt: true, density: consoleTextDensity });
       }
       // Version tag beside the logo (the old #asciiquake-version span).
       const version = st.texts["version"];

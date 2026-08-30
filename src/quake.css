@@ -1232,9 +1232,79 @@ body.quake-menu-unlocked #quake-weapon {
   border-color: rgba(232, 154, 72, 0.86);
 }
 @media (any-pointer: coarse), (max-width: 960px) {
+  /* Show the touch controls only while actually playing: not during the boot
+     sequence, not under an open menu, not on the death/level-complete cards.
+     (This rule was `display: none !important` from June 2026's "Disable
+     mobile controls for now" — the module and its wiring were always live,
+     only this one declaration hid them.) */
   body:not(.quake-loading):not(.quake-menu-open):not(.quake-dead):not(.quake-level-complete) #quake-mobile-controls {
-    display: none !important;
+    display: block;
   }
+}
+#quake-mobile-jump,
+#quake-mobile-weapon {
+  position: absolute;
+  padding: 0;
+  border-radius: 50%;
+  background: rgba(10, 9, 7, 0.4);
+  border: 2px solid rgba(245, 232, 200, 0.5);
+  color: rgba(245, 232, 200, 0.78);
+  font: 700 11px/1 "Courier New", monospace;
+  letter-spacing: 1px;
+  z-index: 1;
+  pointer-events: auto;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  appearance: none;
+}
+#quake-mobile-jump {
+  right: max(124px, calc(env(safe-area-inset-right) + 100px));
+  bottom: calc(var(--quake-mobile-control-center-bottom) - 96px);
+  width: 64px;
+  height: 64px;
+}
+#quake-mobile-weapon {
+  right: max(30px, calc(env(safe-area-inset-right) + 6px));
+  bottom: calc(var(--quake-mobile-control-center-bottom) + 55px);
+  width: 52px;
+  height: 52px;
+  font-size: 10px;
+}
+#quake-mobile-jump:active,
+#quake-mobile-weapon:active {
+  background: rgba(74, 30, 14, 0.56);
+  border-color: rgba(232, 154, 72, 0.86);
+}
+/* Rotate hint (footlol's RotateOverlay, adapted): a non-blocking banner in
+   portrait gameplay — asciiQuake is playable portrait, so it suggests
+   rather than blocks, and fades itself out. `display:none -> block` on the
+   orientation flip restarts the animation, so it re-announces per rotate. */
+#quake-mobile-rotate-hint {
+  display: none;
+  position: absolute;
+  left: 50%;
+  top: max(18px, env(safe-area-inset-top));
+  transform: translateX(-50%);
+  padding: 8px 14px;
+  border: 2px solid rgba(214, 135, 58, 0.72);
+  background: rgba(10, 9, 7, 0.62);
+  color: rgba(245, 232, 200, 0.85);
+  font: 700 12px/1.2 "Courier New", monospace;
+  letter-spacing: 1px;
+  white-space: nowrap;
+  z-index: 2;
+  pointer-events: none;
+}
+@media (orientation: portrait) {
+  #quake-mobile-rotate-hint {
+    display: block;
+    animation: quake-mobile-rotate-hint-fade 5s linear forwards;
+  }
+}
+@keyframes quake-mobile-rotate-hint-fade {
+  0%, 70% { opacity: 1; }
+  100% { opacity: 0; visibility: hidden; }
 }
 
 .quake-bitmap-glyph{

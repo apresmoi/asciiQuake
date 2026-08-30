@@ -425,6 +425,24 @@ export const QUAKE_CONSOLE_LEFT = 12;
 export const QUAKE_CONSOLE_TOP = 64;
 export const QUAKE_CONSOLE_GLYPH = 16;
 export const QUAKE_CONSOLE_PITCH = 18;
+/** Longest console line the layout must fit: loadingConsole.ts clamps error
+ *  lines to 42 chars and every boot/status line is shorter. */
+export const QUAKE_CONSOLE_FIT_COLS = 42;
+/**
+ * Console glyph metrics that FIT the host: the fixed 16px glyph is a desktop
+ * literal (conchars advance == glyph size, so a 42-col line needs 672px+);
+ * on a 390px phone it truncated mid-word at the right edge (measured,
+ * 2026-08). Below the width where 42 columns fit, the glyph shrinks
+ * proportionally, pitch keeping its 18/16 ratio. At >=700px hosts this
+ * returns exactly the shipped 16/18 — desktop unchanged.
+ */
+export function quakeConsoleTextMetrics(hostW: number): { glyph: number; pitch: number } {
+  const glyph = Math.min(
+    QUAKE_CONSOLE_GLYPH,
+    Math.max(6, (hostW - 2 * QUAKE_CONSOLE_LEFT) / QUAKE_CONSOLE_FIT_COLS),
+  );
+  return { glyph, pitch: glyph * (QUAKE_CONSOLE_PITCH / QUAKE_CONSOLE_GLYPH) };
+}
 /** Progress bar under the console (min(250px, 72vw) x 14, 8px gap). */
 export const QUAKE_CONSOLE_PROGRESS_H = 14;
 export const QUAKE_CONSOLE_GAP = 8;
@@ -444,9 +462,14 @@ export function quakeNotifyLayout(hostW: number, hostH: number): {
 } {
   const logoH = Math.max(0, Math.min(45, (hostW - 92) * 0.1951));
   const notifyTop = 8 + logoH + 12;
+  // The 24/28px glyphs are desktop literals (advance == glyph size): a
+  // typical pickup notify ("You got the nailgun", 19 chars) needs 456px, so
+  // on a 390px phone it ran off the right edge. Scale both down with the
+  // host below 640px; at desktop widths the factor is 1 — unchanged.
+  const s = Math.min(1, hostW / 640);
   return {
-    notify: { x: 8, y: notifyTop, h: 24 },
-    center: { y: Math.max(0.35 * hostH, notifyTop + 96 + 12), h: 28 },
+    notify: { x: 8, y: notifyTop, h: 24 * s },
+    center: { y: Math.max(0.35 * hostH, notifyTop + 4 * 24 * s + 12), h: 28 * s },
   };
 }
 

@@ -14,6 +14,7 @@ import {
 import { createQuakeGlyphUiOverlay, type QuakeGlyphUiOverlay } from "./runtime/render/glyphUiOverlay";
 import { createQuakeMenuSceneManifest } from "./runtime/render/menuSceneManifest";
 import {
+  adaptQuakeUiDensitiesToDisplay,
   QUAKE_GLYPH_UI_TUNING_KNOBS,
   QUAKE_GLYPH_WORLD_TUNING_KNOBS,
   readQuakeGlyphTuningValues,
@@ -77,6 +78,7 @@ import {
   applyQuakeInventoryDelta,
   changeQuakeInventoryWeaponByImpulse,
   createQuakeHudElements,
+  quakeWeaponForImpulse,
   selectQuakeBestInventoryWeapon,
   type QuakeKey,
   type QuakeWeaponId,
@@ -1350,6 +1352,19 @@ const quakeGlyphFontAtlas = quakeStartupUrlParams.get("glyphAtlas") === "univers
 // tuning panel builds its sliders from (see glyphTuningSpec.ts).
 const quakeWorldGlyphTuning = readQuakeGlyphTuningValues(QUAKE_GLYPH_WORLD_TUNING_KNOBS, quakeStartupUrlParams);
 const quakeUiGlyphTuning = readQuakeGlyphTuningValues(QUAKE_GLYPH_UI_TUNING_KNOBS, quakeStartupUrlParams);
+// Viewport/DPR adaptation for the per-element densities (mobile fix,
+// 2026-08): on displays whose base cell is smaller in DEVICE px than the
+// 1600x900/DPR-2 tuning display, scale the un-pinned densities down so each
+// detail cell keeps its approved device-pixel size (measured on an iPhone-14
+// class viewport: plaque cells at 1.21 device px rendered as grey mush; the
+// factor restores the approved 1.69). Desktop factor is exactly 1 — no
+// change. The `?debug` panel then shows the ADAPTED values as its baseline;
+// its per-knob reset restores the desktop literal (debug-only edge).
+adaptQuakeUiDensitiesToDisplay(quakeUiGlyphTuning, quakeStartupUrlParams, {
+  hostW: window.innerWidth || 1280,
+  hostH: window.innerHeight || 720,
+  dpr: window.devicePixelRatio || 1,
+});
 // UI (menu/console/HUD-art) scene ramp palette, `?glyphImagePalette=`.
 // ASCII-only sanitized; mutable so the `?debug` panel's palette select can
 // swap it live (the UI scene remounts per adjustment anyway).
@@ -2721,8 +2736,12 @@ quakePointerGameplay = createQuakePointerGameplayFlow({
   clearParentKeyRelay: quakeGameplayInput.clearParentKeyRelay,
   controls,
   currentCameraRenderOrigin: quakeCameraView.currentRenderOrigin,
+  cycleWeapon: cycleQuakePlayerWeapon,
   eventTargetLabel: quakeEventTargetLabel,
   fireWeapon: (now) => weapons.fire(now),
+  // The mobile jump button is the Space key by another name: it feeds the
+  // same player.handleMoveKey path so queueing/release semantics match.
+  handleJumpInput: (pressed) => player?.handleMoveKey("Space", pressed),
   focusHost: () => host.focus({ preventScroll: true }),
   forwardDirection,
   hidePersistedLoadingConsole: hidePersistedQuakeLoadingConsole,
@@ -3172,6 +3191,31 @@ function changeQuakePlayerWeaponByImpulse(impulse: number): boolean {
     syncQuakeCrosshairTarget();
   }
   return true;
+}
+
+/** Mobile weapon button: cycle to the next usable weapon in impulse order
+ *  (1..8, wrapping), silently skipping weapons the player lacks or has no
+ *  ammo for — the touch equivalent of tapping through the digit keys. */
+function cycleQuakePlayerWeapon(): void {
+  if (!player || !canUseQuakeGameplayInput()) return;
+  const inventory = player.inventory();
+  let activeImpulse = 1;
+  for (let impulse = 1; impulse <= 8; impulse++) {
+    if (quakeWeaponForImpulse(impulse) === inventory.activeWeapon) {
+      activeImpulse = impulse;
+      break;
+    }
+  }
+  for (let step = 1; step < 8; step++) {
+    const impulse = ((activeImpulse - 1 + step) % 8) + 1;
+    const result = changeQuakeInventoryWeaponByImpulse(inventory, impulse);
+    if (result?.changed) {
+      syncQuakeHud();
+      viewmodel.syncTransform();
+      syncQuakeCrosshairTarget();
+      return;
+    }
+  }
 }
 
 function flashQuakeBonusOverlay(): void {

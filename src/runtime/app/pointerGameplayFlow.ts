@@ -36,6 +36,8 @@ export interface QuakePointerGameplayFlowOptions {
   clearMainMenuControlsEndSuppression(): void;
   clearParentKeyRelay(): void;
   controls: QuakePointerGameplayControls;
+  cycleWeapon(): void;
+  handleJumpInput(pressed: boolean): void;
   currentCameraRenderOrigin(): Vec3;
   eventTargetLabel(target: EventTarget | null): string;
   fireWeapon(now: number): void;
@@ -101,6 +103,8 @@ export function createQuakePointerGameplayFlow(
     onLookDelta: applyMobileLookDelta,
     onFireDown: handleMobileFirePointerDown,
     onFireEnd: handleMobileFirePointerEnd,
+    onJump: options.handleJumpInput,
+    onWeaponCycle: options.cycleWeapon,
   });
 
   const attackInput = createQuakeAttackInputController({
@@ -257,6 +261,9 @@ export function createQuakePointerGameplayFlow(
 
   function clearMobileMoveInput(): void {
     mobileControls.clearMoveInput();
+    // A held jump releases with the move stick: both are "stop moving now"
+    // clears (menu opened, death, pointer conflict).
+    mobileControls.clearJumpInput();
   }
 
   function startMobileLookInput(_event: PointerEvent): boolean {

@@ -113,6 +113,54 @@ test("mobile move stick rejects and clears when gameplay input is unavailable", 
   }
 });
 
+test("mobile jump button presses and releases through the Space-key path", () => {
+  const harness = createMobileControlsHarness();
+  try {
+    assert.ok(harness.jumpButton, "jump button mounts");
+    harness.jumpButton.dispatchEvent(pointer(harness.window, "pointerdown", 300, 300, 41, 1));
+    assert.deepEqual(harness.jumpSamples, [true]);
+    harness.jumpButton.dispatchEvent(pointer(harness.window, "pointerup", 300, 300, 41, 0));
+    assert.deepEqual(harness.jumpSamples, [true, false]);
+  } finally {
+    harness.restore();
+  }
+});
+
+test("mobile jump releases on cancellation and explicit clear", () => {
+  const harness = createMobileControlsHarness();
+  try {
+    harness.jumpButton.dispatchEvent(pointer(harness.window, "pointerdown", 300, 300, 42, 1));
+    harness.jumpButton.dispatchEvent(pointer(harness.window, "pointercancel", 300, 300, 42, 0));
+    assert.deepEqual(harness.jumpSamples, [true, false]);
+
+    harness.jumpButton.dispatchEvent(pointer(harness.window, "pointerdown", 300, 300, 43, 1));
+    harness.controls.clearJumpInput();
+    assert.deepEqual(harness.jumpSamples, [true, false, true, false]);
+  } finally {
+    harness.restore();
+  }
+});
+
+test("mobile weapon button cycles once per press and respects input gating", () => {
+  let canUseInput = true;
+  const harness = createMobileControlsHarness({ canUseInput: () => canUseInput });
+  try {
+    assert.ok(harness.weaponButton, "weapon button mounts");
+    harness.weaponButton.dispatchEvent(pointer(harness.window, "pointerdown", 320, 200, 51, 1));
+    assert.equal(harness.weaponCycleCount(), 1);
+
+    canUseInput = false;
+    harness.weaponButton.dispatchEvent(pointer(harness.window, "pointerdown", 320, 200, 52, 1));
+    assert.equal(harness.weaponCycleCount(), 1);
+
+    // Jump is gated the same way.
+    harness.jumpButton.dispatchEvent(pointer(harness.window, "pointerdown", 300, 300, 53, 1));
+    assert.deepEqual(harness.jumpSamples, []);
+  } finally {
+    harness.restore();
+  }
+});
+
 function createMobileControlsHarness({ canUseInput = () => true } = {}) {
   const previousDocument = globalThis.document;
   const previousHTMLElement = globalThis.HTMLElement;
@@ -151,7 +199,9 @@ function createMobileControlsHarness({ canUseInput = () => true } = {}) {
   const root = document.createElement("div");
   document.body.append(root);
   const analogSamples = [];
+  const jumpSamples = [];
   let moveIntentCount = 0;
+  let weaponCycleCount = 0;
   const controls = createQuakeMobileControls({
     root,
     moveDeadzone: 0.08,
@@ -168,6 +218,8 @@ function createMobileControlsHarness({ canUseInput = () => true } = {}) {
     onLookDelta: () => undefined,
     onFireDown: () => true,
     onFireEnd: () => undefined,
+    onJump: (pressed) => { jumpSamples.push(pressed); },
+    onWeaponCycle: () => { weaponCycleCount += 1; },
   });
 
   controls.attach();
@@ -200,8 +252,12 @@ function createMobileControlsHarness({ canUseInput = () => true } = {}) {
     centerY: 172,
     controls,
     front,
+    jumpButton: document.querySelector("#quake-mobile-jump"),
+    jumpSamples,
     moveIntentCount: () => moveIntentCount,
     moveZone,
+    weaponButton: document.querySelector("#quake-mobile-weapon"),
+    weaponCycleCount: () => weaponCycleCount,
     restore: () => {
       controls.dispose();
       restoreGlobal("document", previousDocument);

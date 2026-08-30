@@ -25,10 +25,13 @@ interface QuakeMobileControlsOptions {
   onLookDelta: (deltaX: number, deltaY: number, pointerId: number) => void;
   onFireDown: (event: PointerEvent) => boolean;
   onFireEnd: (event: PointerEvent) => void;
+  onJump: (pressed: boolean) => void;
+  onWeaponCycle: () => void;
 }
 
 export interface QuakeMobileControls {
   attach(): void;
+  clearJumpInput(): void;
   clearLookInput(): void;
   clearMoveInput(): void;
   destroy(): void;
@@ -49,6 +52,9 @@ export function createQuakeMobileControls(options: QuakeMobileControlsOptions): 
   let moveStickFront: HTMLElement | null = null;
   let lookZone: HTMLElement | null = null;
   let fireButton: HTMLButtonElement | null = null;
+  let jumpButton: HTMLButtonElement | null = null;
+  let weaponButton: HTMLButtonElement | null = null;
+  let jumpPointerId: number | null = null;
   let moveFrame = 0;
   let moveTime = 0;
   let moveX = 0;
@@ -125,7 +131,27 @@ export function createQuakeMobileControls(options: QuakeMobileControlsOptions): 
     nextFireButton.type = "button";
     nextFireButton.setAttribute("aria-label", "Fire");
 
-    controlsRoot.append(nextLookZone, nextMoveZone, nextFireButton);
+    // Quake needs more verbs than footlol's move/actions pair: jump and a
+    // weapon cycle join the fire button in the right-hand cluster.
+    const nextJumpButton = document.createElement("button");
+    nextJumpButton.id = "quake-mobile-jump";
+    nextJumpButton.type = "button";
+    nextJumpButton.setAttribute("aria-label", "Jump");
+    nextJumpButton.textContent = "JUMP";
+
+    const nextWeaponButton = document.createElement("button");
+    nextWeaponButton.id = "quake-mobile-weapon";
+    nextWeaponButton.type = "button";
+    nextWeaponButton.setAttribute("aria-label", "Next weapon");
+    nextWeaponButton.textContent = "GUN>";
+
+    // Rotate hint (footlol's RotateOverlay, non-blocking): CSS shows it in
+    // portrait and fades it out — no JS state, no orientation listener.
+    const rotateHint = document.createElement("div");
+    rotateHint.id = "quake-mobile-rotate-hint";
+    rotateHint.textContent = "ROTATE FOR A WIDER VIEW";
+
+    controlsRoot.append(nextLookZone, nextMoveZone, nextFireButton, nextJumpButton, nextWeaponButton, rotateHint);
     options.root.append(controlsRoot);
 
     root = controlsRoot;
@@ -135,6 +161,8 @@ export function createQuakeMobileControls(options: QuakeMobileControlsOptions): 
     moveStickBack = nextMoveStickBack;
     moveStickFront = nextMoveStickFront;
     fireButton = nextFireButton;
+    jumpButton = nextJumpButton;
+    weaponButton = nextWeaponButton;
     syncMoveStickVisual(0, 0, false);
     nextMoveZone.addEventListener("pointerdown", handleMovePointerDown);
     nextMoveZone.addEventListener("pointermove", handleMovePointerMove);
@@ -150,6 +178,11 @@ export function createQuakeMobileControls(options: QuakeMobileControlsOptions): 
     nextFireButton.addEventListener("pointerup", handleFirePointerEnd);
     nextFireButton.addEventListener("pointercancel", handleFirePointerEnd);
     nextFireButton.addEventListener("lostpointercapture", handleFirePointerEnd);
+    nextJumpButton.addEventListener("pointerdown", handleJumpPointerDown);
+    nextJumpButton.addEventListener("pointerup", handleJumpPointerEnd);
+    nextJumpButton.addEventListener("pointercancel", handleJumpPointerEnd);
+    nextJumpButton.addEventListener("lostpointercapture", handleJumpPointerEnd);
+    nextWeaponButton.addEventListener("pointerdown", handleWeaponPointerDown);
   }
 
   function destroy(): void {
@@ -169,6 +202,12 @@ export function createQuakeMobileControls(options: QuakeMobileControlsOptions): 
     fireButton?.removeEventListener("pointerup", handleFirePointerEnd);
     fireButton?.removeEventListener("pointercancel", handleFirePointerEnd);
     fireButton?.removeEventListener("lostpointercapture", handleFirePointerEnd);
+    jumpButton?.removeEventListener("pointerdown", handleJumpPointerDown);
+    jumpButton?.removeEventListener("pointerup", handleJumpPointerEnd);
+    jumpButton?.removeEventListener("pointercancel", handleJumpPointerEnd);
+    jumpButton?.removeEventListener("lostpointercapture", handleJumpPointerEnd);
+    weaponButton?.removeEventListener("pointerdown", handleWeaponPointerDown);
+    clearJumpInput();
     root?.remove();
     root = null;
     lookZone = null;
@@ -177,6 +216,8 @@ export function createQuakeMobileControls(options: QuakeMobileControlsOptions): 
     moveStickBack = null;
     moveStickFront = null;
     fireButton = null;
+    jumpButton = null;
+    weaponButton = null;
   }
 
   function handleLookPointerDown(event: PointerEvent): void {
@@ -557,6 +598,52 @@ export function createQuakeMobileControls(options: QuakeMobileControlsOptions): 
     fireStartedAt = 0;
   }
 
+  function handleJumpPointerDown(event: PointerEvent): void {
+    event.preventDefault();
+    event.stopPropagation();
+    if (event.button !== 0 || jumpPointerId !== null) return;
+    if (!options.canUseInput()) return;
+    jumpPointerId = event.pointerId;
+    options.onJump(true);
+    markQuakeTrace("mobile-jump-down", { pointerId: event.pointerId });
+    try {
+      jumpButton?.setPointerCapture(event.pointerId);
+    } catch {
+      // Pointer capture can fail if the pointer ended during the same frame.
+    }
+  }
+
+  function handleJumpPointerEnd(event: PointerEvent): void {
+    if (event.pointerId !== jumpPointerId) return;
+    event.preventDefault();
+    event.stopPropagation();
+    clearJumpInput();
+  }
+
+  function clearJumpInput(): void {
+    const pointerId = jumpPointerId;
+    if (pointerId === null) return;
+    if (jumpButton?.hasPointerCapture(pointerId)) {
+      try {
+        jumpButton.releasePointerCapture(pointerId);
+      } catch {
+        // The browser may already have released capture on pointer cancellation.
+      }
+    }
+    jumpPointerId = null;
+    options.onJump(false);
+    markQuakeTrace("mobile-jump-up", { pointerId });
+  }
+
+  function handleWeaponPointerDown(event: PointerEvent): void {
+    event.preventDefault();
+    event.stopPropagation();
+    if (event.button !== 0) return;
+    if (!options.canUseInput()) return;
+    markQuakeTrace("mobile-weapon-cycle", { pointerId: event.pointerId });
+    options.onWeaponCycle();
+  }
+
   function releaseFirePointerCapture(pointerId: number | null): void {
     if (pointerId === null || !fireButton?.hasPointerCapture(pointerId)) return;
     try {
@@ -568,6 +655,7 @@ export function createQuakeMobileControls(options: QuakeMobileControlsOptions): 
 
   return {
     attach,
+    clearJumpInput,
     clearLookInput,
     clearMoveInput,
     destroy,
