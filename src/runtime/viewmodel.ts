@@ -195,19 +195,52 @@ const QUAKE_WEAPON_GLYPH_ID = "viewmodel:weapon";
 // measured the glyph gun's ink mean level with the reference gun's under the
 // retuned world tone at the default entity density.
 const QUAKE_WEAPON_GLYPH_TONE_SCALE = 1.6;
-// The ASCII weapon is the same model rendered in the WORLD perspective instead
-// of the weapon's dedicated stage perspective, so its on-screen size needs an
-// empirical factor on top of the per-axis weapon scale. Tunable (?glyphWeaponScale).
-const QUAKE_GLYPH_WEAPON_SCALE = 0.3;
-// The raster weapon offset (forwardOffset 3.1 etc.) is tuned for the weapon's
-// own near perspective; in the world frame that lands the weapon metres away.
-// Scale the whole eye→weapon offset down so it sits at the hand near the focal
-// point, preserving the bob/punch proportions baked into it. (?glyphWeaponReach)
-const QUAKE_GLYPH_WEAPON_REACH = 0.18;
+// The ASCII weapon is the same model rendered in the WORLD camera's own
+// projection instead of the raster path's dedicated close-up weapon-stage
+// perspective (a SEPARATE, near-field-tuned `perspective` CSS value the glyph
+// engine has no equivalent of — see `syncTransform`'s glyph branch), so its
+// on-screen size needs an empirical factor on top of the per-axis weapon
+// scale. Tunable (?glyphWeaponScale). Calibrated 2026-08 against the measured
+// cssquake.wtf reference (width frac ~0.090, aspect ~1.04) — see the report
+// for the sweep this and REACH were solved from together.
+const QUAKE_GLYPH_WEAPON_SCALE = 0.756;
+// Fraction of the raster weapon's eye→weapon offset to apply in the WORLD
+// camera's own projection (there's no separate near-field weapon-stage
+// perspective to place it in — see the class doc). This multiplies the whole
+// eye→weapon offset (preserving the bob/punch proportions baked into it), so
+// forward/right/up all scale together.
+//
+// A prior pass pushed this to 7 (far-field) on the theory that the mesh's own
+// depth extent (~5.7 world units) at a near distance caused severe near/far
+// foreshortening. Measured (2026-08, bounded reach sweep at fixed pose):
+// that theory doesn't hold — aspect and vertical centring both get WORSE as
+// reach grows past ~1, and both converge close to the cssquake.wtf reference
+// (aspect ~1.04, width ~0.09, centre ~0.86) in a 0.5-0.7 band. The far-field
+// value was very likely overcompensating for the double-pitch rotation bug
+// that got fixed in the same round (visible distortion at close range, wrongly
+// attributed to distance rather than the corrupted rotation) — with rotation
+// fixed, a near-field reach close to the raster's own proportions is correct.
+// Tunable (?glyphWeaponReach).
+const QUAKE_GLYPH_WEAPON_REACH = 0.65;
 // Small forward depth bias so the close weapon wins the depth test against
 // world geometry right at the muzzle (FPS weapons render on top), matching how
 // the polycss weapon sits in its own layer above the world.
 const QUAKE_GLYPH_WEAPON_DEPTH_BIAS = 0.02;
+// The exported glyph mesh's own rest frame doesn't have local +X held exactly
+// along the camera's forward axis the way `quakeAliasModelRenderYaw` assumes
+// for world-facing entities (monsters/pickups) — viewmodel frames are posed
+// "held up in front of the viewer," not "standing facing a direction," so the
+// rest pose carries its own fixed cant. Measured empirically: swept the raw
+// yaw at two different camera yaws (90° and 0°) and found the SAME -20° offset
+// reproduces the reference aspect (~1.04) at both — i.e. a real, portable axis-
+// convention constant, not a pose-specific fit. See the report for the sweep.
+const QUAKE_GLYPH_WEAPON_YAW_OFFSET = -20;
+// Small additional drop below the raster upOffset, verified (2026-08) to still
+// help at the corrected near-field REACH: with it, aspect/width/centring all
+// land close to the cssquake.wtf reference at both the desktop and phone
+// viewports; zeroing it measurably worsens aspect and width (re-verified after
+// the REACH fix — not a leftover far-field-only knob).
+const QUAKE_GLYPH_WEAPON_VERTICAL_ADJUST = -0.5;
 const QUAKE_WEAPON_FORWARD_OFFSET = 3.1;
 const QUAKE_WEAPON_RIGHT_OFFSET = 0;
 const QUAKE_WEAPON_UP_OFFSET = -0.3;
@@ -493,14 +526,15 @@ export function createQuakeViewmodelController({
     syncCarrierTransform(weapon);
     syncLayer();
     // Glyph mode: the carrier is hidden; mirror the weapon into the world overlay.
-    // NOTE the pitch. `rotX` above is the SCREEN pitch — a constant, because the
-    // polycss weapon lives in its own screen-space stage where looking up/down
-    // must not move the gun. The glyph weapon is a WORLD-space mesh, so it has to
-    // orbit with the real view pitch or it stays pinned to the horizontal plane
-    // and slides out of the frustum the moment you look up ⇒ the gun "drops".
+    // Reuse the SAME pinned-pitch `weapon` the raster carrier uses. `rotX` is a
+    // constant 90 (weaponViewRotX) — like the raster path's "stage", the glyph
+    // world overlay's own camera (synced separately, see App.ts's
+    // `scene.applyCamera` wrapper) already carries the REAL view pitch and
+    // applies it to every world entity including this one, so the weapon's own
+    // offset math must stay pitch-free or the pitch gets applied twice and
+    // distorts the gun's pose/aspect as you look up/down.
     if (glyphMode) {
-      const viewRotX = scene.camera.state.rotX ?? rotX;
-      syncGlyphWeapon(weaponTransform(origin, viewRotX, rotY, bob), origin);
+      syncGlyphWeapon(weapon, origin);
     }
   }
 
@@ -604,19 +638,28 @@ export function createQuakeViewmodelController({
     weapon: QuakeViewmodelDebugSnapshot["weapon"],
     origin: Vec3,
   ): QuakeGlyphEntityTransform {
-    // Bring the weapon from the carrier's far placement to the hand: keep the
-    // eye→weapon direction + bob/punch proportions, but apply only `glyphReach`
-    // of the offset so it sits near the focal point in the world perspective.
+    const currentTuning = activeTuning();
+    // Bring the weapon in to `glyphReach`'s near-field distance: keep the
+    // eye→weapon direction + bob/punch proportions, scaling the whole offset
+    // uniformly (see QUAKE_GLYPH_WEAPON_REACH's doc for why "near", not "far").
+    // `weapon.up` is always world +Z here (pinned-pitch offset math), so the
+    // raster path's small local screen-lift (`localYOffsetPx`, applied before
+    // its own world placement) folds in the same way: an un-scaled lift along
+    // world up, independent of the reach distance — plus a small fixed extra
+    // drop (QUAKE_GLYPH_WEAPON_VERTICAL_ADJUST) on top of the raster upOffset
+    // (see its doc).
+    const localLift = polyCssDistanceToWorld(-currentTuning.localYOffsetPx);
     return {
       position: [
-        origin[0] + (weapon.position[0] - origin[0]) * glyphReach,
-        origin[1] + (weapon.position[1] - origin[1]) * glyphReach,
-        origin[2] + (weapon.position[2] - origin[2]) * glyphReach,
+        origin[0] + (weapon.position[0] - origin[0]) * glyphReach + weapon.up[0] * localLift,
+        origin[1] + (weapon.position[1] - origin[1]) * glyphReach + weapon.up[1] * localLift,
+        origin[2] + (weapon.position[2] - origin[2]) * glyphReach + weapon.up[2] * localLift + QUAKE_GLYPH_WEAPON_VERTICAL_ADJUST,
       ],
-      // poly's triple is [pitch, 0, yaw] for a CSS transform whose axes are
-      // remapped (`rotateY(-rotX) rotateX(rotY)…`); glyphcss takes world-frame
-      // XYZ Euler, so convert rather than reuse it verbatim.
-      rotation: glyphEulerFromYawPitch(weapon.rotation[2], weapon.rotation[0]),
+      // `weapon.rotation[2]` is the yaw-only component ((rotY+180)%360, same as
+      // the raster carrier's rotateZ) since `weapon` here always comes from the
+      // pinned-pitch `weaponTransform` call — see `glyphEulerFromYawPitch` and
+      // QUAKE_GLYPH_WEAPON_YAW_OFFSET's docs for the rest of the rotation story.
+      rotation: glyphEulerFromYawPitch(weapon.rotation[2] + QUAKE_GLYPH_WEAPON_YAW_OFFSET, currentTuning.localPitchDeg),
       scale: [
         weapon.scale[0] * glyphScaleFactor,
         weapon.scale[1] * glyphScaleFactor,
@@ -1106,16 +1149,20 @@ function forwardDirection(rotX: number, rotY: number): Vec3 {
 /**
  * The viewmodel's world orientation as an XYZ Euler triple for glyphcss.
  *
- * glyphcss composes `R = Rx·Ry·Rz` in the WORLD frame (Rz acts on the point
- * first), so its `Rx` is a pitch about world X. What the weapon actually needs
- * is a pitch about its OWN right axis after the yaw — and world X only equals
- * that right axis at yaw 270°. Feeding poly's `[pitch, 0, yaw]` straight through
- * therefore renders correctly at exactly one yaw and skews everywhere else,
- * pitching the gun out of frame entirely when you look up.
+ * `pitchDeg` here is the WEAPON's own small fixed local tilt (`localPitchDeg`,
+ * 13° default / 11° for the axe) — never the real view pitch. The glyph
+ * overlay's camera already carries real pitch for every world entity (see
+ * `syncTransform`'s glyph branch), exactly like the raster path's "stage"
+ * carries it for the carrier; re-deriving it here would apply it twice and
+ * skew the gun's pose/aspect as you look up/down.
  *
- * So build the intended matrix `M = Rz(yaw)·Rx(pitch)` (pitch first, in the
- * local frame; then yaw about world up) and decompose it back into the XYZ
- * Euler angles glyphcss expects.
+ * The raster carrier applies its local tilt via `rotateX(pitch)` BEFORE the
+ * outer `rotateZ(-yaw)` (see `weaponLocalTransform` + `weaponTransformCss`'s
+ * ordering) — i.e. the intended composed rotation, applied to a point, is
+ * `M = Rz(yaw)·Rx(pitch)` (pitch acts on the point first, in the model's own
+ * local frame; yaw about world up acts second). glyphcss's `rotation` field
+ * is a single Euler XYZ triple composed as `R = Rx·Ry·Rz` (Rz acts on the
+ * point first), so `M` is decomposed back into that XYZ form here.
  */
 function glyphEulerFromYawPitch(yawDeg: number, pitchDeg: number): Vec3 {
   const y = (yawDeg * Math.PI) / 180;

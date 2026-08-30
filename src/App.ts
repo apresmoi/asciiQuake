@@ -2423,7 +2423,7 @@ viewmodel = createQuakeViewmodelController({
   glyphEntitySink: quakeGlyphOverlay ?? undefined,
   renderModeIsGlyph: () => quakeRenderMode === "glyphcss",
   glyphWeaponScale: quakeUrlNumberParam(quakeStartupUrlParams, "glyphWeaponScale", 0.01, 2) ?? undefined,
-  glyphWeaponReach: quakeUrlNumberParam(quakeStartupUrlParams, "glyphWeaponReach", 0.02, 1) ?? undefined,
+  glyphWeaponReach: quakeUrlNumberParam(quakeStartupUrlParams, "glyphWeaponReach", 0.02, 20) ?? undefined,
 });
 // Now that the viewmodel exists, let the camera chokepoint re-sync the glyph
 // weapon on every camera update (incl. direct mouse-look) so it tracks the view.
