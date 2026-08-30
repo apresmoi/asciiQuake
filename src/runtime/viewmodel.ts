@@ -188,6 +188,13 @@ export interface QuakeViewmodelControllerOptions {
 }
 
 const QUAKE_WEAPON_GLYPH_ID = "viewmodel:weapon";
+// Per-mesh lift over the world overlay's brighten (see the transform's
+// `toneScale` doc): measured 2026-08 against the cssquake.wtf gun. The lift
+// lands sub-linearly (the tone pipe's channel-clip guard caps the gun's
+// bright metal), so the factor is larger than the raw ink deficit: 1.6
+// measured the glyph gun's ink mean level with the reference gun's under the
+// retuned world tone at the default entity density.
+const QUAKE_WEAPON_GLYPH_TONE_SCALE = 1.6;
 // The ASCII weapon is the same model rendered in the WORLD perspective instead
 // of the weapon's dedicated stage perspective, so its on-screen size needs an
 // empirical factor on top of the per-axis weapon scale. Tunable (?glyphWeaponScale).
@@ -621,6 +628,11 @@ export function createQuakeViewmodelController({
       // standing against a wall/floor buries it inside that surface and the
       // shared depth buffer hides it: the gun "drops" until you back away.
       neverOccluded: true,
+      // The gun's own lift over the scene tone (2026-08 retune vs the
+      // cssquake.wtf gun): under the world tone that matches the walls, the
+      // viewmodel's baked colours measured ~0.8x the reference gun's ink —
+      // walls measured ~1.4x — so it carries a per-mesh multiplier.
+      toneScale: QUAKE_WEAPON_GLYPH_TONE_SCALE,
     };
   }
 
