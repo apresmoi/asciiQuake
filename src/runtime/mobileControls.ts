@@ -150,6 +150,47 @@ export function createQuakeMobileControls(options: QuakeMobileControlsOptions): 
    * The first tap on the menu is both the earliest legal gesture and the one the
    * player actually makes, so the rotation lands before gameplay, not after.
    */
+  /**
+   * Last real touch point, in client coordinates.
+   *
+   * MEASURED on a Galaxy S23: this browser delivers PointerEvents whose
+   * `clientX`/`clientY` — and `pageX/Y` and `screenX/Y` — are ALL ZERO, while
+   * the TouchEvents for the same gesture carry correct coordinates:
+   *
+   *   touchstart  touches[0] = [98, 227]   <- right
+   *   pointerdown clientX/Y  = [0, 0]      <- wrong
+   *
+   * The event still targets the correct element, so only the coordinates are
+   * lost. Reading 0 made the joystick anchor at the page origin, which is the
+   * "stick jumps to the top-left corner" bug. Touch listeners run in the capture
+   * phase and are passive, so they see the gesture before any pointer handler
+   * and never block scrolling.
+   */
+  let lastTouchX = 0;
+  let lastTouchY = 0;
+  let sawTouchPoint = false;
+
+  function recordTouchPoint(event: TouchEvent): void {
+    const touch = event.touches[0] ?? event.changedTouches[0];
+    if (!touch) return;
+    lastTouchX = touch.clientX;
+    lastTouchY = touch.clientY;
+    sawTouchPoint = true;
+  }
+
+  /**
+   * Client coordinates for a pointer event, falling back to the last touch when
+   * the pointer's own are the zeroed pair described above. Both exactly 0 is the
+   * tell: a genuine touch inside a control zone can never land on the page
+   * origin, since every zone is inset from the edges.
+   */
+  function pointerPoint(event: PointerEvent): { x: number; y: number } {
+    if (event.clientX === 0 && event.clientY === 0 && sawTouchPoint) {
+      return { x: lastTouchX, y: lastTouchY };
+    }
+    return { x: event.clientX, y: event.clientY };
+  }
+
   function onFirstControlTouch(event: PointerEvent): void {
     if (event.pointerType === "mouse") return;
     if (!media.matches) return;
@@ -167,6 +208,8 @@ export function createQuakeMobileControls(options: QuakeMobileControlsOptions): 
     // real S23, where fullscreen therefore never happened and the subsequent
     // `orientation.lock()` failed with "The page needs to be fullscreen".
     document.addEventListener("pointerdown", onFirstControlTouch, { capture: true });
+    document.addEventListener("touchstart", recordTouchPoint, { capture: true, passive: true });
+    document.addEventListener("touchmove", recordTouchPoint, { capture: true, passive: true });
 
     const nextLookZone = document.createElement("div");
     nextLookZone.id = "quake-mobile-look-zone";
@@ -245,6 +288,8 @@ export function createQuakeMobileControls(options: QuakeMobileControlsOptions): 
     clearLookInput();
     clearMoveInput();
     document.removeEventListener("pointerdown", onFirstControlTouch, { capture: true });
+    document.removeEventListener("touchstart", recordTouchPoint, { capture: true });
+    document.removeEventListener("touchmove", recordTouchPoint, { capture: true });
     moveZone?.removeEventListener("pointerdown", handleMovePointerDown);
     moveZone?.removeEventListener("pointermove", handleMovePointerMove);
     moveZone?.removeEventListener("pointerup", handleMovePointerEnd);
@@ -305,8 +350,9 @@ export function createQuakeMobileControls(options: QuakeMobileControlsOptions): 
       return;
     }
     lookPointerId = event.pointerId;
-    lookLastX = event.clientX;
-    lookLastY = event.clientY;
+    const lookStart = pointerPoint(event);
+    lookLastX = lookStart.x;
+    lookLastY = lookStart.y;
     lookMoveCount = 0;
     lookStartedAt = performance.now();
     const rect = lookZone?.getBoundingClientRect();
@@ -332,10 +378,11 @@ export function createQuakeMobileControls(options: QuakeMobileControlsOptions): 
       clearLookInput();
       return;
     }
-    const deltaX = event.clientX - lookLastX;
-    const deltaY = event.clientY - lookLastY;
-    lookLastX = event.clientX;
-    lookLastY = event.clientY;
+    const lookNow = pointerPoint(event);
+    const deltaX = lookNow.x - lookLastX;
+    const deltaY = lookNow.y - lookLastY;
+    lookLastX = lookNow.x;
+    lookLastY = lookNow.y;
     lookMoveCount++;
     options.onLookDelta(deltaX, deltaY, event.pointerId);
   }
@@ -445,7 +492,8 @@ export function createQuakeMobileControls(options: QuakeMobileControlsOptions): 
       return;
     }
     moveSampleCount++;
-    setMoveInput((event.clientX - moveAnchorX) / radius, (moveAnchorY - event.clientY) / radius, phase);
+    const movePoint = pointerPoint(event);
+    setMoveInput((movePoint.x - moveAnchorX) / radius, (moveAnchorY - movePoint.y) / radius, phase);
   }
 
   function setMoveAnchor(event: PointerEvent): boolean {
@@ -461,10 +509,11 @@ export function createQuakeMobileControls(options: QuakeMobileControlsOptions): 
       markQuakeTrace("mobile-move-input", { source: "start", reason: "zero-zone", x: 0, y: 0 });
       return false;
     }
-    moveAnchorX = event.clientX;
-    moveAnchorY = event.clientY;
-    moveStickCenterX = event.clientX - rect.left;
-    moveStickCenterY = event.clientY - rect.top;
+    const anchor = pointerPoint(event);
+    moveAnchorX = anchor.x;
+    moveAnchorY = anchor.y;
+    moveStickCenterX = anchor.x - rect.left;
+    moveStickCenterY = anchor.y - rect.top;
     syncMoveStickVisual(0, 0, true);
     return true;
   }
