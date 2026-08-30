@@ -167,29 +167,52 @@ export function createQuakeMobileControls(options: QuakeMobileControlsOptions): 
    * and never block scrolling.
    */
   let lookAnchorPending = false;
-  let lastTouchX = 0;
-  let lastTouchY = 0;
-  let sawTouchPoint = false;
+  /**
+   * Every ACTIVE touch, keyed by its identifier — not a single global point.
+   *
+   * The first version of this kept one `lastTouch`, taken from `touches[0]`.
+   * That broke MULTI-TOUCH: with a thumb on the stick and a thumb dragging to
+   * look, both handlers read the same finger, so moving and looking at once was
+   * impossible. Keeping every touch and choosing the one inside the asking
+   * zone's rect keeps the two gestures independent.
+   */
+  const activeTouches = new Map<number, { x: number; y: number }>();
 
   function recordTouchPoint(event: TouchEvent): void {
-    const touch = event.touches[0] ?? event.changedTouches[0];
-    if (!touch) return;
-    lastTouchX = touch.clientX;
-    lastTouchY = touch.clientY;
-    sawTouchPoint = true;
+    for (const touch of Array.from(event.touches)) {
+      activeTouches.set(touch.identifier, { x: touch.clientX, y: touch.clientY });
+    }
+    // `touches` omits lifted fingers, so prune anything no longer present.
+    const live = new Set(Array.from(event.touches, (t) => t.identifier));
+    for (const id of [...activeTouches.keys()]) if (!live.has(id)) activeTouches.delete(id);
+  }
+
+  function clearTouchPoints(event: TouchEvent): void {
+    for (const touch of Array.from(event.changedTouches)) activeTouches.delete(touch.identifier);
   }
 
   /**
-   * Client coordinates for a pointer event, falling back to the last touch when
-   * the pointer's own are the zeroed pair described above. Both exactly 0 is the
-   * tell: a genuine touch inside a control zone can never land on the page
-   * origin, since every zone is inset from the edges.
+   * Client coordinates for a pointer event, falling back to the touch that lies
+   * inside `zone` when the pointer's own coordinates are the zeroed pair this
+   * browser produces (measured on a Galaxy S23: `clientX/Y`, `pageX/Y` and
+   * `screenX/Y` all 0, while the TouchEvents for the same gesture are correct).
+   *
+   * Both exactly 0 is the tell — a real touch inside a control zone can never
+   * land on the page origin, since every zone is inset from the edges. Matching
+   * by zone rather than by index is what makes two simultaneous gestures work.
    */
-  function pointerPoint(event: PointerEvent): { x: number; y: number } {
-    if (event.clientX === 0 && event.clientY === 0 && sawTouchPoint) {
-      return { x: lastTouchX, y: lastTouchY };
+  function pointerPoint(event: PointerEvent, zone?: HTMLElement | null): { x: number; y: number } {
+    if (event.clientX !== 0 || event.clientY !== 0) return { x: event.clientX, y: event.clientY };
+    const rect = zone?.getBoundingClientRect();
+    if (rect && rect.width > 0) {
+      for (const point of activeTouches.values()) {
+        if (point.x >= rect.left && point.x <= rect.right && point.y >= rect.top && point.y <= rect.bottom) {
+          return point;
+        }
+      }
     }
-    return { x: event.clientX, y: event.clientY };
+    const first = activeTouches.values().next();
+    return first.done ? { x: event.clientX, y: event.clientY } : first.value;
   }
 
   function onFirstControlTouch(event: PointerEvent): void {
@@ -211,6 +234,8 @@ export function createQuakeMobileControls(options: QuakeMobileControlsOptions): 
     document.addEventListener("pointerdown", onFirstControlTouch, { capture: true });
     document.addEventListener("touchstart", recordTouchPoint, { capture: true, passive: true });
     document.addEventListener("touchmove", recordTouchPoint, { capture: true, passive: true });
+    document.addEventListener("touchend", clearTouchPoints, { capture: true, passive: true });
+    document.addEventListener("touchcancel", clearTouchPoints, { capture: true, passive: true });
 
     const nextLookZone = document.createElement("div");
     nextLookZone.id = "quake-mobile-look-zone";
@@ -291,6 +316,8 @@ export function createQuakeMobileControls(options: QuakeMobileControlsOptions): 
     document.removeEventListener("pointerdown", onFirstControlTouch, { capture: true });
     document.removeEventListener("touchstart", recordTouchPoint, { capture: true });
     document.removeEventListener("touchmove", recordTouchPoint, { capture: true });
+    document.removeEventListener("touchend", clearTouchPoints, { capture: true });
+    document.removeEventListener("touchcancel", clearTouchPoints, { capture: true });
     moveZone?.removeEventListener("pointerdown", handleMovePointerDown);
     moveZone?.removeEventListener("pointermove", handleMovePointerMove);
     moveZone?.removeEventListener("pointerup", handleMovePointerEnd);
@@ -386,7 +413,7 @@ export function createQuakeMobileControls(options: QuakeMobileControlsOptions): 
       clearLookInput();
       return;
     }
-    const lookNow = pointerPoint(event);
+    const lookNow = pointerPoint(event, lookZone);
     if (lookAnchorPending) {
       // First move of the gesture: establish the origin, emit nothing.
       lookAnchorPending = false;
@@ -507,7 +534,7 @@ export function createQuakeMobileControls(options: QuakeMobileControlsOptions): 
       return;
     }
     moveSampleCount++;
-    const movePoint = pointerPoint(event);
+    const movePoint = pointerPoint(event, moveZone);
     setMoveInput((movePoint.x - moveAnchorX) / radius, (moveAnchorY - movePoint.y) / radius, phase);
   }
 
