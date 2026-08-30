@@ -106,11 +106,45 @@ export function createQuakeMobileControls(options: QuakeMobileControlsOptions): 
     options.onAvailabilityChange();
   }
 
+  /**
+   * Go fullscreen and lock landscape on the first touch of the controls.
+   *
+   * A page cannot rotate the device on its own, and a phone with auto-rotate
+   * off simply stays portrait — measured on a real S23: `screen.orientation`
+   * reported `portrait-primary` at 411x742 while the world rendered fine, so
+   * the only thing missing was the orientation itself. Both APIs require a
+   * user gesture and `lock()` requires fullscreen, so the first press on the
+   * control surface is the earliest legal moment.
+   *
+   * Best-effort by design: `lock()` is unsupported on iOS Safari and rejects
+   * on a device whose rotation is locked at the OS level. It must never throw
+   * into the input path — a failed rotation still leaves a playable portrait
+   * screen, which is why the rotate hint stays as the fallback.
+   */
+  let orientationRequested = false;
+  async function requestLandscape(): Promise<void> {
+    if (orientationRequested) return;
+    orientationRequested = true;
+    try {
+      const el = document.documentElement;
+      if (!document.fullscreenElement && el.requestFullscreen) {
+        await el.requestFullscreen({ navigationUI: "hide" });
+      }
+      const orientation = screen.orientation as ScreenOrientation & {
+        lock?: (o: string) => Promise<void>;
+      };
+      await orientation?.lock?.("landscape");
+    } catch {
+      /* unsupported or OS-locked — portrait stays playable */
+    }
+  }
+
   function setup(): void {
     if (root) return;
     const controlsRoot = document.createElement("div");
     controlsRoot.id = "quake-mobile-controls";
     controlsRoot.setAttribute("aria-hidden", "true");
+    controlsRoot.addEventListener("pointerdown", () => { void requestLandscape(); }, { once: true });
 
     const nextLookZone = document.createElement("div");
     nextLookZone.id = "quake-mobile-look-zone";
