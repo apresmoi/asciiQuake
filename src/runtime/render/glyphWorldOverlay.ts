@@ -425,8 +425,14 @@ export function createQuakeGlyphWorldOverlay(
    * this point in setup — referencing it here threw and rendered a black screen.
    */
   const QUAKE_FOV_REFERENCE_HEIGHT = 900;
-  const fovScale = options.fovScale
-    ?? Math.min(1, Math.sqrt(Math.max(1, window.innerHeight) / QUAKE_FOV_REFERENCE_HEIGHT));
+  const autoFovScale = () =>
+    Math.min(1, Math.sqrt(Math.max(1, window.innerHeight) / QUAKE_FOV_REFERENCE_HEIGHT));
+  // MUTABLE, and recomputed on resize. Computing it once at construction meant a
+  // phone that booted in portrait kept a portrait-derived value after rotating:
+  // measured 0.908 (= sqrt(742/900)) still in force at a landscape 846x411,
+  // where the correct value is 0.676 — a camera 34% too far back, which is the
+  // "feels like third person" report.
+  let fovScale = options.fovScale ?? autoFovScale();
   // The glyph render is synchronous in the game loop, so render time = framerate
   // = flicker. A chunky grid (cellPx 20) keeps the framerate high; on TOP of
   // that, 2× supersampling fixes the PROVEN see-through cause — coverage point-
@@ -586,6 +592,18 @@ export function createQuakeGlyphWorldOverlay(
   }
 
   const camera = createGlyphPerspectiveCamera({ rotX: 90, rotY: 270, zoom, perspective, distance: 0, fovScale });
+
+  /** Re-derive the framing when the viewport changes (rotation, resize, chrome). */
+  function refreshFovScale(): void {
+    if (options.fovScale !== undefined) return;   // an explicit override stays pinned
+    const next = autoFovScale();
+    if (Math.abs(next - fovScale) < 0.001) return;
+    fovScale = next;
+    (camera as unknown as { fovScale: number }).fovScale = next;
+    scheduleRender();
+  }
+  window.addEventListener("resize", refreshFovScale);
+  window.addEventListener("orientationchange", refreshFovScale);
 
   const scene = createGlyphScene(element, {
     mode: sceneMode,
@@ -1168,6 +1186,8 @@ export function createQuakeGlyphWorldOverlay(
   }
 
   function dispose(): void {
+    window.removeEventListener("resize", refreshFovScale);
+    window.removeEventListener("orientationchange", refreshFovScale);
     if (pendingFrame) { window.cancelAnimationFrame(pendingFrame); pendingFrame = 0; }
     if (paletteTimer) { window.clearTimeout(paletteTimer); paletteTimer = 0; }
     // Drop staged ops rather than flushing them: the render that would have
