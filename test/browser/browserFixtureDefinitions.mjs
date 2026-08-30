@@ -1,6 +1,7 @@
 import { combatBudgetFixture, logicalTargetabilityFixture } from "./browserFixtureCombat.mjs";
 import { liquidDamageFixture, mapLogicFixture, pickupFixture } from "./browserFixtureMapLogic.mjs";
 import { monsterDomFixture } from "./browserFixtureMonster.mjs";
+import { viewportRotationCameraFixture } from "./browserFixtureViewportRotation.mjs";
 import {
   ogreGrenadeChainFixture,
   ogreGrenadeBounceFixture,
@@ -27,6 +28,7 @@ export const browserFixtures = [
   mapLogicFixture,
   liquidDamageFixture,
   pickupFixture,
+  viewportRotationCameraFixture,
 ];
 
 export function browserFixtureById(id) {

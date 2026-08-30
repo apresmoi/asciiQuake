@@ -554,8 +554,11 @@ export function createQuakeGlyphWorldOverlay(
   let flatten = Math.max(0, Math.min(1, options.flat ?? 0));
   // PolyCSS first-person controls define the look target this far in front of
   // the eye, independent of zoom. Mirror that when a live target is not supplied
-  // (fixed-view/debug paths).
-  const lookOffset = perspective / BASE_TILE;
+  // (fixed-view/debug paths). `let`: refreshViewportCamera() re-derives it when
+  // the viewport perspective changes (a portrait→landscape rotation), otherwise
+  // derived targets keep the boot viewport's look distance and the projected
+  // eye shifts along the view direction.
+  let lookOffset = perspective / BASE_TILE;
 
   const element = document.createElement("div");
   element.className = "quake-glyph-overlay";
@@ -617,6 +620,9 @@ export function createQuakeGlyphWorldOverlay(
     const next = quakeCameraPerspectiveForViewport(window.innerWidth, window.innerHeight, camera.zoom);
     if (!Number.isFinite(next) || Math.abs(next - camera.perspective) < 0.5) return;
     (camera as unknown as { perspective: number }).perspective = next;
+    // The derived look target mirrors the controls' `perspective / BASE_TILE`
+    // offset, so it must track the same refresh.
+    lookOffset = next / BASE_TILE;
     scheduleRender();
   }
   window.addEventListener("resize", refreshViewportCamera);

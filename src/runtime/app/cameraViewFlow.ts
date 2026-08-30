@@ -80,6 +80,19 @@ export function createQuakeCameraViewFlow(
     const viewport = quakeRuntimeViewportSize();
     const perspective = quakeCameraPerspectiveForViewport(viewport.width, viewport.height, cameraConfig.zoom);
     cameraPerspectiveStyle = `${Number(perspective.toFixed(6))}px`;
+    // Keep the JS-side camera perspective in sync with the viewport. polycss's
+    // first-person controls place the camera TARGET at
+    // `parseFloat(scene.camera.perspectiveStyle) / BASE_TILE` in front of the
+    // eye — and `perspectiveStyle` is a plain property frozen at camera
+    // creation. Updating only the CSS var (below) leaves the controls placing
+    // the target at the BOOT-viewport distance, while every consumer that
+    // derives the eye back OUT of that target (the glyph overlay, the DOM
+    // projection) uses the CURRENT perspective. After a portrait boot rotated
+    // to landscape the mismatch displaced the rendered eye ~9 poly units
+    // (~450 Quake units) forward along the view — walls in front vanished and
+    // the view appeared to hover outside the map (measured on a Galaxy S23:
+    // portrait 867.7px vs landscape 421.5px).
+    options.scene.camera.perspectiveStyle = cameraPerspectiveStyle;
     if (firstPersonControlsMounted) {
       options.host.style.setProperty("--polycss-fpv-perspective", cameraPerspectiveStyle);
       options.host.style.removeProperty("perspective");

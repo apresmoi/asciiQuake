@@ -6205,6 +6205,19 @@ function handleQuakePopState(): void {
 
 function handleViewportResize(): void {
   quakeCameraView.syncViewportProjection();
+  // Re-derive the camera target under the refreshed perspective. The polycss
+  // controls only recompute the target on their next look/move, so a player
+  // standing still through a rotation would keep a target placed at the OLD
+  // viewport's look distance — displacing every renderer that derives the eye
+  // back out of it (see syncViewportProjection's perspectiveStyle note).
+  // Skipped while the camera is parked away from the player (intermission,
+  // debug fly): those flows own the camera and re-apply their own vantage.
+  if (currentResult && !quakeIntermission.active() && !isQuakeDebugFlyModeActive()) {
+    quakeCameraView.syncSceneCamera(
+      scene.camera.state.rotX ?? 90,
+      scene.camera.state.rotY ?? 270,
+    );
+  }
   viewmodel.queueViewportSync();
   // Hold the cell budget across a resize. Without this, growing the window grows
   // cols x rows with its AREA and the frame cost climbs quadratically behind an
