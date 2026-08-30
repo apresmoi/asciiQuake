@@ -191,7 +191,7 @@ export const QUAKE_GLYPH_UI_TUNING_KNOBS: readonly QuakeGlyphTuningKnob[] = [
  * so the old dir 0.6 orientation shading double-darkened shadow-facing walls
  * (measured worst at the e1m1 start-hall door: block mean 31 vs reference 51). */
 export const QUAKE_GLYPH_WORLD_TUNING_KNOBS: readonly QuakeGlyphTuningKnob[] = [
-  { key: "brighten", param: "glyphBright", label: "brighten (linear)", min: 1, max: 12, step: 0.1, def: 2.9, group: "World tone" },
+  { key: "brighten", param: "glyphBright", label: "brighten (linear)", min: 1, max: 12, step: 0.1, def: 2.0, group: "World tone" },
   { key: "gamma", param: "glyphGamma", label: "gamma (lower = brighter)", min: 0.2, max: 1, step: 0.01, def: 1, group: "World tone" },
   { key: "black", param: "glyphBlack", label: "black point", min: 0, max: 0.5, step: 0.005, def: 0, group: "World tone" },
   { key: "white", param: "glyphWhite", label: "white point", min: 0.5, max: 1, step: 0.005, def: 1, group: "World tone" },
