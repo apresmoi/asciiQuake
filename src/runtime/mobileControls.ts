@@ -121,10 +121,11 @@ export function createQuakeMobileControls(options: QuakeMobileControlsOptions): 
    * into the input path — a failed rotation still leaves a playable portrait
    * screen, which is why the rotate hint stays as the fallback.
    */
-  let orientationRequested = false;
+  let orientationLocked = false;
   async function requestLandscape(): Promise<void> {
-    if (orientationRequested) return;
-    orientationRequested = true;
+    // Only latch on SUCCESS. Latching on the attempt meant one silent failure
+    // disabled rotation for the whole session.
+    if (orientationLocked) return;
     try {
       const el = document.documentElement;
       if (!document.fullscreenElement && el.requestFullscreen) {
@@ -134,9 +135,16 @@ export function createQuakeMobileControls(options: QuakeMobileControlsOptions): 
         lock?: (o: string) => Promise<void>;
       };
       await orientation?.lock?.("landscape");
+      orientationLocked = true;
     } catch {
       /* unsupported or OS-locked — portrait stays playable */
     }
+  }
+
+  function onFirstControlTouch(event: PointerEvent): void {
+    if (event.pointerType === "mouse") return;
+    if (!(event.target instanceof Node) || root?.contains(event.target) !== true) return;
+    void requestLandscape();
   }
 
   function setup(): void {
@@ -144,7 +152,12 @@ export function createQuakeMobileControls(options: QuakeMobileControlsOptions): 
     const controlsRoot = document.createElement("div");
     controlsRoot.id = "quake-mobile-controls";
     controlsRoot.setAttribute("aria-hidden", "true");
-    controlsRoot.addEventListener("pointerdown", () => { void requestLandscape(); }, { once: true });
+    // Listen on the DOCUMENT in the CAPTURE phase, not on the root: the root is
+    // `pointer-events: none` (taps fall through to the game) and the buttons stop
+    // propagation, so a bubble-phase listener here never fired — measured on a
+    // real S23, where fullscreen therefore never happened and the subsequent
+    // `orientation.lock()` failed with "The page needs to be fullscreen".
+    document.addEventListener("pointerdown", onFirstControlTouch, { capture: true });
 
     const nextLookZone = document.createElement("div");
     nextLookZone.id = "quake-mobile-look-zone";
@@ -222,6 +235,7 @@ export function createQuakeMobileControls(options: QuakeMobileControlsOptions): 
   function destroy(): void {
     clearLookInput();
     clearMoveInput();
+    document.removeEventListener("pointerdown", onFirstControlTouch, { capture: true });
     moveZone?.removeEventListener("pointerdown", handleMovePointerDown);
     moveZone?.removeEventListener("pointermove", handleMovePointerMove);
     moveZone?.removeEventListener("pointerup", handleMovePointerEnd);
