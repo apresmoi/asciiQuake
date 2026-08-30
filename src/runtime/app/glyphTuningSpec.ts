@@ -176,6 +176,61 @@ export const QUAKE_GLYPH_UI_TUNING_KNOBS: readonly QuakeGlyphTuningKnob[] = [
   { key: "labelStroke", param: "glyphImageLabelStroke", label: "label glyph stroke px", min: 0, max: 2, step: 0.05, def: 0.75, group: "Label tone" },
   { key: "labelInkComp", param: "glyphImageLabelInkComp", label: "label ink compensation", min: 0, max: 1, step: 0.05, def: 0.2, group: "Label tone" },
   { key: "labelOcclusionMargin", param: "glyphImageLabelOcclusionMargin", label: "label occlusion margin px", min: 0, max: 8, step: 0.25, def: 2, group: "Label tone" },
+
+  // ── Gameplay HUD ───────────────────────────────────────────────────────────
+  // The status bar and its readouts, split into TWO profiles because they
+  // want opposite treatments: the bar is a busy 320x24 texture that has to
+  // sit back, and the digits/icons on top of it have to come forward.
+  //
+  // Both were code constants until now (HUD_BAR_AMBIENT / HUD_*_DENSITY in
+  // glyphUiOverlay) with no lab session behind them, and no style-table row —
+  // which is why the digits were never tunable. They are rows now, with the
+  // same knob-per-lever shape as every menu element, so the lab drives them.
+  //
+  // Defaults measured 2026-08 (in-game screenshots at 1600x900 DPR 1 and
+  // 846x411 DPR 2.625, e1m1, fresh spawn). At the old settings the readouts'
+  // ink sat at Weber 0.23-0.38 against the bar showing through their own
+  // footprint, with only ~50% of each digit's footprint rendering any ink at
+  // all — the numbers read as darker blotches in orange noise, which is the
+  // reported "not visible by contrast".
+  //
+  // BAR: the levels operate in POST-AMBIENT space; the bar's post-ambient
+  // mean is only 17.7/255 = 0.069, so ANY black point above ~0.069 crushes the
+  // majority of the bar (at black 0.08, 6506 of 7680 texels — 84.71% — were
+  // forced to exact black). The bar's quiet look comes from the load-bearing
+  // 0.55 ambient alone, and its tone curve stays at identity (gamma 1, black 0,
+  // white 1, sat 1) so liftCellColors takes its identity early return.
+  // Warning: raising hudBarBlack re-introduces the crushed black slab.
+  // Ink compensation and stroke restore the scene-inherited defaults that
+  // explicit zeros silently dropped; setting either back to 0 fades the bar.
+  { key: "hudBarDensity", param: "glyphImageHudBarDensity", label: "hud bar density", min: 1, max: 8, step: 0.01, def: 2, group: "HUD bar tone" },
+  { key: "hudBarAmbient", param: "glyphImageHudBarAmbient", label: "hud bar ambient", min: 0.1, max: 6, step: 0.05, def: 0.55, group: "HUD bar tone" },
+  { key: "hudBarGamma", param: "glyphImageHudBarGamma", label: "hud bar gamma (lower = brighter)", min: 0.2, max: 1, step: 0.01, def: 1, group: "HUD bar tone" },
+  { key: "hudBarSaturation", param: "glyphImageHudBarSaturation", label: "hud bar saturation", min: 0, max: 4, step: 0.05, def: 1, group: "HUD bar tone" },
+  { key: "hudBarBlack", param: "glyphImageHudBarBlack", label: "hud bar black point", min: 0, max: 0.5, step: 0.005, def: 0, group: "HUD bar tone" },
+  { key: "hudBarWhite", param: "glyphImageHudBarWhite", label: "hud bar white point", min: 0.5, max: 1, step: 0.005, def: 1, group: "HUD bar tone" },
+  { key: "hudBarStroke", param: "glyphImageHudBarStroke", label: "hud bar glyph stroke px", min: 0, max: 2, step: 0.05, def: 0.6, group: "HUD bar tone" },
+  { key: "hudBarInkComp", param: "glyphImageHudBarInkComp", label: "hud bar ink compensation", min: 0, max: 1, step: 0.05, def: 1, group: "HUD bar tone" },
+
+  // ART (readout digits + status icons): the digit sheet is uniformly DARK —
+  // measured, dist/q/hud-numbers.png has mean ink luma 41.5 and max 107.7
+  // (37.9% opaque, alpha strictly binary) — so at the scene ambient the darker
+  // half of every digit fell below the ramp's first step and rendered as spaces,
+  // which is the "only fragments survived" reading. The ambient here is the
+  // direct fix: it multiplies the texel luma that picks the glyph, so it buys
+  // coverage AND colour at once. The stroke thickens what does render.
+  { key: "hudArtDensity", param: "glyphImageHudArtDensity", label: "hud art density", min: 1, max: 8, step: 0.01, def: 4, group: "HUD art tone" },
+  { key: "hudArtAmbient", param: "glyphImageHudArtAmbient", label: "hud art ambient", min: 0.1, max: 8, step: 0.05, def: 5.5, group: "HUD art tone" },
+  { key: "hudArtGamma", param: "glyphImageHudArtGamma", label: "hud art gamma (lower = brighter)", min: 0.2, max: 1, step: 0.01, def: 0.7, group: "HUD art tone" },
+  { key: "hudArtSaturation", param: "glyphImageHudArtSaturation", label: "hud art saturation", min: 0, max: 4, step: 0.05, def: 1.3, group: "HUD art tone" },
+  { key: "hudArtBlack", param: "glyphImageHudArtBlack", label: "hud art black point", min: 0, max: 0.5, step: 0.005, def: 0, group: "HUD art tone" },
+  { key: "hudArtStroke", param: "glyphImageHudArtStroke", label: "hud art glyph stroke px", min: 0, max: 2, step: 0.05, def: 0.8, group: "HUD art tone" },
+  { key: "hudArtInkComp", param: "glyphImageHudArtInkComp", label: "hud art ink compensation", min: 0, max: 1, step: 0.05, def: 1, group: "HUD art tone" },
+  // The readouts' quiet ground, in SOURCE TEXELS of the 24-texel digit cell —
+  // see hudReadoutGroundSheet.ts for why this is baked into the sheet's alpha
+  // instead of being a glyphcss contour margin (the fully opaque bar owns
+  // every cell a contour margin could have taken).
+  { key: "hudArtGroundTexels", param: "glyphImageHudArtGround", label: "hud readout ground texels", min: 0, max: 6, step: 0.25, def: 2, group: "HUD art tone" },
 ] as const;
 
 /** The world glyph scene (glyphWorldOverlay) — gameplay ASCII.

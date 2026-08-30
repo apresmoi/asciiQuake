@@ -46,6 +46,10 @@ import {
   quakeHudCrosshairSize,
   quakeHudSceneFrame,
 } from "./hudSceneManifest";
+import {
+  QUAKE_HUD_GROUND_MAX_TEXELS,
+  applyQuakeHudReadoutGround,
+} from "./hudReadoutGroundSheet";
 
 /**
  * Renders a whole screen of sprite art as ONE ASCII image.
@@ -425,6 +429,24 @@ export interface QuakeGlyphUiOverlayOptions {
    *  density shortchanges most visibly; a separate knob lets it be raised
    *  without paying for every menu row. */
   readonly consoleTextDensity?: number;
+  /** Detail density for the status BAR art (`?glyphImageHudBarDensity=`),
+   *  default 2 — the bar spans most of the viewport, so a higher density
+   *  buys a huge cell count for what is only a ground. */
+  readonly hudBarDensity?: number;
+  /** Detail density for the readout digits and status ICONS
+   *  (`?glyphImageHudArtDensity=`), default 4 — small elements that must read.
+   *  The crosshair keeps this density too but is deliberately NOT part of the
+   *  `hud-art` style mesh (see emitHudScene). */
+  readonly hudArtDensity?: number;
+  /**
+   * The readouts' quiet ground, in SOURCE TEXELS of the 24-texel digit cell
+   * (`?glyphImageHudArtGround=`), default 2. The digit sheets are re-derived
+   * with their alpha dilated by this much and the new texels filled black, so
+   * the digit mesh CLAIMS a margin around each glyph and the bar's texture is
+   * blanked there — see hudReadoutGroundSheet.ts for why the glyphcss contour
+   * margin cannot do this job. 0 disables and draws the shipped sheets.
+   */
+  readonly hudReadoutGroundTexels?: number;
 }
 
 /** Quake's console character sheet: a 16x16 grid of glyph cells; the high bit
@@ -1097,10 +1119,11 @@ export function createQuakeGlyphUiOverlay(
   const HUD_BAR_AMBIENT = 0.55;
 
   /**
-   * Built-in style rows for meshes the per-element style TABLE does not own
-   * (yet): the HUD draws its own sheets and its tone comes from code
-   * constants, not an approved lab session. A `meshStyles` row with the same
-   * tag (a future lab-tuned HUD profile) overrides the built-in wholesale.
+   * Built-in style rows, used only when the caller passes no `meshStyles`
+   * table (a bare overlay in a test or a harness). The GAME and the glyph lab
+   * both pass the shared table from quakeUiMeshStyles.ts, whose "hud-bar" and
+   * "hud-art" rows override these wholesale — this is the floor that keeps a
+   * table-less overlay from rendering the bar at the scene ambient.
    */
   const BUILTIN_MESH_STYLES: Readonly<Record<string, QuakeGlyphMeshStyle>> = {
     "hud-bar": { ambient: HUD_BAR_AMBIENT },
@@ -1574,13 +1597,73 @@ export function createQuakeGlyphUiOverlay(
   /** HUD densities, per element as the elements need them. The BAR art spans
    *  most of the viewport width — density 2 keeps its detail layer inside a
    *  sane cell count where 4 would not, and its role is a dark ground anyway.
-   *  The icons, digits and crosshair are small and must read: density 4. */
-  const HUD_BAR_DENSITY = 2;
-  const HUD_ART_DENSITY = 4;
-  // The bar's dim itself lives in HUD_BAR_AMBIENT (a per-mesh ambient via the
-  // "hud-bar" built-in style): a material-colour dim never reaches glyph
-  // choice, so dimming through `brightness` left the bar dense — see the
-  // constant's doc for the measurements.
+   *  The icons, digits and crosshair are small and must read: density 4.
+   *  Both are knobs now (`?glyphImageHudBarDensity=`/`glyphImageHudArtDensity=`)
+   *  so the HUD can be tuned in the lab like every menu element; the defaults
+   *  are the constants they replace. They are deliberately NOT in
+   *  `QUAKE_GLYPH_UI_DENSITY_KEYS`: that adaptation preserves a LAB-approved
+   *  detail-cell device size, and measured, the HUD's detail cells are already
+   *  larger in device px on a phone (846x411 DPR 2.625: 3.2) than on a DPR-1
+   *  desktop (1600x900: 2.5), so scaling them down would only coarsen them. */
+  const HUD_BAR_DENSITY = Math.max(1, options.hudBarDensity ?? 2);
+  const HUD_ART_DENSITY = Math.max(1, options.hudArtDensity ?? 4);
+  // The bar's dim itself lives in the "hud-bar" style row's `ambient` (a
+  // per-mesh ambient): a material-colour dim never reaches glyph choice, so
+  // dimming through `brightness` left the bar dense — see HUD_BAR_AMBIENT.
+
+  /**
+   * The digit sheets re-derived with a ground halo (see
+   * hudReadoutGroundSheet.ts), keyed by source URL. Same build-once,
+   * serve-as-a-data-URL shape as the pre-lifted conchars sheet below:
+   * `undefined` = not started, `null` = build in flight, string = ready.
+   */
+  const HUD_GROUND_TEXELS = Math.max(0, Math.min(
+    QUAKE_HUD_GROUND_MAX_TEXELS,
+    options.hudReadoutGroundTexels ?? 2,
+  ));
+  const hudGroundSheets = new Map<string, string | null>();
+  /** The ground-bearing variant of `url`, or the raw sheet while it builds.
+   *  Falls back to the raw sheet on any canvas failure — a readout with no
+   *  ground still beats no readout. */
+  function ensureHudGroundSheet(url: string): string {
+    if (!(HUD_GROUND_TEXELS > 0)) return url;
+    const existing = hudGroundSheets.get(url);
+    if (existing !== undefined) return existing ?? url;
+    hudGroundSheets.set(url, null);
+    const img = new Image();
+    const fallback = () => {
+      hudGroundSheets.set(url, url);
+      adoptedSinceDraw = true;
+      queueSync();
+    };
+    img.onload = () => {
+      try {
+        const canvas = document.createElement("canvas");
+        canvas.width = img.naturalWidth;
+        canvas.height = img.naturalHeight;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) { fallback(); return; }
+        ctx.drawImage(img, 0, 0);
+        const image = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        // The sheet's sprite pitch: ten digit frames across, so the halo is
+        // clipped per frame and cannot blot a neighbouring digit's cell.
+        applyQuakeHudReadoutGround(
+          image,
+          HUD_GROUND_TEXELS,
+          canvas.width / QUAKE_HUD_DIGIT_FRAMES,
+        );
+        ctx.putImageData(image, 0, 0);
+        hudGroundSheets.set(url, canvas.toDataURL("image/png"));
+        adoptedSinceDraw = true;
+        queueSync();
+      } catch {
+        fallback(); // tainted canvas — draw the raw sheet rather than nothing
+      }
+    };
+    img.onerror = fallback;
+    img.src = url;
+    return url;
+  }
 
   /**
    * The gameplay HUD — the classic status bar and the crosshair — drawn from
@@ -1642,7 +1725,7 @@ export function createQuakeGlyphUiOverlay(
         (def.sourceX + def.width) / QUAKE_HUD_ICONS_SHEET_W,
         def.sourceY / QUAKE_HUD_ICONS_SHEET_H,
         (def.sourceY + def.height) / QUAKE_HUD_ICONS_SHEET_H,
-        2, HUD_ART_DENSITY,
+        2, HUD_ART_DENSITY, "hud-art",
       );
     }
 
@@ -1650,9 +1733,13 @@ export function createQuakeGlyphUiOverlay(
     // The health readout swaps to the damage sheet while the cue is active.
     for (const readout of QUAKE_HUD_READOUTS) {
       const value = readout.id === "armor" ? hud.armor : readout.id === "health" ? hud.health : hud.ammo;
-      const url = readout.id === "health" && hud.damage
+      const sheet = readout.id === "health" && hud.damage
         ? QUAKE_HUD_NUMBERS_DAMAGE_URL
         : QUAKE_HUD_NUMBERS_URL;
+      // The ground-bearing variant of the sheet — the readouts' "padding"
+      // around the bar art. The raw sheet draws while it builds; the sync its
+      // build queues adopts the grounded sheet without dropping a frame.
+      const url = ensureHudGroundSheet(sheet);
       for (let i = 0; i < 3; i++) {
         const char = value[i] ?? " ";
         if (char < "0" || char > "9") continue;
@@ -1662,13 +1749,18 @@ export function createQuakeGlyphUiOverlay(
           url,
           digit / QUAKE_HUD_DIGIT_FRAMES, (digit + 1) / QUAKE_HUD_DIGIT_FRAMES,
           0, 1,
-          3, HUD_ART_DENSITY,
+          3, HUD_ART_DENSITY, "hud-art",
         );
       }
     }
 
     // The crosshair: a conchars-sheet cell centred on the EXACT host centre,
     // offset by the variant's own centring translate (from the CSS).
+    // Deliberately UNTAGGED — it is not HUD art on the bar, it is a gameplay
+    // aiming reticle over the world, and it must stay pixel-exact at centre.
+    // Leaving it out of "hud-art" keeps its mesh at the scene ambient and
+    // palette it has always drawn with, so nothing about it moves or changes
+    // tone when the bar and readouts are restyled.
     const variant = QUAKE_HUD_CROSSHAIR_VARIANTS[hud.crosshair];
     if (variant) {
       const size = quakeHudCrosshairSize(hostBox.height);

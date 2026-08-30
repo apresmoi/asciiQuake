@@ -1392,6 +1392,16 @@ let quakeUiTextPalette = quakeElementPalette("glyphImageTextPalette");
 let quakeUiPlaquePalette = quakeElementPalette("glyphImagePlaquePalette");
 let quakeUiTitlePalette = quakeElementPalette("glyphImageTitlePalette");
 let quakeUiLabelPalette = quakeElementPalette("glyphImageLabelPalette");
+// The gameplay HUD's two ramps. The BAR is the one element in the scene whose
+// job is to sit back, and "dense" is the wrong ramp for that: measured, the
+// bar came back as a solid field of the ramp's heaviest glyphs. It draws on
+// the scene's own "detail" ramp instead, which spends its steps on the
+// midtones the bar texture actually lives in. The readouts keep "dense" —
+// they want every step of coverage they can get.
+let quakeUiHudBarPalette = quakeStartupUrlParams.get("glyphImageHudBarPalette")
+  ? sanitizeQuakeGlyphPalette(quakeStartupUrlParams.get("glyphImageHudBarPalette"))
+  : quakeUiGlyphPalette;
+let quakeUiHudArtPalette = quakeElementPalette("glyphImageHudArtPalette");
 
 // glyphcss world overlay (Phase 3 milestone): when the ASCII backend is
 // selected, polycss still drives all game logic/camera/controls while this
@@ -1605,6 +1615,8 @@ function mountQuakeGlyphUiOverlay(t: QuakeGlyphTuningValues): void {
       plaque: quakeUiPlaquePalette,
       title: quakeUiTitlePalette,
       labels: quakeUiLabelPalette,
+      hudBar: quakeUiHudBarPalette,
+      hudArt: quakeUiHudArtPalette,
     }),
     // Measured against the cssquake.wtf reference menu (perceived-luminance
     // region stats, 2026-08): 3.0 + the 0.6px glyph stroke + gamma 0.4 +
@@ -1650,6 +1662,12 @@ function mountQuakeGlyphUiOverlay(t: QuakeGlyphTuningValues): void {
     // the boot console alone can be pushed further (`?glyphImageConsoleDensity=`).
     manifestTextDensity: t.textDensity,
     consoleTextDensity: t.consoleDensity,
+    // The gameplay HUD's own densities and the readouts' ground margin —
+    // `?glyphImageHudBarDensity=`, `?glyphImageHudArtDensity=`,
+    // `?glyphImageHudArtGround=` (see glyphTuningSpec's HUD groups).
+    hudBarDensity: t.hudBarDensity,
+    hudArtDensity: t.hudArtDensity,
+    hudReadoutGroundTexels: t.hudArtGroundTexels,
     // Ink-coverage compensation strength for the art/text detail layers —
     // `?glyphImageInkComp=` (0 disables, 1 full). See the overlay option.
     inkCompensation: t.inkComp,

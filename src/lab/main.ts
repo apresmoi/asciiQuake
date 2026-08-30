@@ -275,9 +275,16 @@ function remountScreen(): void {
       plaque: ELEMENT_PALETTE_DEFAULT,
       title: ELEMENT_PALETTE_DEFAULT,
       labels: ELEMENT_PALETTE_DEFAULT,
+      // The bar draws on the scene ramp and the readouts on "dense" — the
+      // same split App.ts ships (see its palette resolution).
+      hudBar: palette,
+      hudArt: ELEMENT_PALETTE_DEFAULT,
     }),
     manifestTextDensity: values.textDensity,
     consoleTextDensity: values.consoleDensity,
+    hudBarDensity: values.hudBarDensity,
+    hudArtDensity: values.hudArtDensity,
+    hudReadoutGroundTexels: values.hudArtGroundTexels,
     // The HUD toggle: the overlay's chrome gate is bypassed so the status
     // bar composites into the landing preview.
     forceHud: hudPreview,
