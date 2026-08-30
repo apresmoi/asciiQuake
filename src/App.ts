@@ -1444,8 +1444,14 @@ const quakeGlyphOverlay: QuakeGlyphWorldOverlay | null =
         // cell is 4.5 device px and strictly sharper; near-entity definition kept
         // improving through 4 with no grey-out (the corner-logo regression regime
         // — sub-DEVICE-pixel cells — is never entered).
+        // Lowered one step from 4/3 after the user reported gameplay lag. A static
+        // pose could not reproduce it — densities 2/3/4 all sat vsync-locked at
+        // ~62fps/16.2ms — but the cell count is real (87k/94k/104k at that pose),
+        // and it bites in play, where many entities are visible at once and the
+        // PVS churns. Definition still resolves at 3 (a near soldier is 28 cells
+        // across vs 19 at density 2); `?glyphEntityDensity=` restores 4.
         entityDensity: quakeUrlNumberParam(quakeStartupUrlParams, "glyphEntityDensity", 1, 4) ??
-          (window.devicePixelRatio >= 1.5 ? 4 : 3),
+          (window.devicePixelRatio >= 1.5 ? 3 : 2),
         // DEBUG: ?glyphEntityTransparent=1 drops entity occlusion (isolate placement
         // vs occlusion); ?glyphEntityOutline=1 boxes each detail layer.
         entityTransparent: quakeStartupUrlParams.get("glyphEntityTransparent") === "1",
