@@ -396,7 +396,7 @@ export function createQuakeMobileControls(options: QuakeMobileControlsOptions): 
       x: event.clientX,
       y: event.clientY,
     });
-    setMoveAnchor(event);
+    if (!setMoveAnchor(event)) { movePointerId = null; return; }
     try {
       moveZone?.setPointerCapture(event.pointerId);
     } catch {
@@ -439,13 +439,25 @@ export function createQuakeMobileControls(options: QuakeMobileControlsOptions): 
     setMoveInput((event.clientX - moveAnchorX) / radius, (moveAnchorY - event.clientY) / radius, phase);
   }
 
-  function setMoveAnchor(event: PointerEvent): void {
+  function setMoveAnchor(event: PointerEvent): boolean {
     const rect = moveZone?.getBoundingClientRect();
+    // A ZERO-SIZE zone must abort, never fall back. Measured on a real S23: the
+    // controls root is `display: none` whenever the game is paused or a menu is
+    // open, so the zone reports 0x0 at (0,0). The old fallback then pinned the
+    // stick's centre to the zone origin, which is the "joystick jumps to the top
+    // left corner" bug — and `radius` derived from the same rect was 0, so the
+    // input was discarded as `missing-radius` and the stick never followed the
+    // thumb at all.
+    if (!rect || rect.width <= 0 || rect.height <= 0) {
+      markQuakeTrace("mobile-move-input", { source: "start", reason: "zero-zone", x: 0, y: 0 });
+      return false;
+    }
     moveAnchorX = event.clientX;
     moveAnchorY = event.clientY;
-    moveStickCenterX = rect ? event.clientX - rect.left : QUAKE_MOBILE_STICK_CENTER;
-    moveStickCenterY = rect ? event.clientY - rect.top : QUAKE_MOBILE_STICK_CENTER;
+    moveStickCenterX = event.clientX - rect.left;
+    moveStickCenterY = event.clientY - rect.top;
     syncMoveStickVisual(0, 0, true);
+    return true;
   }
 
   function setMoveInput(x: number, y: number, source: "start" | "move"): void {
