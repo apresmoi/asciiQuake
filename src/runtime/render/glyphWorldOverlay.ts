@@ -403,7 +403,27 @@ export function createQuakeGlyphWorldOverlay(
   // cell metrics, so passing polycss's own `zoom` + `perspective` (see App) makes
   // the projection pixel-identical to polycss. fovScale stays 1.
   // `?glyphFovScale=` only for experiments.
-  const fovScale = options.fovScale ?? 1;
+  /**
+   * Hold the HORIZONTAL field of view constant across aspect ratios.
+   *
+   * polycss derives `perspective` from viewport HEIGHT — measured 923px at
+   * 1600x900 and 421.5px at 846x411, both 1.026x the height — so vertical FOV is
+   * fixed and horizontal FOV grows with width. A 2.06:1 phone in landscape then
+   * shows far more than the 1.78:1 desktop: the camera reads as pulled back and
+   * room boundaries fall outside the frustum.
+   *
+   * Scaling by `aspect / 16:9` restores the desktop framing: at 846x411 that is
+   * 1.158, taking perspective from 421.5 to 488 — exactly width-proportional to
+   * the desktop's 923 at 1600 wide. Only ever widens; taller viewports keep the
+   * shipped framing. `?glyphFovScale=` still overrides.
+   *
+   * Read from `window`, NOT the overlay element: this runs during setup, before
+   * the element exists (doing otherwise threw a ReferenceError and rendered a
+   * black screen). The overlay is full-viewport, so the two agree.
+   */
+  const QUAKE_REFERENCE_ASPECT = 16 / 9;
+  const viewportAspect = window.innerHeight > 0 ? window.innerWidth / window.innerHeight : QUAKE_REFERENCE_ASPECT;
+  const fovScale = options.fovScale ?? Math.max(1, viewportAspect / QUAKE_REFERENCE_ASPECT);
   // The glyph render is synchronous in the game loop, so render time = framerate
   // = flicker. A chunky grid (cellPx 20) keeps the framerate high; on TOP of
   // that, 2× supersampling fixes the PROVEN see-through cause — coverage point-

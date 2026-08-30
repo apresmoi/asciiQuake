@@ -141,9 +141,18 @@ export function createQuakeMobileControls(options: QuakeMobileControlsOptions): 
     }
   }
 
+  /**
+   * ANY touch triggers the rotation, not a touch on the controls.
+   *
+   * Gating on the control surface never fired: the controls are `display: none`
+   * while a menu is open or the game is paused, which is the state the app boots
+   * into — so on a fresh load there was nothing to touch and it stayed portrait.
+   * The first tap on the menu is both the earliest legal gesture and the one the
+   * player actually makes, so the rotation lands before gameplay, not after.
+   */
   function onFirstControlTouch(event: PointerEvent): void {
     if (event.pointerType === "mouse") return;
-    if (!(event.target instanceof Node) || root?.contains(event.target) !== true) return;
+    if (!media.matches) return;
     void requestLandscape();
   }
 
