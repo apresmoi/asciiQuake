@@ -36,32 +36,38 @@ test("mobile move stick handles pointer input and updates the visible nub", () =
   }
 });
 
-test("mobile move stick uses the touch-down point as the neutral anchor", () => {
+test("mobile move stick stays centred in its zone instead of following the thumb", () => {
+  // The stick used to anchor on the touch-down point, relocating the whole
+  // control under the thumb. On a real device that read as the joystick jumping
+  // — measured a 36px stick displacement from a 1px pointer move — so the stick
+  // is now FIXED: the ring stays where it is drawn and only the knob travels.
   const harness = createMobileControlsHarness();
   try {
     const startX = harness.centerX - 30;
     const startY = harness.centerY + 20;
     harness.moveZone.dispatchEvent(pointer(harness.window, "pointerdown", startX, startY, 12, 1));
-    assert.deepEqual(harness.analogSamples.at(-1), [0, 0]);
-    assert.equal(harness.stick.style.left, `${startX - 18}px`);
-    assert.equal(harness.stick.style.top, `${startY - 100}px`);
-    assert.equal(harness.front.style.transform, "translate(0px, 0px)");
+    // The stick sits at the zone centre no matter where the touch landed.
+    assert.equal(harness.stick.style.left, "72px");
+    assert.equal(harness.stick.style.top, "72px");
 
-    harness.moveZone.dispatchEvent(pointer(harness.window, "pointermove", startX, startY - 72, 12, 1));
+    // Direction is measured from the zone centre, so an off-centre touch-down is
+    // already an input rather than a silent re-anchor.
+    harness.moveZone.dispatchEvent(pointer(harness.window, "pointermove", harness.centerX, harness.centerY - 72, 12, 1));
     assert.deepEqual(harness.analogSamples.at(-1), [0, 1]);
-    assert.equal(harness.front.style.transform, "translate(0px, -27px)");
+    assert.equal(harness.stick.style.left, "72px");
+    assert.equal(harness.stick.style.top, "72px");
 
-    harness.moveZone.dispatchEvent(pointer(harness.window, "pointerup", startX, startY - 72, 12, 0));
+    harness.moveZone.dispatchEvent(pointer(harness.window, "pointerup", harness.centerX, harness.centerY - 72, 12, 0));
     assertMoveReleased(harness);
     assert.equal(harness.stick.style.left, "72px");
     assert.equal(harness.stick.style.top, "72px");
 
+    // A second, differently placed touch must not move the ring either.
     const secondStartX = harness.centerX + 24;
     const secondStartY = harness.centerY - 18;
     harness.moveZone.dispatchEvent(pointer(harness.window, "pointerdown", secondStartX, secondStartY, 13, 1));
-    assert.deepEqual(harness.analogSamples.at(-1), [0, 0]);
-    assert.equal(harness.stick.style.left, `${secondStartX - 18}px`);
-    assert.equal(harness.stick.style.top, `${secondStartY - 100}px`);
+    assert.equal(harness.stick.style.left, "72px");
+    assert.equal(harness.stick.style.top, "72px");
     harness.moveZone.dispatchEvent(pointer(harness.window, "pointerup", secondStartX, secondStartY, 13, 0));
     assertMoveReleased(harness);
   } finally {

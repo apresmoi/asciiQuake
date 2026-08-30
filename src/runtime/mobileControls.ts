@@ -509,11 +509,16 @@ export function createQuakeMobileControls(options: QuakeMobileControlsOptions): 
       markQuakeTrace("mobile-move-input", { source: "start", reason: "zero-zone", x: 0, y: 0 });
       return false;
     }
-    const anchor = pointerPoint(event);
-    moveAnchorX = anchor.x;
-    moveAnchorY = anchor.y;
-    moveStickCenterX = anchor.x - rect.left;
-    moveStickCenterY = anchor.y - rect.top;
+    // FIXED stick, not a floating one. Anchoring on the touch point relocated
+    // the whole control under the thumb, so touching anywhere near the drawn
+    // ring teleported it — measured as a 36px jump on a 1px move, and reported
+    // as "it jumps around". Anchoring on the zone's CENTRE keeps the ring where
+    // it is drawn and moves only the knob, so the control stays where the player
+    // expects it and the direction is simply (touch - centre).
+    moveAnchorX = rect.left + rect.width / 2;
+    moveAnchorY = rect.top + rect.height / 2;
+    moveStickCenterX = rect.width / 2;
+    moveStickCenterY = rect.height / 2;
     syncMoveStickVisual(0, 0, true);
     return true;
   }
