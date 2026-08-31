@@ -14,7 +14,11 @@ import { crossVec3, normalizeVec3 } from "./math";
 import { mountQuakeRenderBundleMesh, stripPolyMeshMetadata } from "./renderBundleMesh";
 import { quakeRuntimeViewportSize, type QuakeRuntimeViewportSize } from "./viewport";
 import type { QuakeGlyphGeometry } from "../types/quake";
-import type { QuakeGlyphEntityTransform, QuakeGlyphWeaponOverlay } from "./render/glyphWorldOverlay";
+import {
+  resolveQuakeGlyphWeaponCameraBackoffPx,
+  type QuakeGlyphEntityTransform,
+  type QuakeGlyphWeaponOverlay,
+} from "./render/glyphWorldOverlay";
 
 export interface QuakeViewmodelController {
   mount(model: QuakeViewmodelModel): void;
@@ -319,10 +323,18 @@ const QUAKE_WEAPON_MODEL_TUNING_OVERRIDES: Record<string, QuakeViewmodelTuning> 
     screenScaleY: 0.922,
   },
 };
-interface QuakeGlyphWeaponModelTrim {
+export interface QuakeGlyphWeaponModelTrim {
   axisTrim: readonly [number, number];
   screenTrim: readonly [number, number];
   screenScale: readonly [number, number];
+  /**
+   * Per-model glyph weapon camera distance in CSS px; glyphcss converts mesh
+   * depth at 50 px/world-unit. This is a constant because the two `.mdl` local
+   * frames disagree on handedness (`eulerSign`): measured geometric candidates
+   * require an axe/shotgun extent ratio 1.3441, while near/far/span candidates
+   * produce 0.507/1.909/1.194, so no single extent rule reproduces both.
+   */
+  cameraBackoffPx: number;
   /**
    * Per-model sign applied to [yaw, pitch] before the glyph Euler conversion.
    * The dedicated weapon scene's camera fixes one handedness convention, but
@@ -347,13 +359,19 @@ interface QuakeGlyphWeaponModelTrim {
 const QUAKE_GLYPH_WEAPON_MODEL_TRIM: Record<string, QuakeGlyphWeaponModelTrim> = {
   // Shotgun: fitted against the oracle under the negated euler convention and
   // verified at 1600x900 / 846x411. Do not disturb without refitting.
-  "progs/v_shot.mdl": { axisTrim: [0.841, 0.37], screenTrim: [0.028, 0.186], screenScale: [1, 1], eulerSign: [-1, -1] },
-  // Axe: needs the un-negated euler pair or it renders mirrored.
-  "progs/v_axe.mdl": { axisTrim: [1, 1], screenTrim: [0, 0], screenScale: [1, 1], eulerSign: [1, 1] },
+  "progs/v_shot.mdl": { axisTrim: [0.841, 0.37], screenTrim: [0.028, 0.186], screenScale: [1, 1], cameraBackoffPx: 310, eulerSign: [-1, -1] },
+  // Axe: needs the un-negated euler pair or it renders mirrored. Vertical
+  // placement only: ink is not bottom-clipped (its glyph count is bit-identical
+  // across 0.27 viewport-height of projection centre), so this changes no extent.
+  "progs/v_axe.mdl": { axisTrim: [1, 1], screenTrim: [0, -0.0705], screenScale: [1, 1], cameraBackoffPx: 470, eulerSign: [1, 1] },
 };
 const QUAKE_GLYPH_WEAPON_TRIM_IDENTITY: QuakeGlyphWeaponModelTrim = {
-  axisTrim: [1, 1], screenTrim: [0, 0], screenScale: [1, 1], eulerSign: [-1, -1],
+  axisTrim: [1, 1], screenTrim: [0, 0], screenScale: [1, 1], cameraBackoffPx: 310, eulerSign: [-1, -1],
 };
+
+export function quakeGlyphWeaponModelTrim(modelPath: string): QuakeGlyphWeaponModelTrim {
+  return QUAKE_GLYPH_WEAPON_MODEL_TRIM[modelPath] ?? QUAKE_GLYPH_WEAPON_TRIM_IDENTITY;
+}
 
 const QUAKE_WEAPON_SCREEN_ROT_X = 90;
 const QUAKE_WEAPON_MUZZLE_FLASH_MS = 45;
@@ -601,7 +619,7 @@ export function createQuakeViewmodelController({
   }
 
   function glyphModelTrim(): QuakeGlyphWeaponModelTrim {
-    return (mountedSource && QUAKE_GLYPH_WEAPON_MODEL_TRIM[mountedSource]) ?? QUAKE_GLYPH_WEAPON_TRIM_IDENTITY;
+    return quakeGlyphWeaponModelTrim(mountedSource ?? "");
   }
 
   function setTuning(next: QuakeViewmodelTuning): QuakeResolvedViewmodelTuning {
@@ -941,13 +959,18 @@ export function createQuakeViewmodelController({
         currentTuning.screenScaleY * modelTrim.screenScale[1],
       ],
       screenTrim: modelTrim.screenTrim,
-      cameraBackoffPx: glyphBackoffOverride,
+      cameraBackoffPx: resolveQuakeGlyphWeaponCameraBackoffPx(
+        glyphBackoffOverride,
+        modelTrim.cameraBackoffPx,
+      ),
       zoom: glyphZoomOverride ?? scene.camera.state.zoom,
     });
   }
 
   function setGlyphWeaponTuning(next: QuakeGlyphWeaponTuning): void {
-    if (next.scale !== undefined && Number.isFinite(next.scale)) glyphScaleFactor = next.scale;
+    if (next.scale !== undefined && Number.isFinite(next.scale)) {
+      glyphScaleFactor = next.scale;
+    }
     if (next.reach !== undefined && Number.isFinite(next.reach)) glyphReach = next.reach;
     if (next.density !== undefined && Number.isFinite(next.density)) {
       glyphDensity = next.density;

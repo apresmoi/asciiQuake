@@ -1375,15 +1375,16 @@ const QUAKE_GLYPH_WEAPON_CAM_ROT_X = 90;
 const QUAKE_GLYPH_WEAPON_CAM_ROT_Y = 270;
 /** Raster weapon stage perspective (745.108 × default perspectiveScale 0.8). */
 const QUAKE_GLYPH_WEAPON_DEFAULT_PERSPECTIVE = 596.0866666666666;
-/**
- * Pull the dedicated camera behind the raw viewmodel. glyphcss expresses
- * camera distance in CSS px and converts mesh depth at 50 px/world-unit.
- * v_shot's 5.706-unit long axis becomes 15.68 units at the raster X scale;
- * its raw near end reaches 3.302 * 2.7478 = 9.073 units from the mesh
- * origin, 5.973 beyond the 3.1-unit standoff. 310px = 6.2 world units,
- * leaving 0.227 unit clear of the near plane.
- */
-const QUAKE_GLYPH_WEAPON_CAMERA_BACKOFF_PX = 310;
+/** Last-resort glyph weapon camera distance when no override or model value exists. */
+export const QUAKE_GLYPH_WEAPON_CAMERA_BACKOFF_PX = 310;
+
+/** Resolves explicit override, then per-model distance, then the default. */
+export function resolveQuakeGlyphWeaponCameraBackoffPx(
+  overridePx: number | undefined,
+  modelPx: number | null,
+): number {
+  return overridePx ?? modelPx ?? QUAKE_GLYPH_WEAPON_CAMERA_BACKOFF_PX;
+}
 
 export function createQuakeGlyphWeaponOverlay(
   options: QuakeGlyphWeaponOverlayOptions,
