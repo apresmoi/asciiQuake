@@ -6,7 +6,7 @@ asciiQuake is a fork of [cssQuake](https://github.com/LayoutitStudio/cssQuake), 
 
 Play the live version: [asciiquake.wtf](https://asciiquake.wtf)
 
-<img width="3884" height="1000" alt="asciiQuake" src="https://github.com/user-attachments/assets/ac076457-17d6-413c-86c9-8fdd01a4c2a2" />
+<img width="3884" height="1000" alt="asciiQuake" src="./src/assets/asciiquake-readme.png" />
 
 ## How to Play
 
