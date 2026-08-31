@@ -8,13 +8,12 @@ const {
 } = await importTsModule("src/runtime/render/glyphWorldOverlay.ts");
 const { quakeGlyphWeaponModelTrim } = await importTsModule("src/runtime/viewmodel.ts");
 
-test("glyph weapon camera standoff is a per-model constant", () => {
+test("migrated axe and shotgun use the PolyCSS eye plane without changing later guns", () => {
   const axe = quakeGlyphWeaponModelTrim("progs/v_axe.mdl").cameraBackoffPx;
   const shotgun = quakeGlyphWeaponModelTrim("progs/v_shot.mdl").cameraBackoffPx;
-  assert.equal(axe, 470);
-  assert.equal(shotgun, 310);
-  assert.equal(quakeGlyphWeaponModelTrim("progs/unknown.mdl").cameraBackoffPx, 310);
-  assert.notEqual(axe, shotgun);
+  assert.equal(axe, 0);
+  assert.equal(shotgun, 0);
+  assert.equal(quakeGlyphWeaponModelTrim("progs/v_shot2.mdl").cameraBackoffPx, 310);
 });
 
 test("glyph weapon camera standoff precedence is override, model, default", () => {
@@ -23,11 +22,15 @@ test("glyph weapon camera standoff precedence is override, model, default", () =
   assert.equal(resolveQuakeGlyphWeaponCameraBackoffPx(undefined, null), 310);
 });
 
-test("axe vertical placement and model handedness remain fitted", () => {
+test("migrated axe and shotgun use the PolyCSS basis without glyph-only trims", () => {
   const axe = quakeGlyphWeaponModelTrim("progs/v_axe.mdl");
   const shotgun = quakeGlyphWeaponModelTrim("progs/v_shot.mdl");
-  assert.ok(axe.screenTrim[1] < 0);
-  assert.ok(Math.abs(axe.screenTrim[1] - -0.0705) < 1e-9);
+  assert.deepEqual(axe.screenTrim, [0, 0]);
+  assert.equal(axe.basis, "polycss");
   assert.deepEqual(axe.eulerSign, [1, 1]);
-  assert.deepEqual(shotgun.eulerSign, [-1, -1]);
+  assert.deepEqual(shotgun.axisTrim, [1, 1]);
+  assert.deepEqual(shotgun.screenTrim, [0, 0]);
+  assert.equal(shotgun.basis, "polycss");
+  assert.deepEqual(shotgun.eulerSign, [1, 1]);
+  assert.equal(quakeGlyphWeaponModelTrim("progs/v_shot2.mdl").basis, "legacy");
 });

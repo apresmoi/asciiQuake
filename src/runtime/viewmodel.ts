@@ -324,25 +324,20 @@ const QUAKE_WEAPON_MODEL_TUNING_OVERRIDES: Record<string, QuakeViewmodelTuning> 
   },
 };
 export interface QuakeGlyphWeaponModelTrim {
+  /** Coordinate conversion used before glyphcss sees the raw MDL vertices. */
+  basis: "legacy" | "polycss";
   axisTrim: readonly [number, number];
   screenTrim: readonly [number, number];
   screenScale: readonly [number, number];
   /**
-   * Per-model glyph weapon camera distance in CSS px; glyphcss converts mesh
-   * depth at 50 px/world-unit. This is a constant because the two `.mdl` local
-   * frames disagree on handedness (`eulerSign`): measured geometric candidates
-   * require an axe/shotgun extent ratio 1.3441, while near/far/span candidates
-   * produce 0.507/1.909/1.194, so no single extent rule reproduces both.
+   * Glyph weapon camera distance in CSS px. The PolyCSS basis uses the actual
+   * weapon-stage eye plane (0); legacy fitted models retain their old pullback.
    */
   cameraBackoffPx: number;
   /**
-   * Per-model sign applied to [yaw, pitch] before the glyph Euler conversion.
-   * The dedicated weapon scene's camera fixes one handedness convention, but
-   * each `.mdl`'s exported local frame does not agree on it: v_shot's frame
-   * needs the negated pair, v_axe's needs the pair passed through. Negating
-   * v_axe mirrored it horizontally (it faced the camera instead of coming from
-   * behind); passing v_shot through moves the shotgun off its fitted placement.
-   * So the sign is per-model rather than global.
+   * Sign applied to [yaw, pitch] before the glyph Euler conversion. PolyCSS-
+   * basis models use the conjugated world sign; legacy fitted models keep the
+   * prior sign until they are migrated independently.
    */
   eulerSign: readonly [number, number];
 }
@@ -357,16 +352,13 @@ export interface QuakeGlyphWeaponModelTrim {
  * ignore player origin/yaw/pitch, preserving the weapon's view-lock.
  */
 const QUAKE_GLYPH_WEAPON_MODEL_TRIM: Record<string, QuakeGlyphWeaponModelTrim> = {
-  // Shotgun: fitted against the oracle under the negated euler convention and
-  // verified at 1600x900 / 846x411. Do not disturb without refitting.
-  "progs/v_shot.mdl": { axisTrim: [0.841, 0.37], screenTrim: [0.028, 0.186], screenScale: [1, 1], cameraBackoffPx: 310, eulerSign: [-1, -1] },
-  // Axe: needs the un-negated euler pair or it renders mirrored. Vertical
-  // placement only: ink is not bottom-clipped (its glyph count is bit-identical
-  // across 0.27 viewport-height of projection centre), so this changes no extent.
-  "progs/v_axe.mdl": { axisTrim: [1, 1], screenTrim: [0, -0.0705], screenScale: [1, 1], cameraBackoffPx: 470, eulerSign: [1, 1] },
+  // Migrated models use the exact PolyCSS→world basis. They need neither
+  // glyph-only mesh/screen corrections nor a camera pullback.
+  "progs/v_shot.mdl": { basis: "polycss", axisTrim: [1, 1], screenTrim: [0, 0], screenScale: [1, 1], cameraBackoffPx: 0, eulerSign: [1, 1] },
+  "progs/v_axe.mdl": { basis: "polycss", axisTrim: [1, 1], screenTrim: [0, 0], screenScale: [1, 1], cameraBackoffPx: 0, eulerSign: [1, 1] },
 };
 const QUAKE_GLYPH_WEAPON_TRIM_IDENTITY: QuakeGlyphWeaponModelTrim = {
-  axisTrim: [1, 1], screenTrim: [0, 0], screenScale: [1, 1], cameraBackoffPx: 310, eulerSign: [-1, -1],
+  basis: "legacy", axisTrim: [1, 1], screenTrim: [0, 0], screenScale: [1, 1], cameraBackoffPx: 310, eulerSign: [-1, -1],
 };
 
 export function quakeGlyphWeaponModelTrim(modelPath: string): QuakeGlyphWeaponModelTrim {
@@ -760,7 +752,8 @@ export function createQuakeViewmodelController({
       const localTuning = glyphRollOverride === undefined
         ? current
         : { ...current, localPitchDeg: glyphRollOverride };
-      posedGlyphFrames = glyphFrames.map((frame) => quakeGlyphWeaponLocalPose(frame, localTuning));
+      posedGlyphFrames = glyphFrames.map((frame) =>
+        quakeGlyphWeaponModelLocalPose(mountedSource ?? "", frame, localTuning));
     }
     return posedGlyphFrames[index] ?? null;
   }
@@ -768,6 +761,8 @@ export function createQuakeViewmodelController({
   function weaponGlyphTransform(
     weapon: QuakeViewmodelDebugSnapshot["weapon"],
   ): QuakeGlyphEntityTransform {
+    const modelPath = mountedSource ?? "";
+    const modelTrim = glyphModelTrim();
     // Local-frame placement: origin is the dedicated camera's eye, so
     // `glyphReach` scales the raster eye→weapon vector without involving the
     // world camera. reach=1 is the raster offset (forward 3.1 etc.).
@@ -777,32 +772,17 @@ export function createQuakeViewmodelController({
         weapon.position[1] * glyphReach,
         weapon.position[2] * glyphReach,
       ],
-      // poly's triple is [pitch, 0, yaw] for a CSS transform whose axes are
-      // remapped (`rotateY(-rotX) rotateX(rotY)...`); glyphcss takes world-frame
-      // XYZ Euler, so convert rather than reuse it verbatim. The sign is
-      // per-model (see `eulerSign`): negating it mirrors the weapon horizontally,
-      // which is correct for v_shot's exported frame and wrong for v_axe's.
+      // PolyCSS and glyphcss express the same carrier orientation in different
+      // Euler conventions. Migrated models use the conjugated world sign;
+      // legacy models retain their fitted sign until migrated independently.
       rotation: glyphEulerFromYawPitch(
-        glyphModelTrim().eulerSign[0] * weapon.rotation[2],
-        glyphModelTrim().eulerSign[1] * weapon.rotation[0],
+        modelTrim.eulerSign[0] * weapon.rotation[2],
+        modelTrim.eulerSign[1] * weapon.rotation[0],
       ),
-      // `weapon.scale` is `weaponScaleVec()`'s [horizontalScale, verticalScale,
-      // depthScale] triple, ORDERED for the raster CSS carrier's own local
-      // axes (`scale3d` applied before its `rotateY/rotateX/rotateZ` chain) —
-      // that CSS axis convention does NOT match glyphcss's mesh-local vertex
-      // scaling here. v_shot's exported local frame has X as its long axis
-      // (the barrel), Y/Z as its transverse width/height, so glyphcss's
-      // `applyTransform` (which scales each vertex's raw v[0]/v[1]/v[2] before
-      // rotating) needs [depthScale, horizontalScale, verticalScale] instead.
-      // Permuting only here (not in the shared `weaponScaleVec`) keeps the
-      // raster carrier's own `scale3d` order untouched — reordering the
-      // shared function broke the raster weapon outright (verified: the mesh
-      // split into disconnected slabs floating mid-screen).
-      scale: [
-        weapon.scale[2] * glyphScaleFactor,
-        weapon.scale[0] * glyphScaleFactor * glyphModelTrim().axisTrim[0],
-        weapon.scale[1] * glyphScaleFactor * glyphModelTrim().axisTrim[1],
-      ],
+      // `weapon.scale` is ordered for the raster CSS carrier. The model-aware
+      // conversion applies the exact X/Y basis swap for migrated models while
+      // preserving the old permutation and trims for every legacy weapon.
+      scale: quakeGlyphWeaponModelScale(modelPath, weapon.scale, glyphScaleFactor),
       ...(glyphDensity != null ? { density: glyphDensity } : {}),
       // The gun's own lift over the scene tone (2026-08 retune vs the
       // cssquake.wtf gun): under the world tone that matches the walls, the
@@ -1242,7 +1222,7 @@ function weaponLocalTransform(tuning: QuakeResolvedViewmodelTuning): string {
   ].filter(Boolean).join(" ");
 }
 
-/** Apply CSS's local `Ty · Tp · Rx · T-p` to glyph model-space vertices. */
+/** Legacy glyph-local pose retained for weapons not yet migrated. */
 export function quakeGlyphWeaponLocalPose(
   geometry: QuakeGlyphGeometry,
   tuning: Pick<QuakeResolvedViewmodelTuning,
@@ -1274,6 +1254,74 @@ export function quakeGlyphWeaponLocalPose(
       }),
     })),
   };
+}
+
+/**
+ * Apply CSS's `Ty · Tp · Rx · T-p` after conjugating through PolyCSS's X/Y
+ * basis swap. In MDL/world coordinates that is `Tx · Tp' · Ry(-pitch) · T-p'`,
+ * with the CSS pivot `[x,y,z]` represented as world `[y,x,z]`.
+ */
+export function quakeGlyphWeaponPolyCssLocalPose(
+  geometry: QuakeGlyphGeometry,
+  tuning: Pick<QuakeResolvedViewmodelTuning,
+    "localYOffsetPx" | "localPitchDeg" | "localPivotXPx" | "localPivotYPx" | "localPivotZPx">,
+): QuakeGlyphGeometry {
+  const pxToWorld = (value: number) => polyCssDistanceToWorld(value);
+  const pivot: Vec3 = [
+    pxToWorld(tuning.localPivotYPx),
+    pxToWorld(tuning.localPivotXPx),
+    pxToWorld(tuning.localPivotZPx),
+  ];
+  const localX = pxToWorld(tuning.localYOffsetPx);
+  const radians = tuning.localPitchDeg * Math.PI / 180;
+  const cos = Math.cos(radians);
+  const sin = Math.sin(radians);
+  return {
+    ...geometry,
+    polygons: geometry.polygons.map((polygon) => ({
+      ...polygon,
+      v: polygon.v.map((vertex) => {
+        const x = vertex[0]! - pivot[0];
+        const z = vertex[2]! - pivot[2];
+        return [
+          x * cos - z * sin + pivot[0] + localX,
+          vertex[1]!,
+          x * sin + z * cos + pivot[2],
+        ];
+      }),
+    })),
+  };
+}
+
+export function quakeGlyphWeaponModelLocalPose(
+  modelPath: string,
+  geometry: QuakeGlyphGeometry,
+  tuning: Pick<QuakeResolvedViewmodelTuning,
+    "localYOffsetPx" | "localPitchDeg" | "localPivotXPx" | "localPivotYPx" | "localPivotZPx">,
+): QuakeGlyphGeometry {
+  return quakeGlyphWeaponModelTrim(modelPath).basis === "polycss"
+    ? quakeGlyphWeaponPolyCssLocalPose(geometry, tuning)
+    : quakeGlyphWeaponLocalPose(geometry, tuning);
+}
+
+export function quakeGlyphWeaponModelScale(
+  modelPath: string,
+  weaponScale: readonly [number, number, number],
+  glyphScaleFactor: number,
+): Vec3 {
+  const trim = quakeGlyphWeaponModelTrim(modelPath);
+  if (trim.basis === "polycss") {
+    return [
+      weaponScale[1] * glyphScaleFactor * trim.axisTrim[1],
+      weaponScale[0] * glyphScaleFactor * trim.axisTrim[0],
+      weaponScale[2] * glyphScaleFactor,
+    ];
+  }
+  return [
+    weaponScale[2] * glyphScaleFactor,
+    weaponScale[0] * glyphScaleFactor * trim.axisTrim[0],
+    weaponScale[1] * glyphScaleFactor * trim.axisTrim[1],
+  ];
 }
 
 function weaponTransformCss(weapon: QuakeViewmodelDebugSnapshot["weapon"]): string {
