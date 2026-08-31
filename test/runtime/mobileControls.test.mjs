@@ -36,32 +36,38 @@ test("mobile move stick handles pointer input and updates the visible nub", () =
   }
 });
 
-test("mobile move stick uses the touch-down point as the neutral anchor", () => {
+test("mobile move stick stays centred in its zone instead of following the thumb", () => {
+  // The stick used to anchor on the touch-down point, relocating the whole
+  // control under the thumb. On a real device that read as the joystick jumping
+  // — measured a 36px stick displacement from a 1px pointer move — so the stick
+  // is now FIXED: the ring stays where it is drawn and only the knob travels.
   const harness = createMobileControlsHarness();
   try {
     const startX = harness.centerX - 30;
     const startY = harness.centerY + 20;
     harness.moveZone.dispatchEvent(pointer(harness.window, "pointerdown", startX, startY, 12, 1));
-    assert.deepEqual(harness.analogSamples.at(-1), [0, 0]);
-    assert.equal(harness.stick.style.left, `${startX - 18}px`);
-    assert.equal(harness.stick.style.top, `${startY - 100}px`);
-    assert.equal(harness.front.style.transform, "translate(0px, 0px)");
+    // The stick sits at the zone centre no matter where the touch landed.
+    assert.equal(harness.stick.style.left, "72px");
+    assert.equal(harness.stick.style.top, "72px");
 
-    harness.moveZone.dispatchEvent(pointer(harness.window, "pointermove", startX, startY - 72, 12, 1));
+    // Direction is measured from the zone centre, so an off-centre touch-down is
+    // already an input rather than a silent re-anchor.
+    harness.moveZone.dispatchEvent(pointer(harness.window, "pointermove", harness.centerX, harness.centerY - 72, 12, 1));
     assert.deepEqual(harness.analogSamples.at(-1), [0, 1]);
-    assert.equal(harness.front.style.transform, "translate(0px, -27px)");
+    assert.equal(harness.stick.style.left, "72px");
+    assert.equal(harness.stick.style.top, "72px");
 
-    harness.moveZone.dispatchEvent(pointer(harness.window, "pointerup", startX, startY - 72, 12, 0));
+    harness.moveZone.dispatchEvent(pointer(harness.window, "pointerup", harness.centerX, harness.centerY - 72, 12, 0));
     assertMoveReleased(harness);
     assert.equal(harness.stick.style.left, "72px");
     assert.equal(harness.stick.style.top, "72px");
 
+    // A second, differently placed touch must not move the ring either.
     const secondStartX = harness.centerX + 24;
     const secondStartY = harness.centerY - 18;
     harness.moveZone.dispatchEvent(pointer(harness.window, "pointerdown", secondStartX, secondStartY, 13, 1));
-    assert.deepEqual(harness.analogSamples.at(-1), [0, 0]);
-    assert.equal(harness.stick.style.left, `${secondStartX - 18}px`);
-    assert.equal(harness.stick.style.top, `${secondStartY - 100}px`);
+    assert.equal(harness.stick.style.left, "72px");
+    assert.equal(harness.stick.style.top, "72px");
     harness.moveZone.dispatchEvent(pointer(harness.window, "pointerup", secondStartX, secondStartY, 13, 0));
     assertMoveReleased(harness);
   } finally {
@@ -113,6 +119,54 @@ test("mobile move stick rejects and clears when gameplay input is unavailable", 
   }
 });
 
+test("mobile jump button presses and releases through the Space-key path", () => {
+  const harness = createMobileControlsHarness();
+  try {
+    assert.ok(harness.jumpButton, "jump button mounts");
+    harness.jumpButton.dispatchEvent(pointer(harness.window, "pointerdown", 300, 300, 41, 1));
+    assert.deepEqual(harness.jumpSamples, [true]);
+    harness.jumpButton.dispatchEvent(pointer(harness.window, "pointerup", 300, 300, 41, 0));
+    assert.deepEqual(harness.jumpSamples, [true, false]);
+  } finally {
+    harness.restore();
+  }
+});
+
+test("mobile jump releases on cancellation and explicit clear", () => {
+  const harness = createMobileControlsHarness();
+  try {
+    harness.jumpButton.dispatchEvent(pointer(harness.window, "pointerdown", 300, 300, 42, 1));
+    harness.jumpButton.dispatchEvent(pointer(harness.window, "pointercancel", 300, 300, 42, 0));
+    assert.deepEqual(harness.jumpSamples, [true, false]);
+
+    harness.jumpButton.dispatchEvent(pointer(harness.window, "pointerdown", 300, 300, 43, 1));
+    harness.controls.clearJumpInput();
+    assert.deepEqual(harness.jumpSamples, [true, false, true, false]);
+  } finally {
+    harness.restore();
+  }
+});
+
+test("mobile weapon button cycles once per press and respects input gating", () => {
+  let canUseInput = true;
+  const harness = createMobileControlsHarness({ canUseInput: () => canUseInput });
+  try {
+    assert.ok(harness.weaponButton, "weapon button mounts");
+    harness.weaponButton.dispatchEvent(pointer(harness.window, "pointerdown", 320, 200, 51, 1));
+    assert.equal(harness.weaponCycleCount(), 1);
+
+    canUseInput = false;
+    harness.weaponButton.dispatchEvent(pointer(harness.window, "pointerdown", 320, 200, 52, 1));
+    assert.equal(harness.weaponCycleCount(), 1);
+
+    // Jump is gated the same way.
+    harness.jumpButton.dispatchEvent(pointer(harness.window, "pointerdown", 300, 300, 53, 1));
+    assert.deepEqual(harness.jumpSamples, []);
+  } finally {
+    harness.restore();
+  }
+});
+
 function createMobileControlsHarness({ canUseInput = () => true } = {}) {
   const previousDocument = globalThis.document;
   const previousHTMLElement = globalThis.HTMLElement;
@@ -151,7 +205,9 @@ function createMobileControlsHarness({ canUseInput = () => true } = {}) {
   const root = document.createElement("div");
   document.body.append(root);
   const analogSamples = [];
+  const jumpSamples = [];
   let moveIntentCount = 0;
+  let weaponCycleCount = 0;
   const controls = createQuakeMobileControls({
     root,
     moveDeadzone: 0.08,
@@ -168,6 +224,8 @@ function createMobileControlsHarness({ canUseInput = () => true } = {}) {
     onLookDelta: () => undefined,
     onFireDown: () => true,
     onFireEnd: () => undefined,
+    onJump: (pressed) => { jumpSamples.push(pressed); },
+    onWeaponCycle: () => { weaponCycleCount += 1; },
   });
 
   controls.attach();
@@ -200,8 +258,12 @@ function createMobileControlsHarness({ canUseInput = () => true } = {}) {
     centerY: 172,
     controls,
     front,
+    jumpButton: document.querySelector("#quake-mobile-jump"),
+    jumpSamples,
     moveIntentCount: () => moveIntentCount,
     moveZone,
+    weaponButton: document.querySelector("#quake-mobile-weapon"),
+    weaponCycleCount: () => weaponCycleCount,
     restore: () => {
       controls.dispose();
       restoreGlobal("document", previousDocument);

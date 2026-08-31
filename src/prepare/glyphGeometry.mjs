@@ -57,14 +57,16 @@ function glyphPolygon(polygon, faceLeaves) {
  *
  * @param {Array<{ vertices: number[][], color?: string, modelIndex?: number }>} polygons
  * @param {Map<number, number[]>} [faceLeaves] face index → BSP leaf indexes, for PVS culling.
+ * @param {{ includeMovers?: boolean }} [options] If true, keep polygons regardless of modelIndex.
  * @returns {{ version: number, polygonCount: number, polygons: Array<{ v: number[][], c: string, l?: number[] }> }}
  */
-export function buildQuakeGlyphGeometry(polygons, faceLeaves) {
+export function buildQuakeGlyphGeometry(polygons, faceLeaves, options = {}) {
+  const includeMovers = Boolean(options?.includeMovers);
   const out = [];
   for (const polygon of polygons ?? []) {
     const vertices = polygon?.vertices;
     if (!Array.isArray(vertices) || vertices.length < 3) continue;
-    if (polygon.modelIndex) continue; // mover — emitted by buildQuakeGlyphMovers
+    if (!includeMovers && polygon.modelIndex) continue; // mover — emitted by buildQuakeGlyphMovers
     out.push(glyphPolygon(polygon, faceLeaves));
   }
   return {
@@ -72,6 +74,18 @@ export function buildQuakeGlyphGeometry(polygons, faceLeaves) {
     polygonCount: out.length,
     polygons: out,
   };
+}
+
+/**
+ * Build glyph geometry for a standalone model (e.g. BSP pickup or alias frame).
+ * Polygons are never excluded based on modelIndex because standalone models do not
+ * split static world geometry from movers.
+ *
+ * @param {Array<{ vertices: number[][], color?: string, modelIndex?: number }>} polygons
+ * @returns {{ version: number, polygonCount: number, polygons: Array<{ v: number[][], c: string }> }}
+ */
+export function buildQuakeStandaloneGlyphGeometry(polygons) {
+  return buildQuakeGlyphGeometry(polygons, undefined, { includeMovers: true });
 }
 
 /**

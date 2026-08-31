@@ -49,14 +49,54 @@ export const QUAKE_HUD_READOUTS: readonly {
 export const QUAKE_HUD_BACKGROUND = "#050302";
 
 /**
- * `#quake-classic-hud`'s sizing rule as data:
- * `width: min(max(320px, 83.2vh), 100vw)`, aspect 320/24, centred, bottom 0.
+ * The smallest a READOUT may render, in CSS px — Quake's `scr_sbarscale` idea
+ * expressed as a floor instead of an integer multiplier.
+ *
+ * A readout cell is `QUAKE_HUD_SCENE_FRAME_H` hud units square, so this is
+ * also the bar's height, and `quakeHudSceneScaleFloorPx()` is the bar width
+ * that produces it.
+ *
+ * ── Why a floor, and why 44 ───────────────────────────────────────────────
+ * The shipped rule tied the bar to `83.2vh`, which is the RIGHT rule on a
+ * desktop and the wrong one on a phone: a landscape phone's viewport height
+ * is a third of a desktop's, so the bar shrank with it and the readouts came
+ * out at 25.6 CSS px (measured, 846x411) against 56.2 on 1600x900 — the same
+ * ~41% of viewport width, and that proportional-but-tiny result is exactly
+ * the complaint. Quake ports answer this with a status-bar scale that grows
+ * the bar on small displays rather than holding a fraction; at 846x411's
+ * 2220x1080 device pixels QuakeSpasm's integer auto-scale lands the 320-wide
+ * bar at roughly 70% of the screen, which is where this floor puts it too.
+ *
+ * 44 binds whenever `0.832 * hostH` is under the floor width 586.667, i.e.
+ * below `hostH ≈ 705.13` CSS px (`44 * 320 / 24 / 0.832`) — shorter
+ * desktop/windowed viewports do change. Verified unchanged: 1600x900,
+ * 1440x900, 1366x768 and 1280x720 still resolve through the `83.2vh` term.
+ * It is a CSS-px floor, not a device-px one, on purpose: DPR already
+ * normalizes a CSS px to roughly constant angular size, so DPR belongs to
+ * the GLYPH-resolution problem (`adaptQuakeUiDensitiesToDisplay`) and not
+ * to how physically large the bar should be.
+ */
+export const QUAKE_HUD_MIN_READOUT_CSS_PX = 44;
+
+/** The bar width at which a readout is {@link QUAKE_HUD_MIN_READOUT_CSS_PX}. */
+export function quakeHudSceneScaleFloorPx(): number {
+  return (QUAKE_HUD_MIN_READOUT_CSS_PX * QUAKE_HUD_SCENE_FRAME_W) / QUAKE_HUD_SCENE_FRAME_H;
+}
+
+/**
+ * `#quake-classic-hud`'s sizing rule as data, plus the small-viewport floor:
+ * `width: min(max(320px, 83.2vh, <readout floor>), 100vw)`, aspect 320/24,
+ * centred, bottom 0. The `100vw` cap still wins last, so a portrait phone —
+ * where even the floor does not fit — stays exactly full-bleed as before.
  */
 export function quakeHudSceneFrame(
   hostW: number,
   hostH: number,
 ): { x: number; y: number; w: number; h: number } {
-  const w = Math.min(Math.max(320, 0.832 * hostH), hostW);
+  const w = Math.min(
+    Math.max(320, 0.832 * hostH, quakeHudSceneScaleFloorPx()),
+    hostW,
+  );
   const h = (w * QUAKE_HUD_SCENE_FRAME_H) / QUAKE_HUD_SCENE_FRAME_W;
   return { x: (hostW - w) / 2, y: hostH - h, w, h };
 }

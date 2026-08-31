@@ -1,6 +1,7 @@
 import { createGlyphPerspectiveCamera, createGlyphScene, quantizeGlyphAtlasPalette, type GlyphFontAtlas } from "glyphcss";
 import type { GlyphMeshHandle, GlyphMeshTransform, GlyphOcclusionCoverage } from "glyphcss";
 import { BASE_TILE, type Vec3 } from "@layoutit/polycss";
+import { quakeCameraPerspectiveForViewport } from "../app/cameraViewFlow";
 
 /**
  * Glyph world overlay — renders the prepared world geometry as ASCII art into a
@@ -25,6 +26,9 @@ export interface QuakeGlyphWorldOverlayOptions {
   readonly host: HTMLElement;
   /** Insert the overlay before this child of `host` (e.g. the viewmodel layer). */
   readonly insertBefore?: HTMLElement | null;
+  /** Keep `perspective` fixed at the supplied value instead of tracking the
+   *  viewport — set when `?glyphPersp=` pins it explicitly. */
+  readonly pinPerspective?: boolean;
   /** CSS-perspective distance in virtual px (FOV). */
   readonly perspective?: number;
   /** Camera zoom (scale). */
@@ -253,13 +257,14 @@ export interface QuakeGlyphWorldOverlay {
   removeEntity(id: string): void;
   /**
    * Feed the UI overlay's opaque coverage (its `getOpaqueCoverage()` result)
-   * into this scene as a FOREIGN occluder: the world — base grid, entity
-   * detail layers and the viewmodel alike — blanks its cells under the Esc
-   * menu's segmented art, the HUD and the crosshair, exactly the way the
-   * landing backdrop blanks under the menu art. This is what joins the two
-   * stacked glyph scenes into ONE occlusion domain. `null` clears (menu/HUD
-   * gone). Schedules a render itself — the game may be paused under the menu,
-   * so waiting for the next camera sync would freeze a stale frame.
+   * into this scene as a FOREIGN occluder: the world — base grid and entity
+   * detail layers — blanks its cells under the Esc menu's segmented art, the
+   * HUD and the crosshair, exactly the way the landing backdrop blanks under
+   * the menu art. The viewmodel lives in its own scene (see
+   * {@link createQuakeGlyphWeaponOverlay}) and consumes the same coverage
+   * separately. `null` clears (menu/HUD gone). Schedules a render itself —
+   * the game may be paused under the menu, so waiting for the next camera
+   * sync would freeze a stale frame.
    */
   setUiOcclusion(coverage: GlyphOcclusionCoverage | null): void;
   /** Diagnostic: render an exact frozen view (used by the flicker probes). */
@@ -403,6 +408,30 @@ export function createQuakeGlyphWorldOverlay(
   // cell metrics, so passing polycss's own `zoom` + `perspective` (see App) makes
   // the projection pixel-identical to polycss. fovScale stays 1.
   // `?glyphFovScale=` only for experiments.
+  /**
+   * Keep the first-person framing constant as the viewport shrinks.
+   *
+   * The framing is tied to viewport HEIGHT (polycss derives `perspective` from
+   * it — measured 923px at 1600x900 and 421.5px at 846x411, both 1.026x the
+   * height). On a short viewport that reads as a camera pulled far back off the
+   * eye point: the world looks third-person and the viewmodel shrinks to a
+   * sliver (measured 30x80 px on a 846x411 phone).
+   *
+   * Verified ON DEVICE by sweeping `?glyphFovScale=` on a Galaxy S23 at
+   * 846x411: 1.16 was clearly too far, 0.46 too tight (ceiling filled the
+   * frame), 0.6 read correctly. `sqrt(height / 900)` gives 0.676 there and
+   * exactly 1 at the 900px-tall desktop reference, so desktop framing is
+   * untouched. Capped at 1 — taller viewports keep the shipped look.
+   *
+   * NOTE this is viewport-driven, not mobile-specific: a small desktop window
+   * shows the same thing (a 846x411 desktop window measured identically).
+   *
+   * Read from `window`, NOT the overlay element, which does not exist yet at
+   * this point in setup — referencing it here threw and rendered a black screen.
+   */
+  // No FOV compensation here — see `refreshViewportCamera`. The real
+  // viewport-dependence lives in `perspective`, which the app recomputes per
+  // viewport; a fovScale curve was an earlier misdiagnosis of that.
   const fovScale = options.fovScale ?? 1;
   // The glyph render is synchronous in the game loop, so render time = framerate
   // = flicker. A chunky grid (cellPx 20) keeps the framerate high; on TOP of
@@ -526,8 +555,11 @@ export function createQuakeGlyphWorldOverlay(
   let flatten = Math.max(0, Math.min(1, options.flat ?? 0));
   // PolyCSS first-person controls define the look target this far in front of
   // the eye, independent of zoom. Mirror that when a live target is not supplied
-  // (fixed-view/debug paths).
-  const lookOffset = perspective / BASE_TILE;
+  // (fixed-view/debug paths). `let`: refreshViewportCamera() re-derives it when
+  // the viewport perspective changes (a portrait→landscape rotation), otherwise
+  // derived targets keep the boot viewport's look distance and the projected
+  // eye shifts along the view direction.
+  let lookOffset = perspective / BASE_TILE;
 
   const element = document.createElement("div");
   element.className = "quake-glyph-overlay";
@@ -563,6 +595,39 @@ export function createQuakeGlyphWorldOverlay(
   }
 
   const camera = createGlyphPerspectiveCamera({ rotX: 90, rotY: 270, zoom, perspective, distance: 0, fovScale });
+
+  /**
+   * Re-derive `perspective` when the viewport changes.
+   *
+   * THE BUG THIS FIXES: the overlay was handed the perspective computed at
+   * construction and never heard about later viewports, while the app's own
+   * camera flow recomputes it per viewport (`quakeCameraPerspectiveForViewport`,
+   * which is aspect-aware). Boot in portrait, then go fullscreen landscape, and
+   * the glyph camera kept the PORTRAIT value — measured on a Galaxy S23:
+   * perspective 761.5 still in force at 846x411, where ~421 is correct. A camera
+   * 1.8x too far back, reported as "the pivot is too far from the screen ...
+   * it feels like third person".
+   *
+   * It also explains why portrait-without-fullscreen looked perfect: nothing
+   * ever resized, so the construction-time value stayed correct — and why
+   * desktop sweeps never reproduced it, since those pages never rotate.
+   */
+  function refreshViewportCamera(): void {
+    // Only a URL override pins it. The app ALWAYS passes a perspective (its
+    // construction-time default), so guarding on `options.perspective` being
+    // defined disabled this entirely — the first version of this fix did that
+    // and silently changed nothing.
+    if (options.pinPerspective) return;
+    const next = quakeCameraPerspectiveForViewport(window.innerWidth, window.innerHeight, camera.zoom);
+    if (!Number.isFinite(next) || Math.abs(next - camera.perspective) < 0.5) return;
+    (camera as unknown as { perspective: number }).perspective = next;
+    // The derived look target mirrors the controls' `perspective / BASE_TILE`
+    // offset, so it must track the same refresh.
+    lookOffset = next / BASE_TILE;
+    scheduleRender();
+  }
+  window.addEventListener("resize", refreshViewportCamera);
+  window.addEventListener("orientationchange", refreshViewportCamera);
 
   const scene = createGlyphScene(element, {
     mode: sceneMode,
@@ -1145,6 +1210,8 @@ export function createQuakeGlyphWorldOverlay(
   }
 
   function dispose(): void {
+    window.removeEventListener("resize", refreshViewportCamera);
+    window.removeEventListener("orientationchange", refreshViewportCamera);
     if (pendingFrame) { window.cancelAnimationFrame(pendingFrame); pendingFrame = 0; }
     if (paletteTimer) { window.clearTimeout(paletteTimer); paletteTimer = 0; }
     // Drop staged ops rather than flushing them: the render that would have
@@ -1212,4 +1279,473 @@ export function createQuakeGlyphWorldOverlay(
     });
   }
   return overlay;
+}
+
+/**
+ * Dedicated first-person weapon glyph scene.
+ *
+ * The world overlay's camera cannot express a near-field viewmodel: glyphcss
+ * clips every triangle at `eyeDepth > 0` (near plane ≈ the eye), and placing
+ * the gun in that camera — even contracted by `glyphWeaponReach` — puts the
+ * model's back extent behind the eye, so most of the mesh is discarded. The
+ * two world-camera knobs (scale / reach) are a one-parameter family and
+ * cannot recover the missing geometry.
+ *
+ * This overlay is the ASCII analogue of the polycss weapon stage: its own
+ * perspective camera, its own `<pre>`, stacked over the world. Projection
+ * (perspective, zoom, fovScale, center) is pushed by the viewmodel so it can
+ * mirror the raster stage (1280×720 reference, bottom-anchored layerScale,
+ * perspective-origin). The camera itself is a local screen-space frame
+ * (`rotX=90`, `rotY=270`) — looking around must not orbit the gun.
+ *
+ * Must not touch the world overlay's camera or entity list.
+ */
+export interface QuakeGlyphWeaponOverlayOptions {
+  readonly host: HTMLElement;
+  /** CSS-perspective distance in virtual px. Default: the raster weapon stage. */
+  readonly perspective?: number;
+  readonly zoom?: number;
+  readonly fovScale?: number;
+  /** Camera pullback in CSS px. */
+  readonly cameraBackoffPx?: number;
+  /** Projection center in normalized grid coords. Default `[0.5, 0.5]`. */
+  readonly center?: readonly [number, number];
+  readonly cellPx?: number;
+  readonly lineHeight?: number;
+  readonly glyphPalette?: string;
+  readonly fontAtlas?: GlyphFontAtlas;
+  readonly colorEncoding?: QuakeGlyphColorEncoding;
+  readonly colorTolerance?: number;
+  readonly sceneMode?: QuakeGlyphSceneMode;
+  readonly charMode?: QuakeGlyphCharMode;
+  readonly supersample?: number;
+  readonly brighten?: number;
+  readonly gamma?: number;
+  readonly blackPoint?: number;
+  readonly whitePoint?: number;
+  readonly strokePx?: number;
+  readonly ambientLight?: number;
+  readonly directionalLight?: number;
+}
+
+export interface QuakeGlyphWeaponProjection {
+  perspective?: number;
+  zoom?: number;
+  fovScale?: number;
+  center?: readonly [number, number];
+  screenScale?: readonly [number, number];
+  cameraBackoffPx?: number;
+  /**
+   * Screen-space recentring trim, applied as an OUTERMOST `translate()` (in
+   * fraction of the overlay's own box, so it's resolution-independent) after
+   * `screenScale`. Per-model, because `weaponGlyphTransform`'s per-axis mesh
+   * scale (needed to match each weapon's on-screen aspect — glyphcss scales
+   * mesh-LOCAL vertex components before rotation, so a non-uniform width/
+   * height correction collapses the bbox toward the mesh's own local origin
+   * instead of the tuned screen centre) drags the visible gun off-centre by
+   * a model-specific amount; the caller supplies the compensation.
+   */
+  screenTrim?: readonly [number, number];
+}
+
+export interface QuakeGlyphWeaponOverlay {
+  readonly element: HTMLElement;
+  setEntity(id: string, geometry: QuakeGlyphEntityGeometry | null, transform: QuakeGlyphEntityTransform): void;
+  setEntityTransform(id: string, transform: QuakeGlyphEntityTransform): boolean;
+  removeEntity(id: string): void;
+  setProjection(projection: QuakeGlyphWeaponProjection): void;
+  setUiOcclusion(coverage: GlyphOcclusionCoverage | null): void;
+  setGlyphPalette(name: string): void;
+  setCellPx(cellPx: number): void;
+  setTuning(tuning: {
+    brighten?: number;
+    gamma?: number;
+    blackPoint?: number;
+    whitePoint?: number;
+    strokePx?: number;
+    ambientLight?: number;
+    directionalLight?: number;
+  }): void;
+  setVisible(visible: boolean): void;
+  dispose(): void;
+}
+
+/** Screen-space weapon camera — must match the viewmodel's local frame. */
+const QUAKE_GLYPH_WEAPON_CAM_ROT_X = 90;
+const QUAKE_GLYPH_WEAPON_CAM_ROT_Y = 270;
+/** Raster weapon stage perspective (745.108 × default perspectiveScale 0.8). */
+const QUAKE_GLYPH_WEAPON_DEFAULT_PERSPECTIVE = 596.0866666666666;
+/**
+ * Pull the dedicated camera behind the raw viewmodel. glyphcss expresses
+ * camera distance in CSS px and converts mesh depth at 50 px/world-unit.
+ * v_shot's 5.706-unit long axis becomes 15.68 units at the raster X scale;
+ * its raw near end reaches 3.302 * 2.7478 = 9.073 units from the mesh
+ * origin, 5.973 beyond the 3.1-unit standoff. 310px = 6.2 world units,
+ * leaving 0.227 unit clear of the near plane.
+ */
+const QUAKE_GLYPH_WEAPON_CAMERA_BACKOFF_PX = 310;
+
+export function createQuakeGlyphWeaponOverlay(
+  options: QuakeGlyphWeaponOverlayOptions,
+): QuakeGlyphWeaponOverlay {
+  const element = options.host;
+  element.classList.add("quake-glyph-weapon-overlay");
+  element.style.background = "transparent";
+  element.style.overflow = "hidden";
+  element.style.pointerEvents = "none";
+  element.style.fontFamily = '"Menlo", "Consolas", monospace';
+  element.style.letterSpacing = "0";
+
+  let cellPx = Math.max(6, Math.min(40, options.cellPx ?? QUAKE_GLYPH_OVERLAY_CELL_PX));
+  const pinnedLineHeight = options.lineHeight !== undefined;
+  const clampLineHeight = (px: number) => Math.max(4, Math.min(40, px));
+  let lineHeightPx = clampLineHeight(options.lineHeight ?? Math.round(cellPx * 0.6));
+  element.style.fontSize = `${cellPx}px`;
+  element.style.lineHeight = `${lineHeightPx}px`;
+
+  const strokePx = Math.max(0, Math.min(2, options.strokePx ?? QUAKE_GLYPH_OVERLAY_STROKE_PX));
+  if (strokePx > 0) element.style.setProperty("-webkit-text-stroke", `${strokePx}px currentColor`);
+
+  const zoom = options.zoom ?? QUAKE_GLYPH_OVERLAY_ZOOM;
+  const perspective = options.perspective ?? QUAKE_GLYPH_WEAPON_DEFAULT_PERSPECTIVE;
+  const fovScale = options.fovScale ?? 1;
+  const center: [number, number] = options.center
+    ? [options.center[0], options.center[1]]
+    : [0.5, 0.5];
+
+  let glyphPalette = options.glyphPalette ?? "dense";
+  const charMode: QuakeGlyphCharMode = options.charMode ?? "ascii";
+  const sceneMode: QuakeGlyphSceneMode = options.sceneMode ?? "solid";
+  const colorTolerance = Math.max(0, Math.min(765, options.colorTolerance ?? 0));
+  const colorEncoding: QuakeGlyphColorEncoding = options.colorEncoding ?? "atlas";
+  const supersample = Math.max(1, Math.floor(options.supersample ?? 1));
+
+  let brighten = options.brighten ?? QUAKE_GLYPH_OVERLAY_BRIGHTEN;
+  let gamma = Math.min(1, Math.max(0.2, options.gamma ?? QUAKE_GLYPH_OVERLAY_GAMMA));
+  let blackPoint = Math.min(0.5, Math.max(0, options.blackPoint ?? 0));
+  let whitePoint = Math.min(1, Math.max(blackPoint + 0.05, options.whitePoint ?? 1));
+  const toneCache = new Map<string, string>();
+  const toneHex = (hex: string): string => {
+    if (gamma >= 1 && blackPoint <= 0 && whitePoint >= 1) return hex;
+    let lifted = toneCache.get(hex);
+    if (lifted === undefined) {
+      const match = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex);
+      if (!match) return hex;
+      const r = parseInt(match[1]!, 16);
+      const g = parseInt(match[2]!, 16);
+      const b = parseInt(match[3]!, 16);
+      const luma = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+      if (luma <= 0) lifted = hex;
+      else {
+        const t = Math.min(1, Math.max(0,
+          (Math.pow(luma / 255, gamma) - blackPoint) / (whitePoint - blackPoint)));
+        const scale = Math.min((255 * t) / luma, 255 / Math.max(r, g, b));
+        const h = (v: number) => Math.round(v * scale).toString(16).padStart(2, "0");
+        lifted = `#${h(r)}${h(g)}${h(b)}`;
+      }
+      toneCache.set(hex, lifted);
+    }
+    return lifted;
+  };
+
+  const ambientLight = options.ambientLight ?? 0.8;
+  const directionalLight = options.directionalLight ?? 0.25;
+
+  const camera = createGlyphPerspectiveCamera({
+    rotX: QUAKE_GLYPH_WEAPON_CAM_ROT_X,
+    rotY: QUAKE_GLYPH_WEAPON_CAM_ROT_Y,
+    zoom,
+    perspective,
+    distance: options.cameraBackoffPx ?? QUAKE_GLYPH_WEAPON_CAMERA_BACKOFF_PX,
+    fovScale,
+    center,
+  });
+  applyWeaponLookTarget(camera);
+
+  const scene = createGlyphScene(element, {
+    mode: sceneMode,
+    charMode,
+    colorTolerance,
+    colorEncoding,
+    fontAtlas: options.fontAtlas,
+    useColors: true,
+    autoSize: true,
+    glyphPalette,
+    doubleSided: true,
+    supersample,
+    ambientLight: { intensity: ambientLight },
+    directionalLight: { intensity: directionalLight, direction: [-0.4, -0.55, -0.65] },
+    camera,
+  });
+
+  const paletteBudget = Math.max(1, options.fontAtlas?.maxPaletteSize ?? 68);
+  const paletteColors = new Set<string>();
+  let palettePinnedCount = -1;
+  let paletteTimer = 0;
+  function schedulePinnedAtlasPalette(): void {
+    if (colorEncoding !== "atlas") return;
+    if (paletteColors.size === palettePinnedCount || paletteTimer) return;
+    paletteTimer = window.setTimeout(() => {
+      paletteTimer = 0;
+      if (paletteColors.size === palettePinnedCount) return;
+      palettePinnedCount = paletteColors.size;
+      const colors = [...paletteColors];
+      scene.setOptions({
+        atlasPalette: quantizeGlyphAtlasPalette(colors.map(() => "x"), colors, colors.length, paletteBudget),
+      });
+    }, 100);
+  }
+
+  if (pinnedLineHeight) {
+    scene.output.style.lineHeight = `${lineHeightPx}px`;
+    scene.fit();
+  }
+  scene.output.style.background = "transparent";
+
+  if (typeof requestAnimationFrame !== "undefined") {
+    requestAnimationFrame(() => {
+      scene.fit();
+      scheduleRender();
+    });
+  }
+
+  const rawEntities = new Map<string, { geometry: QuakeGlyphEntityGeometry; transform: QuakeGlyphEntityTransform }>();
+  const entities = new Map<string, GlyphMeshHandle>();
+
+  function toGlyphPolygons(geometry: QuakeGlyphEntityGeometry, toneScale = 1): GlyphPolygon[] {
+    const polygons = geometry.polygons.map((polygon) => {
+      const color = toneHex(brightenHex(polygon.c, brighten * toneScale));
+      paletteColors.add(color);
+      return { vertices: polygon.v as Vec3[], color };
+    });
+    schedulePinnedAtlasPalette();
+    return polygons;
+  }
+
+  function toMeshTransform(id: string, transform: QuakeGlyphEntityTransform): GlyphMeshTransform {
+    const density = transform.density != null && transform.density > 1 ? transform.density : undefined;
+    return {
+      id,
+      position: [transform.position[0], transform.position[1], transform.position[2]],
+      rotation: transform.rotation
+        ? [transform.rotation[0], transform.rotation[1], transform.rotation[2]]
+        : undefined,
+      scale: Array.isArray(transform.scale)
+        ? [transform.scale[0], transform.scale[1], transform.scale[2]]
+        : (transform.scale as number | undefined),
+      ...(density ? { density } : {}),
+    };
+  }
+
+  type StagedEntity =
+    | { kind: "set"; geometry: QuakeGlyphEntityGeometry | null; transform: QuakeGlyphEntityTransform }
+    | { kind: "transform"; transform: QuakeGlyphEntityTransform }
+    | { kind: "remove" };
+  const staged = new Map<string, StagedEntity>();
+
+  function stagedEntityExists(id: string): boolean {
+    const pending = staged.get(id);
+    if (pending) return pending.kind === "set" ? !!pending.geometry?.polygons?.length : pending.kind !== "remove";
+    return entities.has(id);
+  }
+
+  function applyStagedEntities(): void {
+    if (!staged.size) return;
+    for (const [id, op] of staged) {
+      const existing = entities.get(id);
+      if (op.kind === "remove") {
+        if (existing) { existing.dispose(); entities.delete(id); }
+        continue;
+      }
+      if (op.kind === "transform") {
+        existing?.setTransform(toMeshTransform(id, op.transform));
+        continue;
+      }
+      if (existing) { existing.dispose(); entities.delete(id); }
+      if (!op.geometry?.polygons?.length) continue;
+      entities.set(id, scene.add(toGlyphPolygons(op.geometry, op.transform.toneScale), toMeshTransform(id, op.transform)));
+    }
+    staged.clear();
+  }
+
+  function setEntity(id: string, geometry: QuakeGlyphEntityGeometry | null, transform: QuakeGlyphEntityTransform): void {
+    if (geometry?.polygons?.length) rawEntities.set(id, { geometry, transform });
+    else rawEntities.delete(id);
+    staged.set(id, { kind: "set", geometry, transform });
+    scheduleRender();
+  }
+
+  function setEntityTransform(id: string, transform: QuakeGlyphEntityTransform): boolean {
+    if (!stagedEntityExists(id)) return false;
+    const pending = staged.get(id);
+    if (pending?.kind === "set") pending.transform = transform;
+    else staged.set(id, { kind: "transform", transform });
+    const raw = rawEntities.get(id);
+    if (raw) raw.transform = transform;
+    scheduleRender();
+    return true;
+  }
+
+  function removeEntity(id: string): void {
+    rawEntities.delete(id);
+    if (!stagedEntityExists(id)) return;
+    staged.set(id, { kind: "remove" });
+    scheduleRender();
+  }
+
+  let pendingFrame = 0;
+  let needsCellRefit = true;
+  function renderFrame(): void {
+    pendingFrame = 0;
+    if (element.style.display === "none") {
+      applyStagedEntities();
+      return;
+    }
+    if (needsCellRefit) {
+      needsCellRefit = false;
+      scene.fit();
+    }
+    applyStagedEntities();
+    scene.rerender();
+  }
+  function scheduleRender(): void {
+    if (!pendingFrame) pendingFrame = window.requestAnimationFrame(renderFrame);
+  }
+
+  function setProjection(projection: QuakeGlyphWeaponProjection): void {
+    let lookDirty = false;
+    if (projection.perspective !== undefined && Number.isFinite(projection.perspective) && projection.perspective > 0) {
+      camera.perspective = projection.perspective;
+      lookDirty = true;
+    }
+    if (projection.zoom !== undefined && Number.isFinite(projection.zoom) && projection.zoom > 0) {
+      camera.zoom = projection.zoom;
+    }
+    if (projection.fovScale !== undefined && Number.isFinite(projection.fovScale) && projection.fovScale > 0) {
+      camera.fovScale = projection.fovScale;
+    }
+    if (projection.center) {
+      camera.center = [projection.center[0], projection.center[1]];
+    }
+    if (projection.cameraBackoffPx !== undefined && Number.isFinite(projection.cameraBackoffPx)) {
+      camera.distance = Math.max(0, projection.cameraBackoffPx);
+      lookDirty = true;
+    }
+    if (projection.screenScale) {
+      const [trimX, trimY] = projection.screenTrim ?? [0, 0];
+      element.style.transformOrigin = "50% 50%";
+      element.style.transform =
+        (trimX !== 0 || trimY !== 0 ? `translate(${trimX * 100}%, ${trimY * 100}%) ` : "") +
+        `scaleX(${projection.screenScale[0]}) scaleY(${projection.screenScale[1]})`;
+    }
+    if (lookDirty) applyWeaponLookTarget(camera);
+    scheduleRender();
+  }
+
+  function setUiOcclusion(coverage: GlyphOcclusionCoverage | null): void {
+    if (typeof scene.setForeignOcclusion !== "function") return;
+    scene.setForeignOcclusion(coverage);
+    scheduleRender();
+  }
+
+  function setGlyphPalette(name: string): void {
+    if (name === glyphPalette) return;
+    glyphPalette = name;
+    scene.setOptions({ glyphPalette: name });
+    scheduleRender();
+  }
+
+  function setCellPx(next: number): void {
+    const clamped = Math.max(6, Math.min(40, Math.round(next)));
+    if (clamped === cellPx) return;
+    cellPx = clamped;
+    if (!pinnedLineHeight) lineHeightPx = clampLineHeight(Math.round(cellPx * 0.6));
+    element.style.fontSize = `${cellPx}px`;
+    element.style.lineHeight = `${lineHeightPx}px`;
+    if (pinnedLineHeight) scene.output.style.lineHeight = `${lineHeightPx}px`;
+    scene.fit();
+    scheduleRender();
+  }
+
+  function setTuning(tuning: {
+    brighten?: number;
+    gamma?: number;
+    blackPoint?: number;
+    whitePoint?: number;
+    strokePx?: number;
+    ambientLight?: number;
+    directionalLight?: number;
+  }): void {
+    if (tuning.brighten !== undefined) brighten = Math.max(0.1, tuning.brighten);
+    if (tuning.gamma !== undefined) gamma = Math.min(1, Math.max(0.2, tuning.gamma));
+    if (tuning.blackPoint !== undefined) blackPoint = Math.min(0.5, Math.max(0, tuning.blackPoint));
+    if (tuning.whitePoint !== undefined) whitePoint = Math.min(1, tuning.whitePoint);
+    whitePoint = Math.max(blackPoint + 0.05, whitePoint);
+    if (tuning.strokePx !== undefined) {
+      const px = Math.max(0, Math.min(2, tuning.strokePx));
+      if (px > 0) element.style.setProperty("-webkit-text-stroke", `${px}px currentColor`);
+      else element.style.removeProperty("-webkit-text-stroke");
+    }
+    if (tuning.ambientLight !== undefined || tuning.directionalLight !== undefined) {
+      scene.setOptions({
+        ...(tuning.ambientLight !== undefined
+          ? { ambientLight: { intensity: Math.max(0, tuning.ambientLight) } }
+          : {}),
+        ...(tuning.directionalLight !== undefined
+          ? { directionalLight: { intensity: Math.max(0, tuning.directionalLight), direction: [-0.4, -0.55, -0.65] as Vec3 } }
+          : {}),
+      });
+    }
+    const recolour =
+      tuning.brighten !== undefined || tuning.gamma !== undefined ||
+      tuning.blackPoint !== undefined || tuning.whitePoint !== undefined;
+    if (recolour) {
+      toneCache.clear();
+      paletteColors.clear();
+      palettePinnedCount = -1;
+      for (const [id, raw] of rawEntities) {
+        staged.set(id, { kind: "set", geometry: raw.geometry, transform: raw.transform });
+      }
+    }
+    scheduleRender();
+  }
+
+  function setVisible(visible: boolean): void {
+    element.style.display = visible ? "" : "none";
+    if (visible) scheduleRender();
+  }
+
+  function dispose(): void {
+    if (pendingFrame) { window.cancelAnimationFrame(pendingFrame); pendingFrame = 0; }
+    if (paletteTimer) { window.clearTimeout(paletteTimer); paletteTimer = 0; }
+    staged.clear();
+    for (const handle of entities.values()) handle.dispose();
+    entities.clear();
+    scene.destroy();
+    element.remove();
+  }
+
+  return {
+    element,
+    setEntity,
+    setEntityTransform,
+    removeEntity,
+    setProjection,
+    setUiOcclusion,
+    setGlyphPalette,
+    setCellPx,
+    setTuning,
+    setVisible,
+    dispose,
+  };
+}
+
+function applyWeaponLookTarget(camera: { perspective: number; target: Vec3 }): void {
+  const lookOffset = camera.perspective / BASE_TILE;
+  const forward = forwardDirection(QUAKE_GLYPH_WEAPON_CAM_ROT_X, QUAKE_GLYPH_WEAPON_CAM_ROT_Y);
+  camera.target = [
+    forward[0] * lookOffset,
+    forward[1] * lookOffset,
+    forward[2] * lookOffset,
+  ];
 }

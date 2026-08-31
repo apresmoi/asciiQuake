@@ -26,6 +26,10 @@ export interface QuakeUiMeshPalettes {
   readonly plaque: string;
   readonly title: string;
   readonly labels: string;
+  /** Gameplay status bar art. */
+  readonly hudBar: string;
+  /** Gameplay readout digits and status icons. */
+  readonly hudArt: string;
 }
 
 export function buildQuakeUiMeshStyles(
@@ -87,6 +91,37 @@ export function buildQuakeUiMeshStyles(
       strokePx: t.labelStroke,
       colorBoost: Math.max(1, 1.65 / t.labelAmbient),
       occlusionMarginPx: t.labelOcclusionMargin,
+    },
+    // ── The gameplay HUD's two profiles ──
+    // These carry NO `colorBoost`: the lab's styled-branch residual exists to
+    // reproduce a session that previewed a sprite through the logo path, and
+    // the HUD is measured in the running game against the bar it sits on, not
+    // previewed as an isolated sprite. Adding a boost here would brighten the
+    // digits by a factor that means nothing for this element.
+    //
+    // Nor an `occlusionMarginPx`: a contour margin cannot take a cell from
+    // another opaque detail mesh in glyphcss 0.1.6, and the bar is exactly
+    // that (see hudReadoutGroundSheet.ts). Both rows keep the default "alpha"
+    // claim, which is what already lets the digits blank the bar under their
+    // own ink; the margin around that ink comes from the derived sheet.
+    "hud-bar": {
+      palette: palettes.hudBar,
+      ambient: t.hudBarAmbient,
+      gamma: t.hudBarGamma,
+      saturation: t.hudBarSaturation,
+      black: t.hudBarBlack,
+      white: t.hudBarWhite,
+      inkComp: t.hudBarInkComp,
+      strokePx: t.hudBarStroke,
+    },
+    "hud-art": {
+      palette: palettes.hudArt,
+      ambient: t.hudArtAmbient,
+      gamma: t.hudArtGamma,
+      saturation: t.hudArtSaturation,
+      black: t.hudArtBlack,
+      inkComp: t.hudArtInkComp,
+      strokePx: t.hudArtStroke,
     },
   };
 }

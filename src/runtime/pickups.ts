@@ -250,6 +250,55 @@ export interface QuakePickupController {
   syncVisibility: (origin: [number, number, number]) => void;
 }
 
+const synthesizedPickupGlyphGeometryCache = new WeakMap<QuakePickupModel, QuakeGlyphGeometry>();
+const SYNTHESIZED_PICKUP_FACE_BRIGHTNESS = [0.4, 1, 0.7, 0.85, 0.65, 0.8] as const;
+
+function pickupModelFallbackColor(model: QuakePickupModel, classname = ""): string {
+  const target = `${classname} ${model.source}`.toLowerCase();
+  if (target.includes("health") || target.includes("b_bh")) return "#8b1510";
+  if (target.includes("key")) return "#d2b34a";
+  if (target.includes("armor")) return "#4c9b55";
+  if (target.includes("rocket") || target.includes("b_rock")) return "#8a3f24";
+  return "#7f6040";
+}
+
+function shadePickupFaceColor(color: string, faceIndex: number): string {
+  const brightness = SYNTHESIZED_PICKUP_FACE_BRIGHTNESS[faceIndex] ?? 1;
+  const channel = (offset: number): string =>
+    Math.round(Number.parseInt(color.slice(offset, offset + 2), 16) * brightness)
+      .toString(16)
+      .padStart(2, "0");
+  return `#${channel(1)}${channel(3)}${channel(5)}`;
+}
+
+function synthesizePickupBoundsGlyphGeometry(
+  model: QuakePickupModel,
+  classname?: string,
+): QuakeGlyphGeometry | null {
+  if (!model.bounds) return null;
+  const cached = synthesizedPickupGlyphGeometryCache.get(model);
+  if (cached) return cached;
+  const baseColor = pickupModelFallbackColor(model, classname);
+  const minX = Math.round(model.bounds.min[0] * 1000) / 1000;
+  const minY = Math.round(model.bounds.min[1] * 1000) / 1000;
+  const minZ = Math.round(model.bounds.min[2] * 1000) / 1000;
+  const maxX = Math.round(model.bounds.max[0] * 1000) / 1000;
+  const maxY = Math.round(model.bounds.max[1] * 1000) / 1000;
+  const maxZ = Math.round(model.bounds.max[2] * 1000) / 1000;
+  const faces: number[][][] = [
+    [[minX, minY, minZ], [minX, maxY, minZ], [maxX, maxY, minZ], [maxX, minY, minZ]],
+    [[minX, minY, maxZ], [maxX, minY, maxZ], [maxX, maxY, maxZ], [minX, maxY, maxZ]],
+    [[minX, minY, minZ], [maxX, minY, minZ], [maxX, minY, maxZ], [minX, minY, maxZ]],
+    [[maxX, minY, minZ], [maxX, maxY, minZ], [maxX, maxY, maxZ], [maxX, minY, maxZ]],
+    [[maxX, maxY, minZ], [minX, maxY, minZ], [minX, maxY, maxZ], [maxX, maxY, maxZ]],
+    [[minX, maxY, minZ], [minX, minY, minZ], [minX, minY, maxZ], [minX, maxY, maxZ]],
+  ];
+  const polygons = faces.map((v, faceIndex) => ({ v, c: shadePickupFaceColor(baseColor, faceIndex) }));
+  const synthesized: QuakeGlyphGeometry = { version: 2, polygonCount: polygons.length, polygons };
+  synthesizedPickupGlyphGeometryCache.set(model, synthesized);
+  return synthesized;
+}
+
 export function createQuakePickupController(options: QuakePickupControllerOptions): QuakePickupController {
   let handles: PolyMeshHandle[] = [];
   let pickups: QuakePickupState[] = [];
@@ -540,7 +589,11 @@ export function createQuakePickupController(options: QuakePickupControllerOption
     const model = pickup.model;
     if (!model) return null;
     const frameIndex = pickup.animation?.frameIndex ?? 0;
-    return model.animationFrames?.[frameIndex]?.glyphGeometry ?? model.glyphGeometry ?? null;
+    return (
+      model.animationFrames?.[frameIndex]?.glyphGeometry ??
+      model.glyphGeometry ??
+      synthesizePickupBoundsGlyphGeometry(model, pickup.entity.classname)
+    );
   };
 
   // The glyph world frame == the poly transform frame (both (raw-pivot)*scale,

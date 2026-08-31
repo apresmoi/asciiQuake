@@ -176,6 +176,61 @@ export const QUAKE_GLYPH_UI_TUNING_KNOBS: readonly QuakeGlyphTuningKnob[] = [
   { key: "labelStroke", param: "glyphImageLabelStroke", label: "label glyph stroke px", min: 0, max: 2, step: 0.05, def: 0.75, group: "Label tone" },
   { key: "labelInkComp", param: "glyphImageLabelInkComp", label: "label ink compensation", min: 0, max: 1, step: 0.05, def: 0.2, group: "Label tone" },
   { key: "labelOcclusionMargin", param: "glyphImageLabelOcclusionMargin", label: "label occlusion margin px", min: 0, max: 8, step: 0.25, def: 2, group: "Label tone" },
+
+  // ── Gameplay HUD ───────────────────────────────────────────────────────────
+  // The status bar and its readouts, split into TWO profiles because they
+  // want opposite treatments: the bar is a busy 320x24 texture that has to
+  // sit back, and the digits/icons on top of it have to come forward.
+  //
+  // Both were code constants until now (HUD_BAR_AMBIENT / HUD_*_DENSITY in
+  // glyphUiOverlay) with no lab session behind them, and no style-table row —
+  // which is why the digits were never tunable. They are rows now, with the
+  // same knob-per-lever shape as every menu element, so the lab drives them.
+  //
+  // Defaults measured 2026-08 (in-game screenshots at 1600x900 DPR 1 and
+  // 846x411 DPR 2.625, e1m1, fresh spawn). At the old settings the readouts'
+  // ink sat at Weber 0.23-0.38 against the bar showing through their own
+  // footprint, with only ~50% of each digit's footprint rendering any ink at
+  // all — the numbers read as darker blotches in orange noise, which is the
+  // reported "not visible by contrast".
+  //
+  // BAR: the levels operate in POST-AMBIENT space; the bar's post-ambient
+  // mean is only 17.7/255 = 0.069, so ANY black point above ~0.069 crushes the
+  // majority of the bar (at black 0.08, 6506 of 7680 texels — 84.71% — were
+  // forced to exact black). The bar's quiet look comes from the load-bearing
+  // 0.55 ambient alone, and its tone curve stays at identity (gamma 1, black 0,
+  // white 1, sat 1) so liftCellColors takes its identity early return.
+  // Warning: raising hudBarBlack re-introduces the crushed black slab.
+  // Ink compensation and stroke restore the scene-inherited defaults that
+  // explicit zeros silently dropped; setting either back to 0 fades the bar.
+  { key: "hudBarDensity", param: "glyphImageHudBarDensity", label: "hud bar density", min: 1, max: 8, step: 0.01, def: 2, group: "HUD bar tone" },
+  { key: "hudBarAmbient", param: "glyphImageHudBarAmbient", label: "hud bar ambient", min: 0.1, max: 6, step: 0.05, def: 0.55, group: "HUD bar tone" },
+  { key: "hudBarGamma", param: "glyphImageHudBarGamma", label: "hud bar gamma (lower = brighter)", min: 0.2, max: 1, step: 0.01, def: 1, group: "HUD bar tone" },
+  { key: "hudBarSaturation", param: "glyphImageHudBarSaturation", label: "hud bar saturation", min: 0, max: 4, step: 0.05, def: 1, group: "HUD bar tone" },
+  { key: "hudBarBlack", param: "glyphImageHudBarBlack", label: "hud bar black point", min: 0, max: 0.5, step: 0.005, def: 0, group: "HUD bar tone" },
+  { key: "hudBarWhite", param: "glyphImageHudBarWhite", label: "hud bar white point", min: 0.5, max: 1, step: 0.005, def: 1, group: "HUD bar tone" },
+  { key: "hudBarStroke", param: "glyphImageHudBarStroke", label: "hud bar glyph stroke px", min: 0, max: 2, step: 0.05, def: 0.6, group: "HUD bar tone" },
+  { key: "hudBarInkComp", param: "glyphImageHudBarInkComp", label: "hud bar ink compensation", min: 0, max: 1, step: 0.05, def: 1, group: "HUD bar tone" },
+
+  // ART (readout digits + status icons): the digit sheet is uniformly DARK —
+  // measured, dist/q/hud-numbers.png has mean ink luma 41.5 and max 107.7
+  // (37.9% opaque, alpha strictly binary) — so at the scene ambient the darker
+  // half of every digit fell below the ramp's first step and rendered as spaces,
+  // which is the "only fragments survived" reading. The ambient here is the
+  // direct fix: it multiplies the texel luma that picks the glyph, so it buys
+  // coverage AND colour at once. The stroke thickens what does render.
+  { key: "hudArtDensity", param: "glyphImageHudArtDensity", label: "hud art density", min: 1, max: 8, step: 0.01, def: 4, group: "HUD art tone" },
+  { key: "hudArtAmbient", param: "glyphImageHudArtAmbient", label: "hud art ambient", min: 0.1, max: 8, step: 0.05, def: 5.5, group: "HUD art tone" },
+  { key: "hudArtGamma", param: "glyphImageHudArtGamma", label: "hud art gamma (lower = brighter)", min: 0.2, max: 1, step: 0.01, def: 0.7, group: "HUD art tone" },
+  { key: "hudArtSaturation", param: "glyphImageHudArtSaturation", label: "hud art saturation", min: 0, max: 4, step: 0.05, def: 1.3, group: "HUD art tone" },
+  { key: "hudArtBlack", param: "glyphImageHudArtBlack", label: "hud art black point", min: 0, max: 0.5, step: 0.005, def: 0, group: "HUD art tone" },
+  { key: "hudArtStroke", param: "glyphImageHudArtStroke", label: "hud art glyph stroke px", min: 0, max: 2, step: 0.05, def: 0.8, group: "HUD art tone" },
+  { key: "hudArtInkComp", param: "glyphImageHudArtInkComp", label: "hud art ink compensation", min: 0, max: 1, step: 0.05, def: 1, group: "HUD art tone" },
+  // The readouts' quiet ground, in SOURCE TEXELS of the 24-texel digit cell —
+  // see hudReadoutGroundSheet.ts for why this is baked into the sheet's alpha
+  // instead of being a glyphcss contour margin (the fully opaque bar owns
+  // every cell a contour margin could have taken).
+  { key: "hudArtGroundTexels", param: "glyphImageHudArtGround", label: "hud readout ground texels", min: 0, max: 6, step: 0.25, def: 2, group: "HUD art tone" },
 ] as const;
 
 /** The world glyph scene (glyphWorldOverlay) — gameplay ASCII.
@@ -201,6 +256,94 @@ export const QUAKE_GLYPH_WORLD_TUNING_KNOBS: readonly QuakeGlyphTuningKnob[] = [
   { key: "dir", param: "glyphDir", label: "directional light", min: 0, max: 1, step: 0.02, def: 0.25, group: "World light" },
   { key: "cell", param: "glyphCell", label: "cell px (detail)", min: 6, max: 40, step: 1, def: 12, group: "World grid" },
 ] as const;
+
+/**
+ * Dedicated glyph weapon-stage knobs. Projection overrides
+ * (fovScale, center, persp) are URL-only in App.ts — 0/absent means "mirror
+ * the raster stage" and a slider would pin a literal over that auto.
+ */
+export const QUAKE_GLYPH_WEAPON_TUNING_KNOBS: readonly QuakeGlyphTuningKnob[] = [
+  { key: "scale", param: "glyphWeaponScale", label: "weapon scale", min: 0.01, max: 20, step: 0.01, def: 1, group: "Weapon stage" },
+  { key: "reach", param: "glyphWeaponReach", label: "weapon reach", min: 0.02, max: 20, step: 0.01, def: 1, group: "Weapon stage" },
+  { key: "roll", param: "glyphWeaponRoll", label: "weapon local roll", min: -180, max: 180, step: 0.5, def: 13, group: "Weapon stage" },
+  { key: "backoff", param: "glyphWeaponBackoff", label: "weapon camera backoff", min: 0, max: 4000, step: 5, def: 310, group: "Weapon stage" },
+  { key: "localY", param: "glyphWeaponLocalY", label: "weapon local Y px", min: -500, max: 500, step: 1, def: -25, group: "Weapon pose" },
+  { key: "pivotX", param: "glyphWeaponPivotX", label: "weapon pivot X px", min: -500, max: 500, step: 1, def: 0, group: "Weapon pose" },
+  { key: "pivotY", param: "glyphWeaponPivotY", label: "weapon pivot Y px", min: -500, max: 500, step: 1, def: 0, group: "Weapon pose" },
+  { key: "pivotZ", param: "glyphWeaponPivotZ", label: "weapon pivot Z px", min: -500, max: 500, step: 1, def: 0, group: "Weapon pose" },
+  { key: "screenX", param: "glyphWeaponScreenX", label: "weapon screen X px", min: -500, max: 500, step: 1, def: -1, group: "Weapon projection" },
+  { key: "screenY", param: "glyphWeaponScreenY", label: "weapon screen Y px", min: -500, max: 500, step: 1, def: 12.5, group: "Weapon projection" },
+  { key: "screenScaleX", param: "glyphWeaponScreenScaleX", label: "weapon screen scale X", min: 0.01, max: 20, step: 0.01, def: 0.98, group: "Weapon projection" },
+  { key: "screenScaleY", param: "glyphWeaponScreenScaleY", label: "weapon screen scale Y", min: 0.01, max: 20, step: 0.01, def: 1, group: "Weapon projection" },
+  { key: "stageOffset", param: "glyphWeaponStageOffset", label: "weapon stage offset px", min: -500, max: 500, step: 1, def: 30.887, group: "Weapon projection" },
+  { key: "density", param: "glyphWeaponDensity", label: "weapon density", min: 1, max: 4, step: 1, def: 2, group: "Weapon stage" },
+  { key: "zoom", param: "glyphWeaponZoom", label: "weapon zoom", min: 0.01, max: 500, step: 0.5, def: 50, group: "Weapon stage" },
+  { key: "cell", param: "glyphWeaponCell", label: "weapon cell px", min: 6, max: 40, step: 1, def: 12, group: "Weapon stage" },
+] as const;
+
+/** The UI density knobs whose defaults are EMPIRICAL matches to the user's
+ *  2026-08 lab sessions (see each row's comment above). They all express
+ *  "cells per base cell", so their approved look is really a detail-cell size
+ *  in DEVICE pixels — the quantity `adaptQuakeUiDensitiesToDisplay` preserves. */
+export const QUAKE_GLYPH_UI_DENSITY_KEYS = [
+  "density",
+  "logoDensity",
+  "textDensity",
+  "plaqueDensity",
+  "titleDensity",
+  "labelDensity",
+  "consoleDensity",
+] as const;
+
+/** Monospace advance fraction — the same measured constant the overlay and
+ *  App.ts use to convert a cell budget into a cell size. */
+const QUAKE_GLYPH_UI_CELL_ASPECT = 0.606;
+
+/** The UI base cell in DEVICE px at the 2026-08 tuning sessions: 1600x900,
+ *  DPR 2 → fitted sqrt(1600*900 / (0.606 * 24000)) = 9.95 CSS px = 19.9. */
+export const QUAKE_GLYPH_UI_TUNING_BASE_CELL_DEVICE_PX = 19.9;
+
+/**
+ * Make the per-element densities viewport/DPR aware: on displays whose UI
+ * base cell is SMALLER (in device px) than the 1600x900/DPR-2 cell the
+ * densities were tuned on, scale them down proportionally so every detail
+ * cell keeps its approved DEVICE-pixel size instead of shrinking into the
+ * sub-device-pixel grey-mush regime.
+ *
+ * Measured need (iPhone-14-class, 390x844, DPR 3): the base cell fits at
+ * 4.76 CSS px = 14.3 device px — 72% of the tuning session's 19.9 — which
+ * put the plaque's detail cells at 1.21 device px (approved: 1.69; rendered:
+ * unreadable mush) and the title's at 4.27 (approved: 5.96). The factor
+ * min(1, baseDevicePx / 19.9) restores exactly the approved sizes; on the
+ * tuning display itself it is 1.0, so desktop renders are bit-identical.
+ *
+ * URL-pinned knobs are the user's explicit choice and are never scaled.
+ * Mutates `values` in place; call between resolve and mount.
+ */
+export function adaptQuakeUiDensitiesToDisplay(
+  values: QuakeGlyphTuningValues,
+  params: URLSearchParams,
+  display: { hostW: number; hostH: number; dpr: number },
+): void {
+  const maxCells = Math.max(256, values.maxCells ?? 24_000);
+  const minCellPx = Math.max(2, values.minCellPx ?? 3);
+  const fitted = Math.sqrt(
+    (Math.max(1, display.hostW) * Math.max(1, display.hostH)) / (QUAKE_GLYPH_UI_CELL_ASPECT * maxCells),
+  );
+  const baseDevicePx = Math.max(minCellPx, fitted) * Math.max(0.5, display.dpr || 1);
+  const factor = Math.min(1, baseDevicePx / QUAKE_GLYPH_UI_TUNING_BASE_CELL_DEVICE_PX);
+  if (factor >= 1) return;
+  const densityKeys = new Set<string>(QUAKE_GLYPH_UI_DENSITY_KEYS);
+  for (const knob of QUAKE_GLYPH_UI_TUNING_KNOBS) {
+    if (!densityKeys.has(knob.key)) continue;
+    // A URL-pinned knob (present and valid — the same acceptance rule the
+    // resolver applies) stays the user's literal value.
+    const raw = params.get(knob.param);
+    const parsed = raw === null ? Number.NaN : Number.parseFloat(raw);
+    if (Number.isFinite(parsed) && parsed >= knob.min && parsed <= knob.max) continue;
+    values[knob.key] = Math.max(knob.min, values[knob.key]! * factor);
+  }
+}
 
 /**
  * Resolve every knob's startup value: the URL param when present and inside
