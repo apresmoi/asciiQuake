@@ -319,34 +319,41 @@ const QUAKE_WEAPON_MODEL_TUNING_OVERRIDES: Record<string, QuakeViewmodelTuning> 
     screenScaleY: 0.922,
   },
 };
+interface QuakeGlyphWeaponModelTrim {
+  axisTrim: readonly [number, number];
+  screenTrim: readonly [number, number];
+  screenScale: readonly [number, number];
+  /**
+   * Per-model sign applied to [yaw, pitch] before the glyph Euler conversion.
+   * The dedicated weapon scene's camera fixes one handedness convention, but
+   * each `.mdl`'s exported local frame does not agree on it: v_shot's frame
+   * needs the negated pair, v_axe's needs the pair passed through. Negating
+   * v_axe mirrored it horizontally (it faced the camera instead of coming from
+   * behind); passing v_shot through moves the shotgun off its fitted placement.
+   * So the sign is per-model rather than global.
+   */
+  eulerSign: readonly [number, number];
+}
+
 /**
- * Glyph-only, per-model on-screen size/aspect + recentring correction.
- *
- * `weaponGlyphTransform`'s mesh scale reuses the SAME shared
- * `horizontalScale`/`verticalScale`/`depthScale` triple as the raster path
- * (only permuted onto glyphcss's mesh-local axes — see the comment there),
- * but each `.mdl`'s exported glyph mesh has its own local vertex scale, so
- * the resulting on-screen aspect isn't uniform across weapons. `axisTrim`
- * ([widthMul, heightMul]) is an EXTRA multiplier on top of that shared
- * scale, fit per-model against the cssquake.wtf oracle's on-screen bbox.
- * `screenTrim` ([xFrac, yFrac]) compensates the recentring drift that
- * non-uniform axis scaling causes (glyphcss scales mesh-local vertices
- * before rotation, so shrinking/growing width and height by different
- * amounts collapses/expands the bbox toward the mesh's own local origin,
- * not the tuned screen centre).
- *
- * Only `progs/v_shot.mdl` (shotgun) is fit here — verified against the
- * oracle within tolerance at 1600×900 and 846×411. Other models default to
- * `[1, 1]` / `[0, 0]` (unchanged from the pre-fix behaviour) rather than
- * risk a wrong correction: growing axe's glyph mesh past ~1.2x pushes
- * vertices through the weapon camera's near-clip plane and drops the mesh
- * entirely, so it needs a different lever (camera backoff, not mesh scale)
- * that this round didn't reach.
+ * Glyph-only, per-model corrections; the raster path never reads this table.
+ * `axisTrim` scales mesh-local axes, `screenTrim` translates post-projection in
+ * viewport fractions, and `screenScale` scales post-projection about the
+ * viewport centre. Values were fitted from the rendered ink bbox at 1600x900
+ * dpr1 against the cssquake oracle and must be refitted if the weapon camera or
+ * projection changes. The 2D `screenScale`/`screenTrim` corrections deliberately
+ * ignore player origin/yaw/pitch, preserving the weapon's view-lock.
  */
-const QUAKE_GLYPH_WEAPON_MODEL_TRIM: Record<string, { axisTrim: readonly [number, number]; screenTrim: readonly [number, number] }> = {
-  "progs/v_shot.mdl": { axisTrim: [0.841, 0.37], screenTrim: [0.028, 0.186] },
+const QUAKE_GLYPH_WEAPON_MODEL_TRIM: Record<string, QuakeGlyphWeaponModelTrim> = {
+  // Shotgun: fitted against the oracle under the negated euler convention and
+  // verified at 1600x900 / 846x411. Do not disturb without refitting.
+  "progs/v_shot.mdl": { axisTrim: [0.841, 0.37], screenTrim: [0.028, 0.186], screenScale: [1, 1], eulerSign: [-1, -1] },
+  // Axe: needs the un-negated euler pair or it renders mirrored.
+  "progs/v_axe.mdl": { axisTrim: [1, 1], screenTrim: [0, 0], screenScale: [1, 1], eulerSign: [1, 1] },
 };
-const QUAKE_GLYPH_WEAPON_TRIM_IDENTITY = { axisTrim: [1, 1] as const, screenTrim: [0, 0] as const };
+const QUAKE_GLYPH_WEAPON_TRIM_IDENTITY: QuakeGlyphWeaponModelTrim = {
+  axisTrim: [1, 1], screenTrim: [0, 0], screenScale: [1, 1], eulerSign: [-1, -1],
+};
 
 const QUAKE_WEAPON_SCREEN_ROT_X = 90;
 const QUAKE_WEAPON_MUZZLE_FLASH_MS = 45;
@@ -593,7 +600,7 @@ export function createQuakeViewmodelController({
     return sanitizeViewmodelTuning(glyphPoseOverrides, current);
   }
 
-  function glyphModelTrim(): { axisTrim: readonly [number, number]; screenTrim: readonly [number, number] } {
+  function glyphModelTrim(): QuakeGlyphWeaponModelTrim {
     return (mountedSource && QUAKE_GLYPH_WEAPON_MODEL_TRIM[mountedSource]) ?? QUAKE_GLYPH_WEAPON_TRIM_IDENTITY;
   }
 
@@ -753,9 +760,14 @@ export function createQuakeViewmodelController({
         weapon.position[2] * glyphReach,
       ],
       // poly's triple is [pitch, 0, yaw] for a CSS transform whose axes are
-      // remapped (`rotateY(-rotX) rotateX(rotY)…`); glyphcss takes world-frame
-      // XYZ Euler, so convert rather than reuse it verbatim.
-      rotation: glyphEulerFromYawPitch(-weapon.rotation[2], -weapon.rotation[0]),
+      // remapped (`rotateY(-rotX) rotateX(rotY)...`); glyphcss takes world-frame
+      // XYZ Euler, so convert rather than reuse it verbatim. The sign is
+      // per-model (see `eulerSign`): negating it mirrors the weapon horizontally,
+      // which is correct for v_shot's exported frame and wrong for v_axe's.
+      rotation: glyphEulerFromYawPitch(
+        glyphModelTrim().eulerSign[0] * weapon.rotation[2],
+        glyphModelTrim().eulerSign[1] * weapon.rotation[0],
+      ),
       // `weapon.scale` is `weaponScaleVec()`'s [horizontalScale, verticalScale,
       // depthScale] triple, ORDERED for the raster CSS carrier's own local
       // axes (`scale3d` applied before its `rotateY/rotateX/rotateZ` chain) —
@@ -919,12 +931,16 @@ export function createQuakeViewmodelController({
         currentTuning.screenScaleY * layerScale;
     const centerY = glyphCenterYOverride ??
       0.5 + (rasterStageCenterY / viewport.height - 0.5) / currentTuning.screenScaleY;
+    const modelTrim = glyphModelTrim();
     glyphSink.setProjection({
       perspective: perspectivePx,
       fovScale,
       center: [centerX, centerY],
-      screenScale: [currentTuning.screenScaleX, currentTuning.screenScaleY],
-      screenTrim: glyphModelTrim().screenTrim,
+      screenScale: [
+        currentTuning.screenScaleX * modelTrim.screenScale[0],
+        currentTuning.screenScaleY * modelTrim.screenScale[1],
+      ],
+      screenTrim: modelTrim.screenTrim,
       cameraBackoffPx: glyphBackoffOverride,
       zoom: glyphZoomOverride ?? scene.camera.state.zoom,
     });
