@@ -2,7 +2,7 @@
 
 A port of id Software's [Quake](https://github.com/id-software/quake) that renders BSP worlds as ASCII text through [GlyphCSS](https://glyphcss.com/), without a WebGL or canvas renderer. asciiQuake preprocesses original Quake data into compact browser-ready geometry and runs the game in TypeScript.
 
-asciiQuake is a fork of [cssQuake](https://github.com/LayoutitStudio/cssQuake), created by [Layoutit](https://layoutit.com/). It keeps the source-backed Quake preparation and browser gameplay systems while replacing the DOM-polygon renderer with GlyphCSS-native scene, camera, and first-person controls.
+asciiQuake is a fork of [cssQuake](https://github.com/layoutit/cssQuake), created by [Layoutit](https://layoutit.com/). It keeps the source-backed Quake preparation and browser gameplay systems while replacing the DOM-polygon renderer with GlyphCSS-native scene, camera, and first-person controls.
 
 Play the live version: [asciiquake.wtf](https://asciiquake.wtf)
 
