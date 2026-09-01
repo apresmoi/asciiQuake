@@ -5,6 +5,7 @@ import { importTsModule } from "../importTsModule.mjs";
 import {
   buildQuakeGlyphGeometry,
   buildQuakeStandaloneGlyphGeometry,
+  buildQuakeTexturedStandaloneGlyphGeometry,
 } from "../../src/prepare/glyphGeometry.mjs";
 
 globalThis.window ??= globalThis;
@@ -228,4 +229,38 @@ test("standalone glyph geometry builder keeps polygons tagged with modelIndex", 
 
   const optionResult = buildQuakeGlyphGeometry(moverPolygons, undefined, { includeMovers: true });
   assert.equal(optionResult.polygonCount, 1, "includeMovers option keeps mover polygons");
+});
+
+test("standalone BSP glyph geometry bakes the original face texture into colored cells", () => {
+  const texture = "/q/t/ammo-box.png";
+  const geometry = buildQuakeTexturedStandaloneGlyphGeometry([
+    {
+      vertices: [[0, 0, 0], [0.64, 0, 0], [0.64, 0, 0.48], [0, 0, 0.48]],
+      color: "#111111",
+      texture,
+      textureWrap: { s: "repeat", t: "repeat" },
+      uvs: [[0, 0], [1, 0], [1, 1], [0, 1]],
+    },
+  ], new Map([
+    [texture, {
+      width: 2,
+      height: 2,
+      data: Uint8Array.from([
+        220, 40, 20, 255, 20, 180, 40, 255,
+        30, 50, 210, 255, 230, 190, 30, 255,
+      ]),
+    }],
+  ]), { cellSize: 0.24, maxCellsPerAxis: 4 });
+
+  assert.ok(geometry.polygonCount > 1, "a textured face must not collapse back to one flat cuboid face");
+  assert.ok(new Set(geometry.polygons.map((polygon) => polygon.c)).size >= 4,
+    "the baked geometry must preserve distinct regions of the source texture");
+  assert.deepEqual(
+    geometry.polygons.flatMap((polygon) => polygon.v).reduce((bounds, vertex) => ({
+      min: bounds.min.map((value, axis) => Math.min(value, vertex[axis])),
+      max: bounds.max.map((value, axis) => Math.max(value, vertex[axis])),
+    }), { min: [Infinity, Infinity, Infinity], max: [-Infinity, -Infinity, -Infinity] }),
+    { min: [0, 0, 0], max: [0.64, 0, 0.48] },
+    "texture baking must preserve the source BSP face bounds",
+  );
 });

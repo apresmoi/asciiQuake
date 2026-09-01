@@ -32,6 +32,14 @@ const EFFECTS_MANIFEST = {
         width: 56,
         height: 56,
       })),
+      glyphFrames: [0, 1, 2, 3, 4, 5].map((index) => ({
+        version: 2,
+        polygonCount: 1,
+        polygons: [{
+          v: [[-0.28, 0, -0.28], [0.28, 0, -0.28], [0.28, 0, 0.28], [-0.28, 0, 0.28]],
+          c: `#ff${String(index * 32).padStart(2, "0")}00`,
+        }],
+      })),
     },
   },
 };
@@ -211,6 +219,96 @@ test("effect sprite flow preloads and animates the prepared s_explod sheet", asy
     restoreGlobal("document", previousDocument);
     restoreGlobal("fetch", previousFetch);
     restoreGlobal("performance", previousPerformance);
+    restoreGlobal("requestAnimationFrame", previousRequestAnimationFrame);
+    restoreGlobal("window", previousWindow);
+  }
+});
+
+test("effect sprite flow renders original explosion frames through the glyph scene without DOM sprites", async () => {
+  const previousCancelAnimationFrame = globalThis.cancelAnimationFrame;
+  const previousDocument = globalThis.document;
+  const previousFetch = globalThis.fetch;
+  const previousRequestAnimationFrame = globalThis.requestAnimationFrame;
+  const previousWindow = globalThis.window;
+  const window = new Window();
+  let now = 1000;
+  let nextFrameId = 1;
+  const frames = new Map();
+  const setEntityCalls = [];
+  const transformCalls = [];
+  const removed = [];
+  let viewRotation = { rotX: 90, rotY: 270 };
+
+  Object.defineProperty(globalThis, "document", { configurable: true, value: window.document });
+  Object.defineProperty(globalThis, "fetch", {
+    configurable: true,
+    value: async () => ({ ok: true, json: async () => EFFECTS_MANIFEST }),
+  });
+  Object.defineProperty(globalThis, "window", { configurable: true, value: window });
+  Object.defineProperty(globalThis, "requestAnimationFrame", {
+    configurable: true,
+    value: (callback) => {
+      const id = nextFrameId++;
+      frames.set(id, callback);
+      return id;
+    },
+  });
+  Object.defineProperty(globalThis, "cancelAnimationFrame", {
+    configurable: true,
+    value: (id) => { frames.delete(id); },
+  });
+
+  try {
+    const layer = document.createElement("div");
+    const flow = createQuakeEffectSpriteFlow({
+      canShow: () => true,
+      effectSpritesUrl: () => "/q/effects.json",
+      glyphEntitySink: {
+        setEntity: (id, geometry, transform) => setEntityCalls.push({ id, geometry, transform }),
+        setEntityTransform: (id, transform) => {
+          transformCalls.push({ id, transform });
+          return true;
+        },
+        removeEntity: (id) => removed.push(id),
+      },
+      isGameplayPaused: () => false,
+      layer,
+      maxSprites: 1,
+      now: () => now,
+      viewOrigin: () => [0, 0, 0],
+      viewRotation: () => viewRotation,
+    });
+
+    assert.equal(layer.children.length, 0, "glyph mode must not allocate hidden DOM sprite nodes");
+    assert.equal(await flow.preload(), true);
+    flow.spawnExplosion({ origin: [0, 4, 0], radiusUnits: 200 });
+
+    assert.equal(setEntityCalls.length, 1);
+    assert.equal(setEntityCalls[0].id, "effect:explosion:0");
+    assert.equal(setEntityCalls[0].geometry.polygons[0].c, "#ff0000");
+    assert.deepEqual(setEntityCalls[0].transform.position, [0, 4, 0]);
+    assert.deepEqual(setEntityCalls[0].transform.rotation, [0, 0, 0]);
+    assert.equal(layer.children.length, 0);
+
+    now += 100;
+    [...frames.values()][0](now);
+    assert.equal(setEntityCalls.at(-1).geometry.polygons[0].c, "#ff3200",
+      "the glyph entity must advance through the original sprite frames");
+
+    viewRotation = { rotX: 90, rotY: 180 };
+    now += 50;
+    [...frames.values()][0](now);
+    assert.deepEqual(transformCalls.at(-1).transform.rotation, [0, 0, -90],
+      "the live glyph billboard must continue facing the camera between sprite frames");
+
+    now += 450;
+    [...frames.values()][0](now);
+    assert.deepEqual(removed, ["effect:explosion:0"]);
+    flow.dispose();
+  } finally {
+    restoreGlobal("cancelAnimationFrame", previousCancelAnimationFrame);
+    restoreGlobal("document", previousDocument);
+    restoreGlobal("fetch", previousFetch);
     restoreGlobal("requestAnimationFrame", previousRequestAnimationFrame);
     restoreGlobal("window", previousWindow);
   }

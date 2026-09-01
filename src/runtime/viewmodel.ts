@@ -101,6 +101,12 @@ export interface QuakeViewmodelDebugSnapshot {
   mounted: boolean;
   source: string | null;
   tuning: QuakeResolvedViewmodelTuning;
+  glyphProjection: {
+    basis: QuakeGlyphWeaponModelTrim["basis"];
+    cameraBackoffPx: number;
+    eulerSign: readonly [number, number];
+    screenScale: readonly [number, number];
+  };
   camera: {
     rotX: number;
     rotY: number;
@@ -323,13 +329,13 @@ export interface QuakeGlyphWeaponModelTrim {
   screenScale: readonly [number, number];
   /**
    * Glyph weapon camera distance in CSS px. The CSS basis uses the actual
-   * weapon-stage eye plane (0); legacy fitted models retain their old pullback.
+   * weapon-stage eye plane (0); unknown models retain the legacy pullback.
    */
   cameraBackoffPx: number;
   /**
    * Sign applied to [yaw, pitch] before the glyph Euler conversion. CSS-
-   * basis models use the conjugated world sign; legacy fitted models keep the
-   * prior sign until they are migrated independently.
+   * basis models use the conjugated world sign; unknown models keep the legacy
+   * sign.
    */
   eulerSign: readonly [number, number];
 }
@@ -343,11 +349,28 @@ export interface QuakeGlyphWeaponModelTrim {
  * projection changes. The 2D `screenScale`/`screenTrim` corrections deliberately
  * ignore player origin/yaw/pitch, preserving the weapon's view-lock.
  */
+function createQuakeGlyphWeaponCssTrim(): QuakeGlyphWeaponModelTrim {
+  return {
+    basis: "css",
+    axisTrim: [1, 1],
+    screenTrim: [0, 0],
+    screenScale: [1, 1],
+    cameraBackoffPx: 0,
+    eulerSign: [1, 1],
+  };
+}
+
 const QUAKE_GLYPH_WEAPON_MODEL_TRIM: Record<string, QuakeGlyphWeaponModelTrim> = {
-  // Migrated models use the exact CSS-to-world basis. They need neither
-  // glyph-only mesh/screen corrections nor a camera pullback.
-  "progs/v_shot.mdl": { basis: "css", axisTrim: [1, 1], screenTrim: [0, 0], screenScale: [1, 1], cameraBackoffPx: 0, eulerSign: [1, 1] },
-  "progs/v_axe.mdl": { basis: "css", axisTrim: [1, 1], screenTrim: [0, 0], screenScale: [1, 1], cameraBackoffPx: 0, eulerSign: [1, 1] },
+  // Every shipped Quake viewmodel uses cssQuake's exact CSS-to-world basis.
+  // They need neither glyph-only mesh/screen corrections nor a camera pullback.
+  "progs/v_shot.mdl": createQuakeGlyphWeaponCssTrim(),
+  "progs/v_axe.mdl": createQuakeGlyphWeaponCssTrim(),
+  "progs/v_shot2.mdl": createQuakeGlyphWeaponCssTrim(),
+  "progs/v_nail.mdl": createQuakeGlyphWeaponCssTrim(),
+  "progs/v_nail2.mdl": createQuakeGlyphWeaponCssTrim(),
+  "progs/v_rock.mdl": createQuakeGlyphWeaponCssTrim(),
+  "progs/v_rock2.mdl": createQuakeGlyphWeaponCssTrim(),
+  "progs/v_light.mdl": createQuakeGlyphWeaponCssTrim(),
 };
 const QUAKE_GLYPH_WEAPON_TRIM_IDENTITY: QuakeGlyphWeaponModelTrim = {
   basis: "legacy", axisTrim: [1, 1], screenTrim: [0, 0], screenScale: [1, 1], cameraBackoffPx: 310, eulerSign: [-1, -1],
@@ -510,11 +533,25 @@ export function createQuakeViewmodelController({
     const rotX = weaponViewRotX(scene.camera.state.rotX ?? 88);
     const rotY = scene.camera.state.rotY ?? 270;
     const currentTuning = activeTuning();
+    const currentGlyphTuning = activeGlyphTuning();
+    const modelTrim = glyphModelTrim();
     const weapon = debugWeaponTransform(weaponTransform(origin, rotX, rotY, walkBob));
     return {
       mounted: mountedSource !== null,
       source: mountedSource,
       tuning: currentTuning,
+      glyphProjection: {
+        basis: modelTrim.basis,
+        cameraBackoffPx: resolveQuakeGlyphWeaponCameraBackoffPx(
+          glyphBackoffOverride,
+          modelTrim.cameraBackoffPx,
+        ),
+        eulerSign: modelTrim.eulerSign,
+        screenScale: [
+          currentGlyphTuning.screenScaleX * modelTrim.screenScale[0],
+          currentGlyphTuning.screenScaleY * modelTrim.screenScale[1],
+        ],
+      },
       camera: {
         rotX: scene.camera.state.rotX ?? 88,
         rotY,
@@ -717,15 +754,15 @@ export function createQuakeViewmodelController({
         weapon.position[2] * glyphReach,
       ],
       // CSS transforms and glyphcss express carrier orientation in different
-      // Euler conventions. Migrated models use the conjugated world sign;
-      // legacy models retain their fitted sign until migrated independently.
+      // Euler conventions. Shipped models use the conjugated world sign;
+      // unknown models retain the legacy sign.
       rotation: glyphEulerFromYawPitch(
         modelTrim.eulerSign[0] * weapon.rotation[2],
         modelTrim.eulerSign[1] * weapon.rotation[0],
       ),
       // `weapon.scale` is ordered for the raster CSS carrier. The model-aware
-      // conversion applies the exact X/Y basis swap for migrated models while
-      // preserving the old permutation and trims for every legacy weapon.
+      // conversion applies the exact X/Y basis swap for shipped models while
+      // preserving the old permutation and trims for unknown models.
       scale: quakeGlyphWeaponModelScale(modelPath, weapon.scale, glyphScaleFactor),
       ...(glyphDensity != null ? { density: glyphDensity } : {}),
       // The gun's own lift over the scene tone (2026-08 retune vs the
@@ -1038,7 +1075,7 @@ function sanitizeViewmodelTuning(
   return sanitized;
 }
 
-/** Legacy glyph-local pose retained for weapons not yet migrated. */
+/** Legacy glyph-local pose retained as the fallback for unknown models. */
 export function quakeGlyphWeaponLocalPose(
   geometry: QuakeGlyphGeometry,
   tuning: Pick<QuakeResolvedViewmodelTuning,

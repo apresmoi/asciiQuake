@@ -86,6 +86,140 @@ export function buildQuakeStandaloneGlyphGeometry(polygons) {
 }
 
 /**
+ * Bake a standalone BSP model's UV-mapped face textures into compact colored
+ * quads. BSP pickup models are deliberately low-poly boxes, so keeping only a
+ * single fallback color per face erases the ammo/health/explosive artwork that
+ * identifies them in Quake. The baked cells remain ordinary glyph geometry:
+ * runtime tone, lighting, culling, and entity transforms need no texture-only
+ * path.
+ *
+ * @param {Array<{ vertices: number[][], color?: string, texture?: string,
+ *   textureWrap?: { s?: string, t?: string }, uvs?: number[][] }>} polygons
+ * @param {Map<string, { width: number, height: number, data: ArrayLike<number> }>} textureSamplers
+ * @param {{ cellSize?: number, maxCellsPerAxis?: number }} [options]
+ */
+export function buildQuakeTexturedStandaloneGlyphGeometry(polygons, textureSamplers, options = {}) {
+  const cellSize = positiveNumber(options.cellSize, 0.08);
+  const maxCellsPerAxis = Math.max(1, Math.trunc(positiveNumber(options.maxCellsPerAxis, 12)));
+  const out = [];
+  for (const polygon of polygons ?? []) {
+    const vertices = polygon?.vertices;
+    if (!Array.isArray(vertices) || vertices.length < 3) continue;
+    const sampler = typeof polygon.texture === "string"
+      ? textureSamplers?.get(polygon.texture)
+      : undefined;
+    if (!sampler || vertices.length !== 4 || !validUvs(polygon.uvs, vertices.length)) {
+      out.push(glyphPolygon(polygon));
+      continue;
+    }
+    const cellsS = subdivisionCount(
+      Math.max(distance3(vertices[0], vertices[1]), distance3(vertices[3], vertices[2])),
+      cellSize,
+      maxCellsPerAxis,
+    );
+    const cellsT = subdivisionCount(
+      Math.max(distance3(vertices[0], vertices[3]), distance3(vertices[1], vertices[2])),
+      cellSize,
+      maxCellsPerAxis,
+    );
+    for (let t = 0; t < cellsT; t++) {
+      const t0 = t / cellsT;
+      const t1 = (t + 1) / cellsT;
+      for (let s = 0; s < cellsS; s++) {
+        const s0 = s / cellsS;
+        const s1 = (s + 1) / cellsS;
+        const uv = bilinear2(polygon.uvs, (s0 + s1) * 0.5, (t0 + t1) * 0.5);
+        const sampled = sampleTextureColor(sampler, uv, polygon.textureWrap);
+        const color = sampled ?? (typeof polygon.color === "string" ? polygon.color : "#cccccc");
+        out.push(glyphPolygon({
+          vertices: [
+            bilinear3(vertices, s0, t0),
+            bilinear3(vertices, s1, t0),
+            bilinear3(vertices, s1, t1),
+            bilinear3(vertices, s0, t1),
+          ],
+          color,
+        }));
+      }
+    }
+  }
+  return {
+    version: QUAKE_GLYPH_GEOMETRY_VERSION,
+    polygonCount: out.length,
+    polygons: out,
+  };
+}
+
+function positiveNumber(value, fallback) {
+  return Number.isFinite(value) && value > 0 ? value : fallback;
+}
+
+function validUvs(uvs, length) {
+  return Array.isArray(uvs) && uvs.length === length &&
+    uvs.every((uv) => Array.isArray(uv) && uv.length >= 2 && uv.every(Number.isFinite));
+}
+
+function subdivisionCount(length, cellSize, maxCellsPerAxis) {
+  return Math.max(1, Math.min(maxCellsPerAxis, Math.ceil(length / cellSize)));
+}
+
+function distance3(a, b) {
+  return Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
+}
+
+function bilinear2(points, s, t) {
+  const bottom = lerp2(points[0], points[1], s);
+  const top = lerp2(points[3], points[2], s);
+  return lerp2(bottom, top, t);
+}
+
+function bilinear3(points, s, t) {
+  const bottom = lerp3(points[0], points[1], s);
+  const top = lerp3(points[3], points[2], s);
+  return lerp3(bottom, top, t);
+}
+
+function lerp2(a, b, amount) {
+  return [a[0] + (b[0] - a[0]) * amount, a[1] + (b[1] - a[1]) * amount];
+}
+
+function lerp3(a, b, amount) {
+  return [
+    a[0] + (b[0] - a[0]) * amount,
+    a[1] + (b[1] - a[1]) * amount,
+    a[2] + (b[2] - a[2]) * amount,
+  ];
+}
+
+function sampleTextureColor(sampler, uv, textureWrap = {}) {
+  const width = Math.trunc(sampler?.width ?? 0);
+  const height = Math.trunc(sampler?.height ?? 0);
+  const data = sampler?.data;
+  if (width <= 0 || height <= 0 || !data || data.length < width * height * 4) return null;
+  const u = wrapTextureCoordinate(uv[0], textureWrap?.s ?? "repeat");
+  const v = wrapTextureCoordinate(uv[1], textureWrap?.t ?? "repeat");
+  const x = Math.min(width - 1, Math.floor(u * width));
+  const y = Math.min(height - 1, Math.floor((1 - v) * height));
+  const offset = (y * width + x) * 4;
+  if ((data[offset + 3] ?? 255) < 32) return null;
+  return `#${hexByte(data[offset])}${hexByte(data[offset + 1])}${hexByte(data[offset + 2])}`;
+}
+
+function wrapTextureCoordinate(value, mode) {
+  if (mode === "clamp-to-edge") return Math.max(0, Math.min(1 - Number.EPSILON, value));
+  if (mode === "mirrored-repeat") {
+    const period = ((value % 2) + 2) % 2;
+    return period <= 1 ? Math.min(period, 1 - Number.EPSILON) : 2 - period;
+  }
+  const repeated = ((value % 1) + 1) % 1;
+  return Math.min(repeated, 1 - Number.EPSILON);
+}
+
+function hexByte(value) {
+  return Math.max(0, Math.min(255, Math.round(Number(value) || 0))).toString(16).padStart(2, "0");
+}
+
+/**
  * Build a RENDER-face → BSP-leaf-indexes map from prepared visibility metadata,
  * for {@link buildQuakeGlyphGeometry}'s PVS leaf tagging.
  *

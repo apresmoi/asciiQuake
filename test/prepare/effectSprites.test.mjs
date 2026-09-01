@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   parseQuakeSprite,
   quakeEffectSpriteAsset,
+  quakeEffectSpriteGlyphFrames,
   quakeEffectSpriteSheetRgba,
 } from "../../src/prepare/effectSprites.mjs";
 
@@ -57,6 +58,21 @@ test("Quake effect sprite parser preserves source frame offsets and alpha index"
     [0, 0, -1, -1],
     [2, 0, -1, -1],
   ]);
+
+  const glyphFrames = quakeEffectSpriteGlyphFrames(sprite, palette, { sampleSize: 1 });
+  assert.equal(glyphFrames.length, 2, "every original sprite frame must receive glyph geometry");
+  assert.equal(glyphFrames[0].polygonCount, 3, "transparent index 255 must not create geometry");
+  assert.deepEqual(glyphFrames[0].polygons.map((polygon) => polygon.c), [
+    "#010203",
+    "#020304",
+    "#030405",
+  ]);
+  assert.deepEqual(glyphFrames[0].polygons[0].v, [
+    [0, 0, 0],
+    [0.01, 0, 0],
+    [0.01, 0, 0.01],
+    [0, 0, 0.01],
+  ], "sprite origin and Quake scale must be preserved in the local billboard plane");
 });
 
 function makeTestSprite(frames) {

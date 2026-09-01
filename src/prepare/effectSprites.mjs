@@ -37,6 +37,7 @@ export async function prepareQuakeEffectSprites({
   const spriteBytes = quakePakEntryBytes(pak, spriteEntry);
   const sprite = parseQuakeSprite(spriteBytes, QUAKE_EXPLOSION_SPRITE_PATH);
   const sheet = quakeEffectSpriteSheetRgba(sprite, palette);
+  const glyphFrames = quakeEffectSpriteGlyphFrames(sprite, palette);
   const sourceHash = createHash("sha256").update(spriteBytes).digest("hex");
   const outputPath = path.join(outputDir, `s_explod-${sourceHash.slice(0, 12)}.png`);
   await sharp(sheet.rgba, {
@@ -53,6 +54,7 @@ export async function prepareQuakeEffectSprites({
     sourceHash,
     sourcePath: QUAKE_EXPLOSION_SPRITE_PATH,
     sprite,
+    glyphFrames,
     texture: {
       alphaMode: "quake-sprite-index-255-alpha",
       height: sheet.height,
@@ -183,6 +185,7 @@ export function quakeEffectSpriteSheetRgba(sprite, paletteBytes) {
 
 export function quakeEffectSpriteAsset({
   frameDurationMs,
+  glyphFrames,
   kind,
   sourceHash,
   sourcePath,
@@ -208,9 +211,75 @@ export function quakeEffectSpriteAsset({
     header: sprite.header,
     frameCount: frames.length,
     frameDurationMs,
+    ...(Array.isArray(glyphFrames) ? { glyphFrames } : {}),
     texture,
     frames,
   };
+}
+
+/**
+ * Convert the original palette-indexed Quake sprite into small colored quads
+ * on a local X/Z billboard plane. Runtime only rotates and positions this
+ * geometry; no raster image or DOM sprite participates in glyph rendering.
+ */
+export function quakeEffectSpriteGlyphFrames(sprite, paletteBytes, options = {}) {
+  const palette = bytesView(paletteBytes);
+  if (palette.byteLength < 256 * 3) throw new Error("Quake palette must contain 256 RGB entries.");
+  const sampleSize = Math.max(1, Math.trunc(options.sampleSize ?? 4));
+  return sprite.frames.map((frame) => {
+    const polygons = [];
+    for (let y = 0; y < frame.height; y += sampleSize) {
+      const yEnd = Math.min(frame.height, y + sampleSize);
+      for (let x = 0; x < frame.width; x += sampleSize) {
+        const xEnd = Math.min(frame.width, x + sampleSize);
+        const paletteIndex = dominantVisiblePaletteIndex(frame, x, y, xEnd, yEnd);
+        if (paletteIndex === null) continue;
+        const paletteOffset = paletteIndex * 3;
+        const color = `#${hexByte(palette[paletteOffset])}${hexByte(palette[paletteOffset + 1])}${hexByte(palette[paletteOffset + 2])}`;
+        const left = (frame.originX + x) * 0.01;
+        const right = (frame.originX + xEnd) * 0.01;
+        const top = (frame.originY - y) * 0.01;
+        const bottom = (frame.originY - yEnd) * 0.01;
+        polygons.push({
+          v: [
+            [roundGlyphCoordinate(left), 0, roundGlyphCoordinate(bottom)],
+            [roundGlyphCoordinate(right), 0, roundGlyphCoordinate(bottom)],
+            [roundGlyphCoordinate(right), 0, roundGlyphCoordinate(top)],
+            [roundGlyphCoordinate(left), 0, roundGlyphCoordinate(top)],
+          ],
+          c: color,
+        });
+      }
+    }
+    return { version: 2, polygonCount: polygons.length, polygons };
+  });
+}
+
+function dominantVisiblePaletteIndex(frame, minX, minY, maxX, maxY) {
+  const counts = new Map();
+  let dominant = null;
+  let dominantCount = 0;
+  for (let y = minY; y < maxY; y++) {
+    for (let x = minX; x < maxX; x++) {
+      const paletteIndex = frame.pixels[y * frame.width + x];
+      if (paletteIndex === QUAKE_SPRITE_TRANSPARENT_INDEX) continue;
+      const count = (counts.get(paletteIndex) ?? 0) + 1;
+      counts.set(paletteIndex, count);
+      if (count > dominantCount) {
+        dominant = paletteIndex;
+        dominantCount = count;
+      }
+    }
+  }
+  return dominant;
+}
+
+function roundGlyphCoordinate(value) {
+  return Math.round(value * 1000) / 1000;
+}
+
+function hexByte(value) {
+  return Math.max(0, Math.min(255, Math.round(Number(value) || 0))).toString(16).padStart(2, "0");
 }
 
 function quakePakEntryBytes(pak, entry) {

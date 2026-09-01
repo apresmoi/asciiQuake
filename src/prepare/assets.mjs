@@ -12,7 +12,12 @@ import {
   deriveQuakeGameLogicModelPreloads,
   deriveQuakeGameLogicSoundPreloads,
 } from "./gameLogicPreloads.mjs";
-import { buildQuakeGlyphGeometry, buildQuakeGlyphMovers, buildQuakeGlyphFaceLeaves, buildQuakeStandaloneGlyphGeometry } from "./glyphGeometry.mjs";
+import {
+  buildQuakeGlyphGeometry,
+  buildQuakeGlyphMovers,
+  buildQuakeGlyphFaceLeaves,
+  buildQuakeTexturedStandaloneGlyphGeometry,
+} from "./glyphGeometry.mjs";
 import { prepareQuakeEffectSprites } from "./effectSprites.mjs";
 import {
   QUAKE_PREPARED_SCENE_MODES,
@@ -2353,7 +2358,10 @@ async function buildQuakePickupModels(assets, buildBspModel, programMetadata, op
     async (source) => runPrepareStep(`model ${source}`, async () => {
       const model = await buildBspModel(source);
       const polygons = model.polygons;
-      const glyphGeometry = buildQuakeStandaloneGlyphGeometry(polygons);
+      const glyphGeometry = buildQuakeTexturedStandaloneGlyphGeometry(
+        polygons,
+        await quakeGlyphTextureSamplers(polygons),
+      );
       if (!glyphGeometry || glyphGeometry.polygonCount === 0) {
         throw new Error(`BSP pickup model ${source} produced empty glyph geometry (${polygons?.length ?? 0} source polygons).`);
       }
@@ -3933,6 +3941,31 @@ async function encodeTextureFileUrl(input) {
   texturePngByPublicPath.set(url, png);
   textureFileUrlByHash.set(hash, url);
   return url;
+}
+
+async function quakeGlyphTextureSamplers(polygons) {
+  const urls = [...new Set((polygons ?? [])
+    .map((polygon) => polygon?.texture)
+    .filter((url) => typeof url === "string" && url.length > 0))];
+  const entries = await Promise.all(urls.map(async (url) => {
+    const publicPath = url.split("?", 1)[0];
+    let encoded = texturePngByPublicPath.get(url) ?? texturePngByPublicPath.get(publicPath);
+    if (!encoded && publicPath.startsWith("/")) {
+      try {
+        encoded = await readFile(path.join(generatedPublicDir, publicPath.slice(1)));
+      } catch {
+        return null;
+      }
+    }
+    if (!encoded) return null;
+    const decoded = await sharp(encoded).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+    return [url, {
+      width: decoded.info.width,
+      height: decoded.info.height,
+      data: decoded.data,
+    }];
+  }));
+  return new Map(entries.filter(Boolean));
 }
 
 async function writeTextureFileIfMissing(outputPath, png) {
