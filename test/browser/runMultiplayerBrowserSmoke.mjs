@@ -44,7 +44,7 @@ const mapName = optionValue(args, "map", "e1m1").trim().toLowerCase();
 const preferredPartyPort = Math.max(1, Math.round(numberOption(args, "party-port", DEFAULT_PARTY_PORT)));
 const externalAppUrl = normalizeAppUrl(common.explicitUrl);
 const requestedPartyHost = optionValue(args, "party-host", "");
-const externalPartyHost = normalizePartyHost(requestedPartyHost || (externalAppUrl ? process.env.VITE_CSSQUAKE_PARTY_HOST ?? "" : ""));
+const externalPartyHost = normalizePartyHost(requestedPartyHost || (externalAppUrl ? process.env.VITE_ASCIIQUAKE_PARTY_HOST ?? "" : ""));
 
 console.log("Multiplayer browser smoke gate");
 console.log("validates: PartyKit room join, compact invite route, isolated browser clients, remote player movement, remote player continuity, zero rejects");

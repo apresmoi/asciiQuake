@@ -1,5 +1,5 @@
 {
-  "name": "cssquake",
+  "name": "asciiquake",
   "main": "src/runtime/multiplayer/partyRoom.ts",
   "parties": {
     "presence": "src/runtime/multiplayer/presenceRoom.ts"

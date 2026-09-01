@@ -21,7 +21,7 @@ jobs:
       PARTYKIT_TEAM: ${{ vars.PARTYKIT_TEAM || secrets.PARTYKIT_TEAM }}
       PARTYKIT_TOKEN: ${{ secrets.PARTYKIT_TOKEN }}
       QUAKE_SHAREWARE_URL: ${{ secrets.QUAKE_SHAREWARE_URL }}
-      VITE_CSSQUAKE_PARTY_HOST: ${{ vars.VITE_CSSQUAKE_PARTY_HOST }}
+      VITE_ASCIIQUAKE_PARTY_HOST: ${{ vars.VITE_ASCIIQUAKE_PARTY_HOST }}
       VITE_QUAKE_ASSET_ROOT: ${{ vars.VITE_QUAKE_ASSET_ROOT || secrets.VITE_QUAKE_ASSET_ROOT }}
     steps:
       - uses: actions/checkout@v4
@@ -47,7 +47,7 @@ jobs:
           test -n "$CSSQUAKE_R2_BUCKET"
           test -n "$PARTYKIT_LOGIN"
           test -n "$PARTYKIT_TOKEN"
-          test -n "$VITE_CSSQUAKE_PARTY_HOST"
+          test -n "$VITE_ASCIIQUAKE_PARTY_HOST"
           test -n "$VITE_QUAKE_ASSET_ROOT"
 
       - name: Set versioned asset root
