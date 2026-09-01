@@ -14,7 +14,18 @@ const {
   quakeGlyphWeaponLocalPose,
 } = await importTsModule("src/runtime/viewmodel.ts");
 
-test("axe and shotgun use the CSS X/Y basis without changing later guns", () => {
+const QUAKE_VIEWMODEL_PATHS = [
+  "progs/v_axe.mdl",
+  "progs/v_shot.mdl",
+  "progs/v_shot2.mdl",
+  "progs/v_nail.mdl",
+  "progs/v_nail2.mdl",
+  "progs/v_rock.mdl",
+  "progs/v_rock2.mdl",
+  "progs/v_light.mdl",
+];
+
+test("every Quake viewmodel uses the CSS X/Y basis", () => {
   const geometry = {
     version: 1,
     polygonCount: 1,
@@ -28,19 +39,17 @@ test("axe and shotgun use the CSS X/Y basis without changing later guns", () => 
     localPivotZPx: 0,
   };
 
-  const axe = quakeGlyphWeaponModelLocalPose("progs/v_axe.mdl", geometry, tuning);
-  const shotgun = quakeGlyphWeaponModelLocalPose("progs/v_shot.mdl", geometry, tuning);
-  const superShotgun = quakeGlyphWeaponModelLocalPose("progs/v_shot2.mdl", geometry, tuning);
-
-  assert.deepEqual(roundedVertex(axe), [-4, 2, 1]);
-  assert.deepEqual(roundedVertex(shotgun), [-4, 2, 1]);
-  assert.deepEqual(roundedVertex(superShotgun), [1, -4, 2]);
+  for (const modelPath of QUAKE_VIEWMODEL_PATHS) {
+    assert.deepEqual(roundedVertex(quakeGlyphWeaponModelLocalPose(modelPath, geometry, tuning)), [-4, 2, 1], modelPath);
+  }
+  assert.deepEqual(roundedVertex(quakeGlyphWeaponModelLocalPose("progs/unknown.mdl", geometry, tuning)), [1, -4, 2]);
 });
 
-test("axe and shotgun scale swap only the CSS X/Y axes", () => {
-  assert.deepEqual(quakeGlyphWeaponModelScale("progs/v_axe.mdl", [2, 3, 5], 7), [21, 14, 35]);
-  assert.deepEqual(quakeGlyphWeaponModelScale("progs/v_shot.mdl", [2, 3, 5], 7), [21, 14, 35]);
-  assert.deepEqual(quakeGlyphWeaponModelScale("progs/v_shot2.mdl", [2, 3, 5], 7), [35, 14, 21]);
+test("every Quake viewmodel scale swaps only the CSS X/Y axes", () => {
+  for (const modelPath of QUAKE_VIEWMODEL_PATHS) {
+    assert.deepEqual(quakeGlyphWeaponModelScale(modelPath, [2, 3, 5], 7), [21, 14, 35], modelPath);
+  }
+  assert.deepEqual(quakeGlyphWeaponModelScale("progs/unknown.mdl", [2, 3, 5], 7), [35, 14, 21]);
 });
 
 test("axe vertices project identically through the CSS and glyph basis paths", () => {
@@ -120,6 +129,45 @@ test("shotgun vertices project identically through the CSS and glyph basis paths
       camera.project(glyphWorld, 160, 90, 1),
       camera.project(cssWorld, 160, 90, 1),
     );
+  }
+});
+
+test("remaining weapon vertices project identically through the CSS and glyph basis paths", () => {
+  const tuning = {
+    localYOffsetPx: -25,
+    localPitchDeg: 13,
+    localPivotXPx: 0,
+    localPivotYPx: 0,
+    localPivotZPx: 0,
+  };
+  const weaponScale = [2.748, 1.636, 2.352];
+  const position = [0, 3.1, -0.3];
+  const camera = createGlyphPerspectiveCamera({
+    rotX: 90,
+    rotY: 270,
+    distance: 0,
+    perspective: 596.0866666666666,
+    zoom: 50,
+    center: [0.5, 0.5],
+  });
+  camera.target = [0, camera.perspective / BASE_TILE, 0];
+
+  for (const modelPath of QUAKE_VIEWMODEL_PATHS.slice(2)) {
+    for (const vertex of [[-4.25, -1.5, -3.75], [3.5, 0.75, -0.25], [0.5, -2, -1]]) {
+      const geometry = {
+        version: 1,
+        polygonCount: 1,
+        polygons: [{ c: "#fff", v: [vertex] }],
+      };
+      const posed = quakeGlyphWeaponModelLocalPose(modelPath, geometry, tuning);
+      const scale = quakeGlyphWeaponModelScale(modelPath, weaponScale, 1);
+      const glyphWorld = add3(rotateZ90(multiply3(posed.polygons[0].v[0], scale)), position);
+      const cssWorld = cssWeaponVertexToWorld(vertex, tuning, weaponScale, position);
+
+      assertVecClose(glyphWorld, cssWorld);
+      assert.ok(Math.abs(camera.eyeDepth(glyphWorld) - camera.eyeDepth(cssWorld)) < 1e-9);
+      assertVecClose(camera.project(glyphWorld, 160, 90, 1), camera.project(cssWorld, 160, 90, 1));
+    }
   }
 });
 

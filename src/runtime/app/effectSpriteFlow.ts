@@ -1,6 +1,7 @@
 import type { Vec3 } from "glyphcss";
 
 import { QUAKE_COLLISION_UNIT_SCALE } from "../constants";
+import type { QuakeGlyphEntityGeometry, QuakeGlyphEntityTransform } from "../render/glyphWorldOverlay";
 
 const QUAKE_EFFECT_SPRITE_CLASS = "quake-effect-sprite";
 const QUAKE_EFFECT_SPRITE_DEFAULT_MAX = 4;
@@ -28,6 +29,11 @@ export interface QuakeEffectSpriteFlowOptions {
   cameraPerspectiveStyle?: () => string | null | undefined;
   decodeImage?: (url: string) => Promise<void>;
   effectSpritesUrl(): string | null | undefined;
+  glyphEntitySink?: {
+    removeEntity(id: string): void;
+    setEntity(id: string, geometry: QuakeGlyphEntityGeometry | null, transform: QuakeGlyphEntityTransform): void;
+    setEntityTransform(id: string, transform: QuakeGlyphEntityTransform): boolean;
+  };
   isGameplayPaused(): boolean;
   layer: HTMLElement;
   maxSprites?: number;
@@ -45,6 +51,7 @@ interface QuakePreparedEffectSprite {
   frameCount: number;
   frameDurationMs: number;
   frames: QuakePreparedEffectSpriteFrame[];
+  glyphFrames?: QuakeGlyphEntityGeometry[];
   header?: {
     maxHeight?: number;
     maxWidth?: number;
@@ -67,9 +74,11 @@ interface QuakePreparedEffectSpriteFrame {
 
 interface EffectSpriteHandle {
   active: boolean;
-  element: HTMLElement;
+  element: HTMLElement | null;
   frameIndex: number;
+  glyphId: string;
   origin: Vec3 | null;
+  presentedFrameIndex: number;
   sprite: QuakePreparedEffectSprite | null;
   startedAt: number;
 }
@@ -91,18 +100,23 @@ export function createQuakeEffectSpriteFlow(options: QuakeEffectSpriteFlowOption
   let loadPromise: Promise<boolean> | null = null;
   let nextSpriteIndex = 0;
   let preparedExplosionSprite: QuakePreparedEffectSprite | null = null;
+  const glyphEntitySink = options.glyphEntitySink ?? null;
 
   for (let index = 0; index < maxSprites; index++) {
-    const element = document.createElement("i");
-    element.className = `${QUAKE_EFFECT_SPRITE_CLASS} quake-effect-sprite-explosion`;
-    element.setAttribute("aria-hidden", "true");
-    element.dataset.quakeEffectSpriteActive = "false";
-    initializeEffectSpriteElement(element);
+    const element = glyphEntitySink ? null : document.createElement("i");
+    if (element) {
+      element.className = `${QUAKE_EFFECT_SPRITE_CLASS} quake-effect-sprite-explosion`;
+      element.setAttribute("aria-hidden", "true");
+      element.dataset.quakeEffectSpriteActive = "false";
+      initializeEffectSpriteElement(element);
+    }
     handles.push({
       active: false,
       element,
       frameIndex: 0,
+      glyphId: `effect:explosion:${index}`,
       origin: null,
+      presentedFrameIndex: -1,
       sprite: null,
       startedAt: 0,
     });
@@ -147,27 +161,34 @@ export function createQuakeEffectSpriteFlow(options: QuakeEffectSpriteFlowOption
     handle.origin = input.origin ? [...input.origin] as Vec3 : null;
     handle.sprite = sprite;
     handle.startedAt = now();
-    handle.element.dataset.quakeEffectSpriteActive = "true";
-    handle.element.dataset.quakeEffectSpriteSource = sprite.sourcePath;
-    handle.element.style.opacity = "1";
-    if (handle.element.parentElement !== options.layer) options.layer.appendChild(handle.element);
+    handle.presentedFrameIndex = -1;
+    if (handle.element) {
+      handle.element.dataset.quakeEffectSpriteActive = "true";
+      handle.element.dataset.quakeEffectSpriteSource = sprite.sourcePath;
+      handle.element.style.opacity = "1";
+      if (handle.element.parentElement !== options.layer) options.layer.appendChild(handle.element);
+    }
     syncHandle(handle);
     ensureFrame();
   }
 
   function clear(): void {
     for (const handle of handles) {
+      if (handle.active) removeHandlePresentation(handle);
       handle.active = false;
       handle.origin = null;
       handle.sprite = null;
       handle.startedAt = 0;
       handle.frameIndex = 0;
-      handle.element.dataset.quakeEffectSpriteActive = "false";
-      delete handle.element.dataset.quakeEffectSpriteFrame;
-      delete handle.element.dataset.quakeEffectSpriteSource;
-      handle.element.style.opacity = "0";
-      handle.element.style.transform = "translate3d(-50%, -50%, 0) scale(1)";
-      handle.element.remove();
+      handle.presentedFrameIndex = -1;
+      if (handle.element) {
+        handle.element.dataset.quakeEffectSpriteActive = "false";
+        delete handle.element.dataset.quakeEffectSpriteFrame;
+        delete handle.element.dataset.quakeEffectSpriteSource;
+        handle.element.style.opacity = "0";
+        handle.element.style.transform = "translate3d(-50%, -50%, 0) scale(1)";
+        handle.element.remove();
+      }
     }
     cancelFrame();
   }
@@ -175,7 +196,7 @@ export function createQuakeEffectSpriteFlow(options: QuakeEffectSpriteFlowOption
   function dispose(): void {
     disposed = true;
     clear();
-    for (const handle of handles) handle.element.remove();
+    for (const handle of handles) handle.element?.remove();
   }
 
   function nextHandle(): EffectSpriteHandle {
@@ -201,7 +222,8 @@ export function createQuakeEffectSpriteFlow(options: QuakeEffectSpriteFlowOption
         url: textureUrl,
       },
     };
-    await decodeSpriteTexture(textureUrl);
+    if (glyphEntitySink && (prepared.glyphFrames?.length ?? 0) < prepared.frameCount) return null;
+    if (!glyphEntitySink) await decodeSpriteTexture(textureUrl);
     return prepared;
   }
 
@@ -215,6 +237,7 @@ export function createQuakeEffectSpriteFlow(options: QuakeEffectSpriteFlowOption
 
   function applyPreparedSpriteTexture(sprite: QuakePreparedEffectSprite): void {
     for (const handle of handles) {
+      if (!handle.element) continue;
       handle.element.style.backgroundImage = cssUrl(sprite.texture.url);
       handle.element.style.backgroundSize = `${sprite.texture.width}px ${sprite.texture.height}px`;
     }
@@ -224,6 +247,22 @@ export function createQuakeEffectSpriteFlow(options: QuakeEffectSpriteFlowOption
     const sprite = handle.sprite;
     if (!sprite) return;
     const frame = sprite.frames[handle.frameIndex] ?? sprite.frames[0];
+    if (glyphEntitySink) {
+      const geometry = sprite.glyphFrames?.[handle.frameIndex] ?? null;
+      if (!geometry) {
+        removeHandlePresentation(handle);
+        return;
+      }
+      const transform = glyphEffectSpriteTransform(handle.origin);
+      if (handle.presentedFrameIndex !== handle.frameIndex) {
+        glyphEntitySink.setEntity(handle.glyphId, geometry, transform);
+        handle.presentedFrameIndex = handle.frameIndex;
+      } else if (!glyphEntitySink.setEntityTransform(handle.glyphId, transform)) {
+        glyphEntitySink.setEntity(handle.glyphId, geometry, transform);
+      }
+      return;
+    }
+    if (!handle.element) return;
     handle.element.style.width = `${frame.width}px`;
     handle.element.style.height = `${frame.height}px`;
     handle.element.style.backgroundImage = cssUrl(sprite.texture.url);
@@ -332,10 +371,14 @@ export function createQuakeEffectSpriteFlow(options: QuakeEffectSpriteFlowOption
       const elapsed = at - handle.startedAt;
       const frameIndex = Math.floor(elapsed / sprite.frameDurationMs);
       if (frameIndex >= sprite.frameCount) {
+        removeHandlePresentation(handle);
         handle.active = false;
-        handle.element.dataset.quakeEffectSpriteActive = "false";
-        handle.element.style.opacity = "0";
-        handle.element.remove();
+        handle.presentedFrameIndex = -1;
+        if (handle.element) {
+          handle.element.dataset.quakeEffectSpriteActive = "false";
+          handle.element.style.opacity = "0";
+          handle.element.remove();
+        }
         continue;
       }
       handle.frameIndex = clampNumber(frameIndex, 0, sprite.frameCount - 1);
@@ -352,6 +395,19 @@ export function createQuakeEffectSpriteFlow(options: QuakeEffectSpriteFlowOption
     setEnabled,
     spawnExplosion,
   };
+
+  function glyphEffectSpriteTransform(origin: Vec3 | null): QuakeGlyphEntityTransform {
+    const rotation = options.viewRotation?.();
+    return {
+      position: origin ? [...origin] as Vec3 : [0, 0, 0],
+      rotation: rotation ? glyphBillboardRotation(rotation.rotX, rotation.rotY) : [0, 0, 0],
+    };
+  }
+
+  function removeHandlePresentation(handle: EffectSpriteHandle): void {
+    if (glyphEntitySink && handle.presentedFrameIndex >= 0) glyphEntitySink.removeEntity(handle.glyphId);
+    handle.presentedFrameIndex = -1;
+  }
 }
 
 function normalizeEffectSpriteManifest(value: unknown): QuakeEffectSpriteManifest | null {
@@ -385,6 +441,10 @@ function normalizeEffectSprite(value: unknown): QuakePreparedEffectSprite | null
       ? value.frameDurationMs
       : 100,
     frames,
+    glyphFrames: Array.isArray(value.glyphFrames)
+      ? value.glyphFrames.map(normalizeGlyphGeometry)
+        .filter((frame): frame is QuakeGlyphEntityGeometry => frame !== null)
+      : undefined,
     header: isRecord(value.header)
       ? {
         ...(typeof value.header.maxHeight === "number" ? { maxHeight: value.header.maxHeight } : {}),
@@ -398,6 +458,35 @@ function normalizeEffectSprite(value: unknown): QuakePreparedEffectSprite | null
       width: textureWidth,
     },
   };
+}
+
+function normalizeGlyphGeometry(value: unknown): QuakeGlyphEntityGeometry | null {
+  if (!isRecord(value) || !Array.isArray(value.polygons)) return null;
+  const polygons = value.polygons.map((polygon) => {
+    if (!isRecord(polygon) || typeof polygon.c !== "string" || !Array.isArray(polygon.v)) return null;
+    const vertices = polygon.v.map((vertex) =>
+      Array.isArray(vertex) && vertex.length >= 3 && vertex.slice(0, 3).every((coordinate) =>
+        typeof coordinate === "number" && Number.isFinite(coordinate))
+        ? vertex.slice(0, 3) as number[]
+        : null);
+    if (vertices.some((vertex) => vertex === null) || vertices.length < 3) return null;
+    return { c: polygon.c, v: vertices as number[][] };
+  }).filter((polygon): polygon is { c: string; v: number[][] } => polygon !== null);
+  if (!polygons.length) return null;
+  return { polygons };
+}
+
+function glyphBillboardRotation(rotX: number, rotY: number): [number, number, number] {
+  const { forward, right, up } = viewAxes(rotX, rotY);
+  const ry = Math.asin(clampNumber(up[0], -1, 1));
+  const rx = Math.atan2(-up[1], up[2]);
+  const rz = Math.atan2(-forward[0], right[0]);
+  return [rx, ry, rz].map((radians) => cleanDegrees(radians * 180 / Math.PI)) as [number, number, number];
+}
+
+function cleanDegrees(value: number): number {
+  const rounded = Math.round(value * 1_000_000) / 1_000_000;
+  return Math.abs(rounded) < 0.000001 ? 0 : rounded;
 }
 
 function normalizeEffectSpriteFrame(value: unknown): QuakePreparedEffectSpriteFrame | null {

@@ -79,19 +79,35 @@ try {
 }
 
 async function assertGlyphWeaponsRender(page, timeoutMs) {
+  const viewmodels = [
+    ["shotgun", "progs/v_shot.mdl", [0.98, 1]],
+    ["axe", "progs/v_axe.mdl", [0.866, 0.972]],
+    ["supershotgun", "progs/v_shot2.mdl", [1.149, 1.394]],
+    ["nailgun", "progs/v_nail.mdl", [0.907, 0.871]],
+    ["supernailgun", "progs/v_nail2.mdl", [0.894, 0.864]],
+    ["grenadelauncher", "progs/v_rock.mdl", [0.96, 0.971]],
+    ["rocketlauncher", "progs/v_rock2.mdl", [0.87, 0.835]],
+    ["lightning", "progs/v_light.mdl", [0.916, 0.922]],
+  ];
+  const fingerprints = new Set();
   let previousFingerprint = null;
-  for (const weapon of ["shotgun", "axe"]) {
+  for (const [weapon, source, screenScale] of viewmodels) {
     const selected = await page.evaluate((nextWeapon) => window.__cssQuakeDebug?.setWeapon?.(nextWeapon), weapon);
     assert(selected === true, `could not select ${weapon}`);
-    const renderHandle = await page.waitForFunction(({ expectedWeapon, previousFingerprint }) => {
+    const renderHandle = await page.waitForFunction(({ expectedWeapon, previousFingerprint, screenScale, source }) => {
       const debug = window.__cssQuakeDebug;
       if (debug?.stats?.().activeWeapon !== expectedWeapon) return false;
+      const viewmodel = debug.viewmodel?.();
+      const projection = viewmodel?.glyphProjection;
       const outputs = [...document.querySelectorAll("#quake-weapon .glyph-output")];
       const inkOutputs = outputs
         .map((output) => (output.textContent ?? "").replace(/\s/g, ""))
         .filter(Boolean);
       const ink = inkOutputs[0] ?? "";
-      if (debug.viewmodel?.().source !== `progs/v_${expectedWeapon === "shotgun" ? "shot" : expectedWeapon}.mdl` ||
+      if (viewmodel?.source !== source || projection?.basis !== "css" ||
+          projection.cameraBackoffPx !== 0 || projection.eulerSign?.[0] !== 1 || projection.eulerSign?.[1] !== 1 ||
+          Math.abs((projection.screenScale?.[0] ?? NaN) - screenScale[0]) > 1e-9 ||
+          Math.abs((projection.screenScale?.[1] ?? NaN) - screenScale[1]) > 1e-9 ||
           inkOutputs.length !== 1 || ink.length < 100) return false;
       let hash = 2166136261;
       for (const char of ink) {
@@ -100,8 +116,10 @@ async function assertGlyphWeaponsRender(page, timeoutMs) {
       }
       const fingerprint = `${ink.length}:${hash >>> 0}`;
       return fingerprint !== previousFingerprint ? { fingerprint, inkCells: ink.length } : false;
-    }, { expectedWeapon: weapon, previousFingerprint }, { timeout: timeoutMs });
+    }, { expectedWeapon: weapon, previousFingerprint, screenScale, source }, { timeout: timeoutMs });
     const render = await renderHandle.jsonValue();
+    assert(!fingerprints.has(render.fingerprint), `${weapon} should have distinct rendered geometry: ${render.fingerprint}`);
+    fingerprints.add(render.fingerprint);
     previousFingerprint = render.fingerprint;
     console.log(`ok glyphWeapon:${weapon} (${render.inkCells} cells)`);
   }

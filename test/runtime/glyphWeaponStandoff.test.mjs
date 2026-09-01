@@ -8,12 +8,22 @@ const {
 } = await importTsModule("src/runtime/render/glyphWorldOverlay.ts");
 const { quakeGlyphWeaponModelTrim } = await importTsModule("src/runtime/viewmodel.ts");
 
-test("migrated axe and shotgun use the CSS eye plane without changing later guns", () => {
-  const axe = quakeGlyphWeaponModelTrim("progs/v_axe.mdl").cameraBackoffPx;
-  const shotgun = quakeGlyphWeaponModelTrim("progs/v_shot.mdl").cameraBackoffPx;
-  assert.equal(axe, 0);
-  assert.equal(shotgun, 0);
-  assert.equal(quakeGlyphWeaponModelTrim("progs/v_shot2.mdl").cameraBackoffPx, 310);
+const QUAKE_VIEWMODEL_PATHS = [
+  "progs/v_axe.mdl",
+  "progs/v_shot.mdl",
+  "progs/v_shot2.mdl",
+  "progs/v_nail.mdl",
+  "progs/v_nail2.mdl",
+  "progs/v_rock.mdl",
+  "progs/v_rock2.mdl",
+  "progs/v_light.mdl",
+];
+
+test("every Quake viewmodel uses the CSS eye plane", () => {
+  for (const modelPath of QUAKE_VIEWMODEL_PATHS) {
+    assert.equal(quakeGlyphWeaponModelTrim(modelPath).cameraBackoffPx, 0, modelPath);
+  }
+  assert.equal(quakeGlyphWeaponModelTrim("progs/unknown.mdl").cameraBackoffPx, 310);
 });
 
 test("glyph weapon camera standoff precedence is override, model, default", () => {
@@ -22,15 +32,14 @@ test("glyph weapon camera standoff precedence is override, model, default", () =
   assert.equal(resolveQuakeGlyphWeaponCameraBackoffPx(undefined, null), 310);
 });
 
-test("migrated axe and shotgun use the CSS basis without glyph-only trims", () => {
-  const axe = quakeGlyphWeaponModelTrim("progs/v_axe.mdl");
-  const shotgun = quakeGlyphWeaponModelTrim("progs/v_shot.mdl");
-  assert.deepEqual(axe.screenTrim, [0, 0]);
-  assert.equal(axe.basis, "css");
-  assert.deepEqual(axe.eulerSign, [1, 1]);
-  assert.deepEqual(shotgun.axisTrim, [1, 1]);
-  assert.deepEqual(shotgun.screenTrim, [0, 0]);
-  assert.equal(shotgun.basis, "css");
-  assert.deepEqual(shotgun.eulerSign, [1, 1]);
-  assert.equal(quakeGlyphWeaponModelTrim("progs/v_shot2.mdl").basis, "legacy");
+test("every Quake viewmodel uses the CSS basis without glyph-only trims", () => {
+  for (const modelPath of QUAKE_VIEWMODEL_PATHS) {
+    const trim = quakeGlyphWeaponModelTrim(modelPath);
+    assert.deepEqual(trim.axisTrim, [1, 1], modelPath);
+    assert.deepEqual(trim.screenTrim, [0, 0], modelPath);
+    assert.deepEqual(trim.screenScale, [1, 1], modelPath);
+    assert.equal(trim.basis, "css", modelPath);
+    assert.deepEqual(trim.eulerSign, [1, 1], modelPath);
+  }
+  assert.equal(quakeGlyphWeaponModelTrim("progs/unknown.mdl").basis, "legacy");
 });

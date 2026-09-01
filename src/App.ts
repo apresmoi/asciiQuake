@@ -2400,6 +2400,7 @@ const quakeEffectSpriteFlow: QuakeEffectSpriteFlow = impactParticlesLayer
       cameraPerspectiveStyle: () => quakeCameraView.cameraPerspectiveStyle(),
       canShow: canShowQuakeImpactParticles,
       effectSpritesUrl: () => quakeAssetCatalog.manifest().assets.effectSpritesUrl,
+      glyphEntitySink: quakeGlyphOverlay,
       isGameplayPaused: isQuakeGamePaused,
       layer: impactParticlesLayer,
       viewOrigin: () => controls.getOrigin(),
