@@ -150,7 +150,7 @@ export function debugMapUrl(baseUrl, mapName, extraParams = {}) {
   return url.toString();
 }
 
-export async function waitForDebugMapReady(page, { mapName = "", timeoutMs = 90_000, minMeshes = 1 } = {}) {
+export async function waitForDebugMapReady(page, { mapName = "", timeoutMs = 90_000, minGlyphOutputs = 1 } = {}) {
   const started = Date.now();
   let last = null;
   while (Date.now() - started < timeoutMs) {
@@ -158,22 +158,22 @@ export async function waitForDebugMapReady(page, { mapName = "", timeoutMs = 90_
       last = await page.evaluate((expected) => {
         const debug = window.__cssQuakeDebug;
         const stats = debug?.stats?.();
-        const meshCount = document.querySelectorAll(".polycss-mesh").length;
+        const glyphOutputCount = document.querySelectorAll(".quake-glyph-overlay pre.glyph-output").length;
         return {
           href: window.location.href,
           hasDebug: Boolean(debug),
           loading: stats?.loading ?? null,
           mapName: stats?.mapName ?? null,
-          meshCount,
+          glyphOutputCount,
           ready: Boolean(
             stats &&
             !stats.loading &&
-            meshCount >= expected.minMeshes &&
+            glyphOutputCount >= expected.minGlyphOutputs &&
             (!expected.mapName || stats.mapName === expected.mapName)
           ),
           text: document.body.innerText?.slice(0, 300) ?? "",
         };
-      }, { mapName, minMeshes });
+      }, { mapName, minGlyphOutputs });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       if (!/Execution context was destroyed|Cannot find context|Target closed/.test(message)) throw error;
@@ -217,7 +217,7 @@ export async function openDebugMapPage(browser, baseUrl, mapName, options = {}) 
     await waitForDebugMapReady(page, {
       mapName,
       timeoutMs: options.timeoutMs,
-      minMeshes: options.minMeshes ?? 1,
+      minGlyphOutputs: options.minGlyphOutputs ?? 1,
     });
     return { page, pageErrors };
   } catch (error) {

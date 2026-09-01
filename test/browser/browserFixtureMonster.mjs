@@ -52,17 +52,17 @@ async function runMonsterDomFixture({ browser, baseUrl, options }) {
       const status = result.pass ? "PASS" : "FAIL";
       const attempt = result.attempt;
       console.log(`${status} ${monster.map} ${monster.classname} #${monster.entity}` +
-        (attempt ? ` distance=${attempt.distance} yaw=${attempt.yaw} leaves=${attempt.leafCount}` : ""));
+        (attempt ? ` distance=${attempt.distance} yaw=${attempt.yaw} handles=${attempt.handleCount}` : ""));
     }
   } finally {
     await page?.close();
   }
   const failed = results.filter((result) => !result.pass);
   if (pageErrors.length || failed.length) {
-    throw new Error(`DOM monster browser fixture failed: ${results.length - failed.length}/${results.length} passed.\n${pageErrors.join("\n")}`);
+    throw new Error(`Glyph monster browser fixture failed: ${results.length - failed.length}/${results.length} passed.\n${pageErrors.join("\n")}`);
   }
   return {
-    kind: "cssquake-monster-dom-smoke",
+    kind: "ascii-quake-monster-glyph-smoke",
     startedAt: new Date().toISOString(),
     viewport: options.viewport,
     total: results.length,
@@ -82,35 +82,28 @@ async function validateMonster(page, monster) {
         await new Promise(requestAnimationFrame);
         await new Promise(requestAnimationFrame);
         await new Promise((resolve) => setTimeout(resolve, 120));
-        const selector = `.polycss-mesh.shootable.enemy[data-entity-index="${entity}"]`;
-        const element = document.querySelector(selector);
-        const active = Boolean(
-          element &&
-          element.getAttribute("aria-hidden") !== "true" &&
-          !element.classList.contains("quake-shootable-prewarmed") &&
-          !element.classList.contains("quake-frame-hidden")
-        );
         const stats = debug.stats();
+        const entry = stats.shootableCulling?.entries?.find((candidate) => candidate.entityIndex === entity) ?? null;
+        const active = Boolean(entry?.mounted && entry?.visible && entry?.handleCount > 0);
         return {
           distance,
           yaw,
           focusOk: ok,
-          mounted: Boolean(element),
+          mounted: Boolean(entry?.mounted),
           active,
-          classname: element?.dataset.classname ?? null,
-          classnameOk: element?.dataset.classname === expectedClassname,
-          leafCount: element ? element.querySelectorAll("b,i,s,u").length : 0,
-          animationFrame: element?.dataset.animationFrame ?? null,
-          quakecState: element?.dataset.quakecState ?? null,
+          classname: entry?.classname ?? null,
+          classnameOk: entry?.classname === expectedClassname,
+          handleCount: entry?.handleCount ?? 0,
+          animationFrame: entry?.animationFrame ?? null,
+          quakecState: entry?.quakecStateName ?? null,
           stats: {
-            activeEnemyMeshes: stats.activeEnemyMeshes,
             mountedEnemyShootables: stats.shootables?.mountedEnemyShootables ?? null,
             visibleEnemyShootables: stats.shootables?.visibleEnemyShootables ?? null,
           },
         };
       }, { entity: monster.entity, expectedClassname: monster.classname, distance, yaw });
       lastAttempt = attempt;
-      if (attempt.active && attempt.classnameOk && attempt.leafCount > 0) {
+      if (attempt.active && attempt.classnameOk && attempt.handleCount > 0) {
         return { ...monster, pass: true, naturalVisibility: true, attempt };
       }
     }

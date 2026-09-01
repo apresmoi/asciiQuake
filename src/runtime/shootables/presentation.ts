@@ -1,4 +1,5 @@
-import type { PolyMeshHandle, Vec3 } from "@layoutit/polycss";
+import type { Vec3 } from "glyphcss";
+import type { QuakeMeshHandle } from "../render/engine";
 
 import type { QuakeShootableState, QuakeShootableTransformSnapshot } from "./state";
 
@@ -19,12 +20,12 @@ const QUAKE_SHOOTABLE_CORPSE_CLASS = "quake-shootable-corpse";
 const QUAKE_SHOOTABLE_DEAD_CLASS = "quake-shootable-dead";
 const QUAKE_SHOOTABLE_HURT_CLASS = "quake-shootable-hurt";
 const QUAKE_SHOOTABLE_HURT_FLASH_MS = 120;
-const quakeShootableTransformSnapshots = new WeakMap<PolyMeshHandle, QuakeShootableTransformSnapshot>();
+const quakeShootableTransformSnapshots = new WeakMap<QuakeMeshHandle, QuakeShootableTransformSnapshot>();
 const quakeShootableHurtFlashTimers = new WeakMap<HTMLElement, number>();
 
 export function forEachQuakeShootableHandle(
   shootable: QuakeShootableState,
-  callback: (handle: PolyMeshHandle) => void,
+  callback: (handle: QuakeMeshHandle) => void,
 ): void {
   const handles = new Set(shootable.frameHandles.values());
   if (shootable.handle) handles.add(shootable.handle);
@@ -94,7 +95,7 @@ export function flashQuakeShootable(shootable: QuakeShootableState): void {
 }
 
 export function setQuakeShootableHandleTransformIfChanged(
-  handle: PolyMeshHandle,
+  handle: QuakeMeshHandle,
   renderPosition: Vec3,
   yaw: number,
   scale: number,
@@ -120,7 +121,7 @@ export function setQuakeShootableHandleTransformIfChanged(
 
 function syncQuakeShootableLifecycleClasses(
   shootable: QuakeShootableState,
-  handle: PolyMeshHandle,
+  handle: QuakeMeshHandle,
   lifecycle: QuakeShootableLifecycleClassState,
 ): void {
   if (!shootable.dead) {

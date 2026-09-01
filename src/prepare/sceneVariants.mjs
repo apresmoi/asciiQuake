@@ -31,11 +31,9 @@ export function quakePreparedSceneVariant(prepared, mode) {
         brushModel.entityIndex === undefined || activeEntityIndexes.has(brushModel.entityIndex)
       );
   }
-  if (variant.renderBundle) {
-    variant.renderBundle = quakePreparedRenderBundleVariant(variant.renderBundle, activeEntityIndexes);
-  }
-  if (variant.lightstyleRenderBundle) {
-    variant.lightstyleRenderBundle = quakePreparedRenderBundleVariant(variant.lightstyleRenderBundle, activeEntityIndexes);
+  if (variant.glyphMovers?.movers) {
+    variant.glyphMovers.movers = variant.glyphMovers.movers
+      .filter((mover) => activeEntityIndexes.has(mover.entityIndex));
   }
   return variant;
 }
@@ -180,60 +178,6 @@ function quakePreparedRuntimeCollisionVariant(runtime, activeEntityIndexes) {
   };
 }
 
-export function quakePreparedRenderBundleVariant(renderBundle, activeEntityIndexes) {
-  const keptLeafIndexes = [];
-  const leafMetadata = [];
-  let sourceLeafIndex = 0;
-  let leafCount = 0;
-  let atlasLeafCount = 0;
-  const meshHtml = (renderBundle.meshHtml ?? "").replace(
-    /<([bisu])\b([^>]*)><\/\1>/g,
-    (html, tagName) => {
-      const metadata = renderBundle.leafMetadata?.[sourceLeafIndex];
-      const keep = !metadata || metadata.e === undefined || activeEntityIndexes.has(metadata.e);
-      if (keep) {
-        keptLeafIndexes.push(sourceLeafIndex);
-        leafMetadata.push(metadata);
-        leafCount++;
-        if (tagName === "s") atlasLeafCount++;
-      }
-      sourceLeafIndex++;
-      return keep ? html : "";
-    },
-  );
-  return {
-    ...renderBundle,
-    meshHtml,
-    leafMetadata,
-    ...(renderBundle.debugOutlineBackgrounds
-      ? { debugOutlineBackgrounds: pickByIndexes(renderBundle.debugOutlineBackgrounds, keptLeafIndexes) }
-      : {}),
-    ...(renderBundle.debugTransparentOutlineBackgrounds
-      ? {
-          debugTransparentOutlineBackgrounds: pickByIndexes(
-            renderBundle.debugTransparentOutlineBackgrounds,
-            keptLeafIndexes,
-          ),
-        }
-      : {}),
-    ...(renderBundle.leafFrameStyles
-      ? { leafFrameStyles: pickByIndexes(renderBundle.leafFrameStyles, keptLeafIndexes) }
-      : {}),
-    ...(renderBundle.atlasResidency
-      ? { atlasResidency: quakeRenderBundleAtlasResidencyVariant(renderBundle.atlasResidency, keptLeafIndexes) }
-      : {}),
-    leafCount,
-    atlasLeafCount,
-  };
-}
-
-function quakeRenderBundleAtlasResidencyVariant(atlasResidency, keptLeafIndexes) {
-  return {
-    ...atlasResidency,
-    leafPageIndexes: pickByIndexes(atlasResidency.leafPageIndexes, keptLeafIndexes),
-  };
-}
-
 function filterEntityReferences(value, activeEntityIndexes, key = "") {
   if (Array.isArray(value)) {
     if (/EntityIndexes$/.test(key)) return filterIndexes(value, activeEntityIndexes);
@@ -260,10 +204,6 @@ function remapBrushIndexes(indexes = [], brushIndexMap) {
   return indexes
     .map((index) => brushIndexMap.get(index))
     .filter((index) => Number.isInteger(index));
-}
-
-function pickByIndexes(items, indexes) {
-  return indexes.map((index) => items[index]);
 }
 
 function quakeEntitySpawnflags(entity) {

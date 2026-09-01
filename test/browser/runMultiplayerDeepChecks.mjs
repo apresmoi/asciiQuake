@@ -188,7 +188,7 @@ if (externalAppUrl) {
 } else {
   if (externalPartyHost) throw new Error("--party-host is only supported with --url.");
   console.log(`requires prepared assets: yes, maps ${requiredMaps.join(",")}`);
-  assertAssetState({ requiredMaps, requireRenderBundle: true, requireGameLogic: true });
+  assertAssetState({ requiredMaps, requireGlyphGeometry: true, requireGameLogic: true });
 }
 
 const manifest = externalAppUrl ? await readRemoteAssetManifest(externalAppUrl, common.timeoutMs) : readAssetManifest();

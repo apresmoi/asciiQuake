@@ -6,11 +6,11 @@ import {
 } from "./preparedAssets.mjs";
 
 console.log("Asset integrity gate");
-console.log("validates: prepared manifest, scene URLs, renderBundle, gameLogic, collision, and preload path arrays");
+console.log("validates: prepared manifest, scene URLs, GlyphCSS geometry, gameLogic, and collision");
 console.log("requires prepared assets: yes");
 console.log("classification: acceptance");
 
-const state = assertAssetState({ requireRenderBundle: false });
+const state = assertAssetState();
 const manifest = readPreparedManifest();
 const errors = [];
 
@@ -50,7 +50,8 @@ function validateSceneUrl(sceneUrl, mapName) {
   if (!scene.entityManifest || typeof scene.entityManifest !== "object") errors.push(`${mapName} scene must include entityManifest`);
   if (!scene.gameLogic || typeof scene.gameLogic !== "object") errors.push(`${mapName} scene must include gameLogic facts`);
   if (!scene.collision || typeof scene.collision !== "object") errors.push(`${mapName} scene must include collision data`);
-  if (!scene.renderBundle || typeof scene.renderBundle !== "object") errors.push(`${mapName} scene must include a renderBundle`);
+  if (!scene.glyphGeometry || typeof scene.glyphGeometry !== "object") errors.push(`${mapName} scene must include glyphGeometry`);
+  if (!Array.isArray(scene.glyphGeometry?.polygons)) errors.push(`${mapName} glyphGeometry must include polygons`);
 }
 
 function validateMapEntry(mapEntry, mapNames) {

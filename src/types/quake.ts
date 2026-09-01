@@ -1,4 +1,4 @@
-import type { Polygon, Vec3 } from "@layoutit/polycss";
+import type { Polygon, Vec3 } from "glyphcss";
 
 import type { QuakeGameLogicFacts } from "../prepare/gameLogicFacts";
 
@@ -269,72 +269,6 @@ export type QuakeSerializedPolygon = Omit<Polygon, "texture"> & {
   texture?: number | string;
 };
 
-export interface QuakeRenderBundleAtlasResidencyPage {
-  index: number;
-  varName: string;
-  url: string;
-  bytes?: number;
-  width?: number;
-  height?: number;
-}
-
-export interface QuakeRenderBundleAtlasResidency {
-  version: 1;
-  mode: "pvs-pages";
-  pageSize: number;
-  pages: QuakeRenderBundleAtlasResidencyPage[];
-  leafPageIndexes: number[];
-  visibilityLeafPages: number[][];
-  visibilityLeafPrewarmPages: number[][];
-}
-
-export interface QuakePreparedRenderBundle {
-  version: 1;
-  kind: "polycss-mesh";
-  polycssVersion: string;
-  textureLighting: "baked";
-  textureQuality: 1;
-  meshHtml: string;
-  meshCss?: string;
-  styleUrl?: string;
-  styleClassName?: string;
-  assetUrls: string[];
-  assetUrlsComplete: true;
-  debugOutlineSourceAssetUrls?: string[];
-  debugOutlineAssetUrls?: string[];
-  debugOutlineBackgrounds?: QuakeRenderBundleDebugOutlineBackground[];
-  debugOutlineOverpainted?: boolean;
-  debugTransparentOutlineSourceAssetUrls?: string[];
-  debugTransparentOutlineAssetUrls?: string[];
-  debugTransparentOutlineBackgrounds?: QuakeRenderBundleDebugOutlineBackground[];
-  leafMetadata: QuakeRenderBundleLeafMetadata[];
-  leafFrameStyles?: QuakeRenderBundleLeafFrameStyle[];
-  leafFrameStylesUrl?: string;
-  leafFrameStylesIndex?: number;
-  polygonCount: number;
-  leafCount: number;
-  atlasLeafCount: number;
-  atlasResidency?: QuakeRenderBundleAtlasResidency;
-}
-
-export type QuakeRenderBundleLeafFrameStyle = [
-  matrix: string,
-  background?: string | null,
-  extraStyle?: string | null,
-];
-
-export type QuakeRenderBundleDebugOutlineBackground = [position: string, size: string] | null;
-
-export interface QuakeRenderBundleLeafMetadata {
-  f: number;
-  fs?: number[];
-  p?: number;
-  m?: number;
-  e?: number;
-  t?: string;
-  l?: string;
-}
-
 export interface QuakePreparedVisibility {
   planes: QuakePlane[];
   nodes: QuakeNode[];
@@ -436,8 +370,6 @@ export interface QuakePreparedScene {
   polygons?: QuakeSerializedPolygon[];
   textures?: string[];
   skyTexture?: number | string;
-  renderBundle?: QuakePreparedRenderBundle;
-  lightstyleRenderBundle?: QuakePreparedRenderBundle;
   glyphGeometry?: QuakeGlyphGeometry;
   glyphMovers?: QuakeGlyphMovers;
   textureCount: number;
@@ -481,8 +413,6 @@ export interface QuakeGlyphMovers {
 export interface QuakeScene {
   polygons: Polygon[];
   skyTextureUrl?: string;
-  renderBundle?: QuakePreparedRenderBundle;
-  lightstyleRenderBundle?: QuakePreparedRenderBundle;
   glyphGeometry?: QuakeGlyphGeometry;
   glyphMovers?: QuakeGlyphMovers;
   textureCount: number;

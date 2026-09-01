@@ -29,10 +29,10 @@ const common = parseCommonBrowserArgs(args, {
 });
 
 console.log("Browser URL/API smoke gate");
-console.log("validates: public URL map/view links, invalid views, debug roll rejection");
+console.log("validates: public URL map/view links, shell ownership, lazy multiplayer form, weapon output, debug roll rejection");
 console.log("requires prepared assets: yes, maps e1m1 and e1m5");
 console.log("classification: acceptance");
-assertAssetState({ requiredMaps: ["e1m1", "e1m5"], requireRenderBundle: true });
+assertAssetState({ requiredMaps: ["e1m1", "e1m5"], requireGlyphGeometry: true });
 
 const server = await resolveBrowserTarget({ ...common, forceDeps: hasFlag(args, "force-deps") });
 let browser = null;
@@ -61,6 +61,9 @@ try {
   ];
 
   for (const testCase of cases) await runRouteCase(page, server.url, testCase, common.timeoutMs);
+  await assertDomShell(page, common.timeoutMs);
+  await assertIntermissionBackdrop(page);
+  await assertGlyphWeaponsRender(page, common.timeoutMs);
   const debugRoll = await page.evaluate(() => ({
     zeroRoll: window.__cssQuakeDebug?.setViewpos?.(-576, 192, 184, 0, 90, 0),
     nonZeroRoll: window.__cssQuakeDebug?.setViewpos?.(-576, 192, 184, 0, 90, 3),
@@ -73,6 +76,150 @@ try {
 } finally {
   await browser?.close();
   await server.close();
+}
+
+async function assertGlyphWeaponsRender(page, timeoutMs) {
+  let previousFingerprint = null;
+  for (const weapon of ["shotgun", "axe"]) {
+    const selected = await page.evaluate((nextWeapon) => window.__cssQuakeDebug?.setWeapon?.(nextWeapon), weapon);
+    assert(selected === true, `could not select ${weapon}`);
+    const renderHandle = await page.waitForFunction(({ expectedWeapon, previousFingerprint }) => {
+      const debug = window.__cssQuakeDebug;
+      if (debug?.stats?.().activeWeapon !== expectedWeapon) return false;
+      const outputs = [...document.querySelectorAll("#quake-weapon .glyph-output")];
+      const inkOutputs = outputs
+        .map((output) => (output.textContent ?? "").replace(/\s/g, ""))
+        .filter(Boolean);
+      const ink = inkOutputs[0] ?? "";
+      if (debug.viewmodel?.().source !== `progs/v_${expectedWeapon === "shotgun" ? "shot" : expectedWeapon}.mdl` ||
+          inkOutputs.length !== 1 || ink.length < 100) return false;
+      let hash = 2166136261;
+      for (const char of ink) {
+        hash ^= char.codePointAt(0) ?? 0;
+        hash = Math.imul(hash, 16777619);
+      }
+      const fingerprint = `${ink.length}:${hash >>> 0}`;
+      return fingerprint !== previousFingerprint ? { fingerprint, inkCells: ink.length } : false;
+    }, { expectedWeapon: weapon, previousFingerprint }, { timeout: timeoutMs });
+    const render = await renderHandle.jsonValue();
+    previousFingerprint = render.fingerprint;
+    console.log(`ok glyphWeapon:${weapon} (${render.inkCells} cells)`);
+  }
+}
+
+async function assertIntermissionBackdrop(page) {
+  const state = await page.evaluate(() => {
+    const root = document.getElementById("quake-intermission");
+    const interfaceLayer = document.getElementById("quake-interface");
+    const ui = document.getElementById("quake-glyph-ui-host");
+    if (!root || !interfaceLayer || !ui) return null;
+
+    const scrim = document.createElement("div");
+    scrim.className = "quake-intermission-scrim";
+    root.replaceChildren(scrim);
+    root.hidden = false;
+    const hadBodyGlyphClass = document.body.classList.contains("quake-glyph-render");
+    const hadRootGlyphClass = document.documentElement.classList.contains("quake-glyph-render");
+    interfaceLayer.classList.add("quake-intermission-visible");
+    const result = {
+      scrimBackground: getComputedStyle(scrim).backgroundColor,
+      uiBackground: getComputedStyle(ui).backgroundColor,
+    };
+    document.body.classList.remove("quake-glyph-render");
+    document.documentElement.classList.remove("quake-glyph-render");
+    result.fallbackScrimBackground = getComputedStyle(scrim).backgroundColor;
+    result.fallbackUiBackground = getComputedStyle(ui).backgroundColor;
+    if (hadBodyGlyphClass) document.body.classList.add("quake-glyph-render");
+    if (hadRootGlyphClass) document.documentElement.classList.add("quake-glyph-render");
+    interfaceLayer.classList.remove("quake-intermission-visible");
+    result.classAfterClear = interfaceLayer.classList.contains("quake-intermission-visible");
+    result.uiBackgroundAfterClear = getComputedStyle(ui).backgroundColor;
+    root.replaceChildren();
+    root.hidden = true;
+    return result;
+  });
+  assert(state?.scrimBackground === "rgba(0, 0, 0, 0)", `intermission HTML scrim should be transparent: ${JSON.stringify(state)}`);
+  assert(state?.uiBackground === "rgba(0, 0, 0, 0.65)", `intermission dimming should sit behind the Glyph UI: ${JSON.stringify(state)}`);
+  assert(state?.fallbackScrimBackground === "rgba(0, 0, 0, 0.65)", `non-Glyph intermission should keep its HTML scrim: ${JSON.stringify(state)}`);
+  assert(state?.fallbackUiBackground === "rgba(0, 0, 0, 0)", `non-Glyph intermission should not dim the Glyph host: ${JSON.stringify(state)}`);
+  assert(state?.classAfterClear === false, `intermission class should be removed on clear: ${JSON.stringify(state)}`);
+  assert(state?.uiBackgroundAfterClear === "rgba(0, 0, 0, 0)", `intermission backdrop should clear with its class: ${JSON.stringify(state)}`);
+  console.log("ok intermissionBackdrop");
+}
+
+async function assertDomShell(page, timeoutMs) {
+  const shell = await page.evaluate(() => {
+    const wrappers = ["quake-game", "quake-interface", "quake-social"].map((id) => {
+      const element = document.getElementById(id);
+      const rect = element?.getBoundingClientRect();
+      const style = element ? getComputedStyle(element) : null;
+      return {
+        id,
+        parent: element?.parentElement?.id ?? null,
+        rect: rect ? [rect.x, rect.y, rect.width, rect.height] : null,
+        zIndex: style?.zIndex ?? null,
+        transform: style?.transform ?? null,
+        isolation: style?.isolation ?? null,
+      };
+    });
+    return {
+      wrappers,
+      parents: {
+        scene: document.getElementById("quake-scene")?.parentElement?.id ?? null,
+        world: document.querySelector(".quake-glyph-overlay")?.parentElement?.id ?? null,
+        weapon: document.getElementById("quake-weapon")?.parentElement?.id ?? null,
+        particles: document.getElementById("quake-impact-particles")?.parentElement?.id ?? null,
+        hud: document.getElementById("quake-hud")?.parentElement?.id ?? null,
+        ui: document.getElementById("quake-glyph-ui-host")?.parentElement?.id ?? null,
+        social: document.querySelector(".btn-github")?.parentElement?.id ?? null,
+      },
+      multiplayerFormPresent: document.getElementById("quake-multiplayer-controls") !== null,
+      viewport: [window.innerWidth, window.innerHeight],
+    };
+  });
+  for (const wrapper of shell.wrappers) {
+    assert(wrapper.parent === "quake-app", `${wrapper.id} should be a direct app child: ${JSON.stringify(wrapper)}`);
+    assert(wrapper.rect?.every((value, index) => near(value, [0, 0, ...shell.viewport][index])), `${wrapper.id} should fill the viewport: ${JSON.stringify(wrapper)}`);
+    assert(wrapper.zIndex === "auto" && wrapper.transform === "none" && wrapper.isolation === "auto", `${wrapper.id} must not create a stacking context: ${JSON.stringify(wrapper)}`);
+  }
+  assert(JSON.stringify(shell.parents) === JSON.stringify({
+    scene: "quake-game",
+    world: "quake-game",
+    weapon: "quake-game",
+    particles: "quake-game",
+    hud: "quake-interface",
+    ui: "quake-interface",
+    social: "quake-social",
+  }), `unexpected shell ownership: ${JSON.stringify(shell.parents)}`);
+  assert(shell.multiplayerFormPresent === false, "multiplayer form should not exist on the landing screen");
+
+  await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("Enter");
+  await page.waitForSelector("#quake-interface > #quake-multiplayer-controls", { state: "attached", timeout: timeoutMs });
+  const controlState = await page.evaluate(() => {
+    const controls = [...document.querySelectorAll("#quake-multiplayer-controls > .quake-mp-control")];
+    return controls.map((element) => {
+      const rect = element.getBoundingClientRect();
+      return {
+        display: getComputedStyle(element).display,
+        pointerEvents: getComputedStyle(element).pointerEvents,
+        width: rect.width,
+        height: rect.height,
+      };
+    });
+  });
+  assert(controlState.length === 5, `expected five multiplayer controls: ${JSON.stringify(controlState)}`);
+  assert(controlState.every((control) => control.display === "block" && control.pointerEvents === "auto" && control.width > 0 && control.height > 0), `multiplayer controls should be interactive: ${JSON.stringify(controlState)}`);
+
+  await page.locator("#quake-multiplayer-name").fill("Ranger");
+  await page.keyboard.press("Escape");
+  await page.waitForSelector("#quake-multiplayer-controls", { state: "detached", timeout: timeoutMs });
+  await page.keyboard.press("Enter");
+  await page.waitForSelector("#quake-multiplayer-name", { state: "attached", timeout: timeoutMs });
+  assert(await page.locator("#quake-multiplayer-name").inputValue() === "Ranger", "multiplayer values should survive form remounting");
+  await page.keyboard.press("Escape");
+  await page.waitForSelector("#quake-multiplayer-controls", { state: "detached", timeout: timeoutMs });
+  console.log("ok domShell");
 }
 
 function printHelp() {

@@ -20,111 +20,44 @@ body {
   background: #050505;
   isolation: isolate;
 }
+#quake-game,
+#quake-interface,
+#quake-social {
+  position: absolute;
+  inset: 0;
+}
+#quake-interface,
+#quake-social {
+  pointer-events: none;
+}
 #quake-scene,
 #quake-weapon {
   position: absolute;
   inset: 0;
 }
+#quake-multiplayer-controls {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.quake-mp-control {
+  pointer-events: auto;
+}
 #quake-scene {
   z-index: 1;
 }
-#quake-scene > .polycss-camera {
+#quake-scene > .quake-camera-host {
   position: absolute;
   inset: 0;
   outline: none;
   touch-action: none;
 }
 
-#quake-app .polycss-mesh b,
-#quake-app .polycss-mesh i,
-#quake-app .polycss-mesh s,
-#quake-app .polycss-mesh u {
-  image-rendering: pixelated;
-}
-body.quake-debug-fly#quake-app .quake-world-mesh :is(b, i, s, u),
-body.quake-debug-fly #quake-app .quake-world-mesh :is(b, i, s, u) {
-  backface-visibility: visible;
-}
-#quake-app .polycss-mesh s {
-  background-repeat: no-repeat !important;
-}
-#quake-app .quake-world-mesh :is(b, i, s, u).quake-world-material-probe {
-  background: var(--quake-world-material-probe-color, #66696f) !important;
-  background-image: none !important;
-}
-#quake-app .quake-world-mesh .quake-world-material-step6-owner {
-  --quake-world-material-probe-color: #66696f;
-}
-#quake-app .quake-world-mesh .quake-world-contain-paint {
-  contain: paint;
-}
-#quake-app .quake-world-mesh .quake-world-contain-layout-paint-style {
-  contain: layout paint style;
-}
-#quake-app .quake-world-mesh .quake-world-contain-strict {
-  contain: strict;
-}
-#quake-app .quake-world-mesh .quake-world-owner-topology-wrapper {
-  transform-style: preserve-3d;
-}
-body.quake-debug-no-textures#quake-app .polycss-mesh:not(.quake-debug-outline-atlas-ready) s,
-body.quake-debug-no-textures #quake-app .polycss-mesh:not(.quake-debug-outline-atlas-ready) s {
-  background: none !important;
-}
-body.quake-static-lighting#quake-app .quake-lightstyle-mesh,
-body.quake-static-lighting #quake-app .quake-lightstyle-mesh {
-  display: none;
-}
-#quake-app .player-lightning-beam {
-  pointer-events: none;
-  filter: drop-shadow(0 0 6px #84ffff);
-}
-#quake-app .player-lightning-beam :is(b, i, s, u) {
-  box-shadow: 0 0 8px #84ffff;
-}
-body.quake-debug-outlines#quake-app .polycss-mesh :is(b, i, s, u),
-body.quake-debug-outlines #quake-app .polycss-mesh :is(b, i, s, u) {
-  --quake-debug-label-color: green;
-}
-body.quake-debug-outlines#quake-app .polycss-mesh.pickup :is(b, i, s, u),
-body.quake-debug-outlines #quake-app .polycss-mesh.pickup :is(b, i, s, u) {
-  --quake-debug-label-color: yellow;
-}
-body.quake-debug-outlines#quake-app .polycss-mesh.shootable:not(.enemy) :is(b, i, s, u),
-body.quake-debug-outlines #quake-app .polycss-mesh.shootable:not(.enemy) :is(b, i, s, u) {
-  --quake-debug-label-color: yellow;
-}
-body.quake-debug-outlines#quake-app .polycss-mesh.shootable.enemy :is(b, i, s, u),
-body.quake-debug-outlines #quake-app .polycss-mesh.shootable.enemy :is(b, i, s, u) {
-  --quake-debug-label-color: red;
-}
-body.quake-debug-labels#quake-app .polycss-mesh :is(b, i, s, u)[data-qpid]::after,
-body.quake-debug-labels #quake-app .polycss-mesh :is(b, i, s, u)[data-qpid]::after {
-  content: attr(data-qpid);
-  position: absolute;
-  left: 2px;
-  top: 2px;
-  z-index: 1;
-  color: var(--quake-debug-label-color, green);
-  font: 10px/1 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  text-decoration: none;
-  text-shadow: none;
-  pointer-events: none;
-}
 #quake-weapon {
   z-index: 2;
   overflow: hidden;
   pointer-events: none;
   transform-style: preserve-3d;
-}
-.quake-weapon-stage {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  width: 0;
-  height: 0;
-  transform-style: preserve-3d;
-  will-change: transform;
 }
 #quake-hud {
   --quake-notify-top: calc(8px + min(45px, calc((100vw - 92px) * 0.1951)) + 12px);
@@ -322,7 +255,6 @@ body.quake-menu-unlocked #quake-impact-particles {
   opacity: 0;
   transition: none;
 }
-body.quake-game-paused .polycss-scene *,
 body.quake-game-paused #quake-weapon * {
   animation-play-state: paused !important;
 }
@@ -465,6 +397,15 @@ body.quake-loading .dn-stats-overlay {
   position: absolute;
   inset: 0;
   z-index: 0;
+  background: rgba(0, 0, 0, 0.65);
+}
+/* The Glyph UI contains the ASCII stats, so its dimming surface must sit
+   behind that scene. Leaving the HTML scrim above it capped even white glyphs
+   at 35% brightness. */
+.quake-glyph-render .quake-intermission-scrim {
+  background: transparent;
+}
+.quake-glyph-render #quake-interface.quake-intermission-visible #quake-glyph-ui-host {
   background: rgba(0, 0, 0, 0.65);
 }
 .quake-intermission-canvas {
@@ -1055,55 +996,6 @@ body.quake-debug-outlines #quake-debug-outline-legend {
   display: none;
 }
 
-#quake-weapon .polycss-mesh.viewmodel {
-  pointer-events: none;
-  z-index: 4;
-}
-#quake-weapon .polycss-mesh.viewmodel > b,
-#quake-weapon .polycss-mesh.viewmodel > i,
-#quake-weapon .polycss-mesh.viewmodel > s,
-#quake-weapon .polycss-mesh.viewmodel > u,
-#quake-weapon .polycss-mesh.viewmodel > .quake-nozzle-group > b,
-#quake-weapon .polycss-mesh.viewmodel > .quake-nozzle-group > i,
-#quake-weapon .polycss-mesh.viewmodel > .quake-nozzle-group > s,
-#quake-weapon .polycss-mesh.viewmodel > .quake-nozzle-group > u {
-  backface-visibility: visible;
-  image-rendering: auto;
-}
-#quake-weapon .polycss-mesh.viewmodel > .quake-nozzle-group {
-  position: absolute;
-  display: block;
-  top: 0;
-  left: 0;
-  width: 0;
-  height: 0;
-  overflow: visible;
-  transform-style: preserve-3d;
-  transform-origin: 0 0;
-  visibility: hidden;
-}
-#quake-weapon .polycss-mesh.viewmodel.quake-nozzle-visible > .quake-nozzle-group {
-  visibility: visible;
-}
-.polycss-mesh.shootable.quake-shootable-prewarmed {
-  visibility: visible;
-  opacity: 0.001;
-  pointer-events: none;
-  transition: none;
-}
-.polycss-mesh.shootable.quake-frame-hidden {
-  visibility: hidden;
-  pointer-events: none;
-  transition: none;
-}
-.polycss-mesh.quake-shootable-dead {
-  visibility: hidden;
-  pointer-events: none;
-}
-.polycss-mesh.shootable.quake-shootable-corpse {
-  pointer-events: none;
-}
-
 body.quake-level-complete #quake-weapon {
   display: none;
 }
@@ -1384,4 +1276,3 @@ body.quake-menu-open .dn-stats-overlay {
    brightness, landing dim on top of an already-dim sheet. Showing the native
    text at full opacity instead is both brighter and more correct — a caret and
    a selection need real text, not a rasterized copy of it. */
-

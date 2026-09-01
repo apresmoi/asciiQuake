@@ -1,8 +1,5 @@
-import {
-  polyCssDistanceToWorld,
-  worldDistanceToPolyCss,
-  type Vec3,
-} from "@layoutit/polycss";
+import type { Vec3 } from "glyphcss";
+import { renderDistanceToWorld, worldDistanceToRender } from "../../quakeScale.js";
 
 import type { QuakeScene } from "../../types/quake";
 import { QUAKE_COLLISION_UNIT_SCALE, QUAKE_PLAYER_MINS_Z } from "../constants";
@@ -38,7 +35,6 @@ export interface QuakeCameraViewFlowOptions {
   playerSpawn(spawn: QuakeScene["spawn"]): void;
   renderSupersample: number;
   scene: QuakeCameraViewScene;
-  sceneElement: HTMLElement;
   setCameraLookEnabledBodyClass(enabled: boolean): void;
   syncCrosshairTarget(): void;
   syncShootablesVisibility(origin: [number, number, number], force: boolean): void;
@@ -55,8 +51,8 @@ export interface QuakeCameraViewFlow {
   currentRenderOrigin(): Vec3;
   cssViewFromUrlView(view: QuakeUrlView): QuakeCssView;
   playDamageViewFeedback(feedback: QuakePlayerDamageFeedback | undefined): void;
-  pointToPoly(point: { x: number; y: number; z: number }): Vec3;
-  polyToPoint(origin: Vec3): { x: number; y: number; z: number };
+  pointToWorld(point: { x: number; y: number; z: number }): Vec3;
+  worldToPoint(origin: Vec3): { x: number; y: number; z: number };
   setCamera(spawn: QuakeScene["spawn"]): void;
   setFirstPersonControlsMounted(mounted: boolean): void;
   setLookEnabled(enabled: boolean): void;
@@ -80,7 +76,7 @@ export function createQuakeCameraViewFlow(
     const viewport = quakeRuntimeViewportSize();
     const perspective = quakeCameraPerspectiveForViewport(viewport.width, viewport.height, cameraConfig.zoom);
     cameraPerspectiveStyle = `${Number(perspective.toFixed(6))}px`;
-    // Keep the JS-side camera perspective in sync with the viewport. polycss's
+    // Keep the JS-side camera perspective in sync with the viewport. the CSS renderer's
     // first-person controls place the camera TARGET at
     // `parseFloat(scene.camera.perspectiveStyle) / BASE_TILE` in front of the
     // eye — and `perspectiveStyle` is a plain property frozen at camera
@@ -94,7 +90,7 @@ export function createQuakeCameraViewFlow(
     // portrait 867.7px vs landscape 421.5px).
     options.scene.camera.perspectiveStyle = cameraPerspectiveStyle;
     if (firstPersonControlsMounted) {
-      options.host.style.setProperty("--polycss-fpv-perspective", cameraPerspectiveStyle);
+      options.host.style.setProperty("--quake-fpv-perspective", cameraPerspectiveStyle);
       options.host.style.removeProperty("perspective");
     } else {
       options.host.style.perspective = cameraPerspectiveStyle;
@@ -102,8 +98,6 @@ export function createQuakeCameraViewFlow(
     const centerX = quakeRuntimeViewportCenterCss(viewport, "x");
     const centerY = quakeRuntimeViewportCenterCss(viewport, "y");
     options.scene.cameraEl.style.perspectiveOrigin = `${centerX} ${centerY}`;
-    options.sceneElement.style.left = centerX;
-    options.sceneElement.style.top = centerY;
     compactCameraInlineStyle();
   }
 
@@ -119,16 +113,16 @@ export function createQuakeCameraViewFlow(
     options.setCameraLookEnabledBodyClass(cameraLookEnabled);
     options.host.style.removeProperty("cursor");
     if (firstPersonControlsMounted) {
-      options.host.style.setProperty("--polycss-fpv-perspective", cameraPerspectiveStyle);
+      options.host.style.setProperty("--quake-fpv-perspective", cameraPerspectiveStyle);
       options.host.style.removeProperty("perspective");
     }
     const perspective = options.host.style.getPropertyValue("perspective").trim();
     const perspectiveOrigin = options.host.style.getPropertyValue("perspective-origin").trim();
-    const fpvPerspective = options.host.style.getPropertyValue("--polycss-fpv-perspective").trim();
+    const fpvPerspective = options.host.style.getPropertyValue("--quake-fpv-perspective").trim();
     const declarations = [
       ...(perspective ? [`perspective:${perspective}`] : []),
       ...(perspectiveOrigin ? [`perspective-origin:${perspectiveOrigin}`] : []),
-      ...(fpvPerspective ? [`--polycss-fpv-perspective:${fpvPerspective}`] : []),
+      ...(fpvPerspective ? [`--quake-fpv-perspective:${fpvPerspective}`] : []),
     ];
     if (declarations.length) {
       options.host.setAttribute("style", declarations.join(";"));
@@ -174,7 +168,7 @@ export function createQuakeCameraViewFlow(
     if (nextStyle && nextStyle !== style) element.setAttribute("style", nextStyle);
   }
 
-  function pointToPoly(point: { x: number; y: number; z: number }): Vec3 {
+  function pointToWorld(point: { x: number; y: number; z: number }): Vec3 {
     const pivot = options.modelPivot();
     return [
       (point.x - pivot.x) * QUAKE_COLLISION_UNIT_SCALE,
@@ -183,7 +177,7 @@ export function createQuakeCameraViewFlow(
     ];
   }
 
-  function polyToPoint(origin: Vec3): { x: number; y: number; z: number } {
+  function worldToPoint(origin: Vec3): { x: number; y: number; z: number } {
     const pivot = options.modelPivot();
     return {
       x: origin[0] / QUAKE_COLLISION_UNIT_SCALE + pivot.x,
@@ -193,7 +187,7 @@ export function createQuakeCameraViewFlow(
   }
 
   function urlViewFromCssView(view: QuakeCssView): QuakeUrlView {
-    const point = polyToPoint([
+    const point = worldToPoint([
       view.origin[0],
       view.origin[1],
       view.origin[2] - QUAKE_PLAYER_MINS_Z - options.playerEyeHeight(),
@@ -207,7 +201,7 @@ export function createQuakeCameraViewFlow(
   }
 
   function cssViewFromUrlView(view: QuakeUrlView): QuakeCssView {
-    const origin = pointToPoly({
+    const origin = pointToWorld({
       x: view.origin[0],
       y: view.origin[1],
       z: view.origin[2],
@@ -276,8 +270,8 @@ export function createQuakeCameraViewFlow(
     currentRenderOrigin,
     cssViewFromUrlView,
     playDamageViewFeedback,
-    pointToPoly,
-    polyToPoint,
+    pointToWorld,
+    worldToPoint,
     setCamera,
     setFirstPersonControlsMounted,
     setLookEnabled,
@@ -291,7 +285,7 @@ export function createQuakeCameraViewFlow(
 }
 
 export function quakeInitialCameraViewConfig(renderSupersample: number): QuakeCameraViewConfig {
-  const zoom = quakeCameraZoomFromUrl() ?? worldDistanceToPolyCss(0.65) / renderSupersample;
+  const zoom = quakeCameraZoomFromUrl() ?? worldDistanceToRender(0.65) / renderSupersample;
   const { width, height } = quakeRuntimeViewportSize();
   return {
     perspective: quakeCameraPerspectiveForViewport(width, height, zoom),
@@ -304,7 +298,7 @@ export function quakeCameraPerspectiveForViewport(width: number, height: number,
   return (
     perspectiveOverride ??
     quakeReferencePerspectiveForViewport(width, height, QUAKE_REFERENCE_FOV) /
-      polyCssDistanceToWorld(zoom)
+      renderDistanceToWorld(zoom)
   );
 }
 

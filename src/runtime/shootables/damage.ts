@@ -1,4 +1,4 @@
-import type { Vec3 } from "@layoutit/polycss";
+import type { Vec3 } from "glyphcss";
 
 import {
   QUAKE_SHOOTABLE_LOGIC,
@@ -147,12 +147,12 @@ export function quakeDamageRetargetDecision(
 
 export function quakecCanDamageTracePointsForTargetOrigin(
   targetOrigin: { x: number; y: number; z: number },
-  pointToPoly: (point: { x: number; y: number; z: number }) => Vec3,
+  pointToWorld: (point: { x: number; y: number; z: number }) => Vec3,
 ): QuakeCanDamageTracePoint[] {
   return QUAKE_CANDAMAGE_TRACE_OFFSETS.map(({ label, offset }) => ({
     label,
     offset,
-    end: pointToPoly({
+    end: pointToWorld({
       x: targetOrigin.x + offset[0],
       y: targetOrigin.y + offset[1],
       z: targetOrigin.z + offset[2],

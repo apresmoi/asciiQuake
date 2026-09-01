@@ -162,21 +162,20 @@ async function validatePickup(page, testCase) {
       await new Promise(requestAnimationFrame);
       await new Promise((resolve) => setTimeout(resolve, ms));
     };
-    const pickupInfo = (entityIndex) => {
-      const element = document.querySelector(`.polycss-mesh.pickup[data-entity-index="${entityIndex}"]`);
-      if (!element) return { mounted: false };
+    const pickupInfo = (entityIndex, classname) => {
+      const stats = debug.stats().pickups;
+      const mounted = stats?.visibleEntityIndexes?.includes(entityIndex) ?? false;
       return {
-        mounted: true,
-        hidden: element.hidden,
-        classname: element.dataset.classname ?? null,
-        leafCount: element.querySelectorAll("b,i,s,u").length,
+        mounted,
+        hidden: stats?.hiddenEntityIndexes?.includes(entityIndex) ?? true,
+        classname: debug.entityIndexes?.(classname)?.includes(entityIndex) ? classname : null,
       };
     };
     const statsSnapshot = () => {
       const stats = debug.stats();
       return {
-        activePickupMeshes: stats.activePickupMeshes,
-        pickupMeshes: stats.pickupMeshes,
+        activePickupEntities: stats.pickups?.activeEntityIndexes?.length ?? 0,
+        visiblePickupEntities: stats.pickups?.visibleEntityIndexes?.length ?? 0,
         playerArmor: stats.playerArmor,
         playerHealth: stats.playerHealth,
         playerNails: stats.playerNails,
@@ -188,15 +187,15 @@ async function validatePickup(page, testCase) {
     for (const yaw of yaws) {
       const focusOk = debug.focusEntity(testCase.entity, 4, 90, yaw);
       await settle();
-      const info = pickupInfo(testCase.entity);
+      const info = pickupInfo(testCase.entity, testCase.classname);
       focused = { focusOk, yaw, ...info };
-      if (focusOk && info.mounted && !info.hidden && info.classname === testCase.classname && info.leafCount > 0) break;
+      if (focusOk && info.mounted && !info.hidden && info.classname === testCase.classname) break;
     }
     const beforePickup = statsSnapshot();
     const pickupOk = debug.setViewpos(testCase.origin.x, testCase.origin.y, testCase.origin.z, undefined, undefined, { gameplay: true });
     await settle(220);
     const after = statsSnapshot();
-    const afterInfo = pickupInfo(testCase.entity);
+    const afterInfo = pickupInfo(testCase.entity, testCase.classname);
     const repeatOk = debug.setViewpos(testCase.origin.x, testCase.origin.y, testCase.origin.z, undefined, undefined, { gameplay: true });
     await settle(120);
     const afterRepeat = statsSnapshot();
@@ -206,8 +205,12 @@ async function validatePickup(page, testCase) {
 
 async function disabledPickupSnapshot(page) {
   return await page.evaluate((pickup) => {
-    const element = document.querySelector(`.polycss-mesh.pickup[data-entity-index="${pickup.entity}"]`);
-    return { classname: pickup.classname, entity: pickup.entity, mounted: Boolean(element), elementClassname: element?.dataset.classname ?? null };
+    const stats = window.__cssQuakeDebug?.stats?.().pickups;
+    return {
+      classname: pickup.classname,
+      entity: pickup.entity,
+      mounted: stats?.visibleEntityIndexes?.includes(pickup.entity) ?? false,
+    };
   }, DISABLED_PICKUP);
 }
 
@@ -217,13 +220,12 @@ function assertPickupResult(testCase, result) {
   if (!focused?.focusOk || !focused.mounted || focused.hidden || focused.classname !== testCase.classname) {
     throw new Error(`${testCase.label} pickup did not become visible: ${JSON.stringify(focused)}`);
   }
-  if (!(focused.leafCount > 0)) throw new Error(`${testCase.label} pickup mounted without render leaves: ${JSON.stringify(focused)}`);
   if (!result.pickupOk) throw new Error(`${testCase.label} pickup debug gameplay pose failed.`);
   const expected = result.before[testCase.stat] + testCase.delta;
   if (result.after[testCase.stat] !== expected) throw new Error(`${testCase.label} should change ${testCase.stat} to ${expected}, got ${result.after[testCase.stat]}.`);
   if (result.afterInfo.mounted) throw new Error(`${testCase.label} pickup mesh should be removed after pickup: ${JSON.stringify(result.afterInfo)}`);
-  if (result.after.pickupMeshes !== result.beforePickup.pickupMeshes - 1) {
-    throw new Error(`${testCase.label} should remove exactly one pickup mesh, before=${result.beforePickup.pickupMeshes} after=${result.after.pickupMeshes}.`);
+  if (result.after.activePickupEntities !== result.beforePickup.activePickupEntities - 1) {
+    throw new Error(`${testCase.label} should consume exactly one pickup, before=${result.beforePickup.activePickupEntities} after=${result.after.activePickupEntities}.`);
   }
   if (!result.repeatOk) throw new Error(`${testCase.label} repeat gameplay pose failed.`);
   if (result.afterRepeat[testCase.stat] !== result.after[testCase.stat]) {

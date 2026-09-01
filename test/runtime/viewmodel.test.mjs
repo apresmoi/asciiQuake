@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { BASE_TILE, polyCssDistanceToWorld } from "@layoutit/polycss";
-import { createGlyphPerspectiveCamera } from "glyphcss";
+import { BASE_TILE, createGlyphPerspectiveCamera } from "glyphcss";
+import { renderDistanceToWorld } from "../../src/quakeScale.js";
 import { Window } from "happy-dom";
 
 import { importTsModule } from "../importTsModule.mjs";
@@ -14,7 +14,7 @@ const {
   quakeGlyphWeaponLocalPose,
 } = await importTsModule("src/runtime/viewmodel.ts");
 
-test("axe and shotgun use the PolyCSS X/Y basis without changing later guns", () => {
+test("axe and shotgun use the CSS X/Y basis without changing later guns", () => {
   const geometry = {
     version: 1,
     polygonCount: 1,
@@ -37,7 +37,7 @@ test("axe and shotgun use the PolyCSS X/Y basis without changing later guns", ()
   assert.deepEqual(roundedVertex(superShotgun), [1, -4, 2]);
 });
 
-test("axe and shotgun scale swap only the PolyCSS X/Y axes", () => {
+test("axe and shotgun scale swap only the CSS X/Y axes", () => {
   assert.deepEqual(quakeGlyphWeaponModelScale("progs/v_axe.mdl", [2, 3, 5], 7), [21, 14, 35]);
   assert.deepEqual(quakeGlyphWeaponModelScale("progs/v_shot.mdl", [2, 3, 5], 7), [21, 14, 35]);
   assert.deepEqual(quakeGlyphWeaponModelScale("progs/v_shot2.mdl", [2, 3, 5], 7), [35, 14, 21]);
@@ -139,7 +139,7 @@ test("glyph weapon geometry carries raster local roll and Y offset before entity
   assert.deepEqual(posed.polygons[0].v[0].map((value) => Math.round(value * 1e6) / 1e6), [0, -1, 1]);
 });
 
-test("viewmodel layer uses visual viewport placement when browser UI changes viewport height", () => {
+test("viewmodel projection uses visual viewport scale when browser UI changes viewport height", () => {
   const window = new Window();
   const globals = installWindowGlobals(window);
   try {
@@ -155,8 +155,22 @@ test("viewmodel layer uses visual viewport placement when browser UI changes vie
     const host = document.createElement("div");
     host.getBoundingClientRect = () => rect(0, 0, 1280, 720);
     const layer = document.createElement("div");
-    const sceneElement = document.createElement("div");
-    document.body.append(host, layer, sceneElement);
+    document.body.append(host, layer);
+    const projections = [];
+    const entities = [];
+    const glyphWeaponOverlay = {
+      element: document.createElement("pre"),
+      setEntity: (...args) => entities.push(args),
+      setEntityTransform: () => true,
+      removeEntity: () => {},
+      setProjection: (projection) => projections.push(projection),
+      setUiOcclusion: () => {},
+      setGlyphPalette: () => {},
+      setCellPx: () => {},
+      setTuning: () => {},
+      setVisible: () => {},
+      dispose: () => {},
+    };
 
     const viewmodel = createQuakeViewmodelController({
       controls: {
@@ -164,6 +178,7 @@ test("viewmodel layer uses visual viewport placement when browser UI changes vie
       },
       host,
       layer,
+      glyphWeaponOverlay,
       scene: {
         camera: {
           state: {
@@ -173,27 +188,45 @@ test("viewmodel layer uses visual viewport placement when browser UI changes vie
             zoom: 1,
           },
         },
-        sceneElement,
       },
     });
 
     viewmodel.mount({
       source: "progs/v_shot.mdl",
-      renderBundle: emptyRenderBundle(),
+      glyphFrames: [{
+        version: 1,
+        polygonCount: 1,
+        polygons: [{ c: "#fff", v: [[0, 0, 0], [1, 0, 0], [0, 1, 0]] }],
+      }],
     });
 
-    assert.equal(layer.style.left, "-130.833px");
-    assert.equal(layer.style.top, "-59.583px");
+    assert.equal(entities.length, 1);
     assert.equal(viewmodel.debugSnapshot().viewport.layerScale, 0.8333);
+    assert.equal(Math.round(projections.at(-1).fovScale * 10_000) / 10_000, 0.8333);
 
     viewmodel.playFireAnimation({ frameIntervalMs: 45, frames: [1] });
 
     const fired = viewmodel.debugSnapshot();
-    assert.equal(layer.style.left, "-130.833px");
-    assert.equal(layer.style.top, "-59.583px");
     assert.equal(fired.viewport.layerScale, 0.8333);
+    assert.equal(Math.round(projections.at(-1).fovScale * 10_000) / 10_000, 0.8333);
     assert.equal(fired.bob.fireForwardKick, -0.52);
     assert.equal(fired.bob.fireUpKick, -0.1);
+
+    const viewmodelWithoutOverlay = createQuakeViewmodelController({
+      controls: { getOrigin: () => [0, 0, 0] },
+      host,
+      layer,
+      scene: { camera: { state: { distance: 0, rotX: 88, rotY: 270, zoom: 1 } } },
+    });
+    viewmodelWithoutOverlay.mount({
+      source: "progs/v_shot.mdl",
+      glyphFrames: [{
+        version: 1,
+        polygonCount: 1,
+        polygons: [{ c: "#fff", v: [[0, 0, 0], [1, 0, 0], [0, 1, 0]] }],
+      }],
+    });
+    assert.equal(viewmodelWithoutOverlay.hasWeapon(), true);
   } finally {
     globals.restore();
   }
@@ -211,7 +244,7 @@ function cssWeaponVertexToWorld(vertex, tuning, scale, position) {
   const radians = tuning.localPitchDeg * Math.PI / 180;
   const cos = Math.cos(radians);
   const sin = Math.sin(radians);
-  const localY = polyCssDistanceToWorld(tuning.localYOffsetPx);
+  const localY = renderDistanceToWorld(tuning.localYOffsetPx);
   const css = [vertex[1], vertex[0], vertex[2]];
   const locallyPosed = [
     css[0],
@@ -243,23 +276,6 @@ function assertVecClose(actual, expected) {
     if (Number.isNaN(value) && Number.isNaN(expected[index])) return;
     assert.ok(Math.abs(value - expected[index]) < 1e-9, `${value} != ${expected[index]} at ${index}`);
   });
-}
-
-function emptyRenderBundle() {
-  return {
-    assetUrls: [],
-    assetUrlsComplete: true,
-    atlasLeafCount: 0,
-    kind: "polycss-mesh",
-    leafCount: 0,
-    leafMetadata: [],
-    meshHtml: "<div class=\"polycss-mesh\"></div>",
-    polygonCount: 0,
-    polycssVersion: "test",
-    textureLighting: "baked",
-    textureQuality: 1,
-    version: 1,
-  };
 }
 
 function setViewportWindowValues(window, {

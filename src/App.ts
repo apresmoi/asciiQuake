@@ -1,14 +1,8 @@
-import {
-  type ParseResult,
-  type Polygon,
-  type PolyMeshHandle,
-  type Vec3,
-  worldPositionToPolyCss,
-} from "@layoutit/polycss";
+import type { Polygon, Vec3 } from "glyphcss";
 import {
   createQuakeRenderEngine,
-  isQuakeRenderMode,
-  QUAKE_DEFAULT_RENDER_MODE,
+  type QuakeMeshHandle,
+  type QuakeMeshSource,
   type QuakeRenderMode,
 } from "./runtime/render/engine";
 import { createQuakeGlyphUiOverlay, type QuakeGlyphUiOverlay } from "./runtime/render/glyphUiOverlay";
@@ -36,7 +30,6 @@ import {
   createQuakeGlyphWeaponOverlay,
   QUAKE_GLYPH_OVERLAY_CELL_PX,
   type QuakeGlyphColorEncoding,
-  type QuakeGlyphComposite,
   type QuakeGlyphWeaponOverlay,
   type QuakeGlyphWorldOverlay,
 } from "./runtime/render/glyphWorldOverlay";
@@ -44,7 +37,6 @@ import { QUAKE_RENDER_SUPERSAMPLE } from "./prepare/scene";
 import type {
   QuakeEntity,
   QuakeEntityManifestPoint,
-  QuakePreparedRenderBundle,
   QuakeScene,
   QuakeVertex,
 } from "./types/quake";
@@ -105,6 +97,7 @@ import {
   removeQuakeBodyClasses,
   setQuakeBodyClass,
 } from "./runtime/app/dom";
+import { createQuakeMultiplayerMenuForm } from "./runtime/app/multiplayerMenuForm";
 import {
   createQuakeCameraFeedbackFlow,
   quakeCameraForwardDirection as forwardDirection,
@@ -249,7 +242,7 @@ import {
   type QuakeShootablesDebugStats,
   type QuakeShootablesPlayerClearanceOptions,
 } from "./runtime/shootables";
-import type { QuakeRenderBundleFrameSetMotionMaterialOptions } from "./runtime/renderBundleMesh";
+import type { QuakeModelFrameSetMotionMaterialOptions } from "./runtime/modelMesh";
 import { createCssQuakeSaveSession } from "./runtime/app/saveSession";
 import { createQuakeTargetsController } from "./runtime/targets";
 import { createQuakeTextController } from "./runtime/text";
@@ -270,19 +263,13 @@ import {
 } from "./runtime/weapons";
 import {
   createQuakeWorldController,
-  injectQuakeWorldAnimations,
-  quakeCssUrl,
-  setQuakeTextureAnimationLeafActive,
-  syncQuakeTextureAnimationLeafAnimationClock,
-  type QuakeFaceLeaf,
 } from "./runtime/world";
 import {
   createQuakePickupController,
   quakeCanPickupForInventory,
   quakePickupEffectForEntity,
   quakePickupMessageForEntity,
-  quakePickupModelRenderBundleFrameSet,
-  quakePickupModelRenderBundle,
+  quakePickupModelFrameSet,
   type QuakePickupEffect,
   type QuakePickupModel,
   type QuakePickupModelAnimationFrame,
@@ -294,13 +281,11 @@ import {
   type QuakePlayerDeathDetails,
 } from "./runtime/player";
 import {
-  mountQuakeRenderBundleFrameSetMesh,
-  mountQuakeRenderBundleMesh,
-  setQuakeRenderBundleFrameSetHandleFrame,
-  syncQuakeRenderBundleDebugOutlineLeaves,
-  stripPolyMeshMetadata,
-  type QuakeRenderBundleFrameSet,
-} from "./runtime/renderBundleMesh";
+  mountQuakeModelFrameSetMesh,
+  mountQuakeModelMesh,
+  setQuakeModelFrameSetHandleFrame,
+  type QuakeModelFrameSet,
+} from "./runtime/modelMesh";
 
 declare const __ASCIIQUAKE_VERSION__: string;
 
@@ -309,6 +294,8 @@ const QUAKE_DOOR_MESSAGE_COOLDOWN_MS = 2000;
 const quakeDom = queryQuakeAppDom();
 const {
   app: quakeApp,
+  game: quakeGame,
+  interfaceLayer: quakeInterface,
   scene: quakeSceneRoot,
   weapon,
   impactParticlesLayer,
@@ -316,12 +303,15 @@ const {
   bonusOverlay,
   damageOverlay,
   intermission: quakeIntermissionRoot,
-  multiplayerNameInput,
-  multiplayerColorInput,
-  multiplayerMapSelect,
-  multiplayerFragLimitInput,
-  multiplayerMaxPlayersInput,
 } = quakeDom;
+const quakeMultiplayerMenuForm = createQuakeMultiplayerMenuForm(quakeInterface);
+const {
+  nameInput: multiplayerNameInput,
+  colorInput: multiplayerColorInput,
+  mapSelect: multiplayerMapSelect,
+  fragLimitInput: multiplayerFragLimitInput,
+  maxPlayersInput: multiplayerMaxPlayersInput,
+} = quakeMultiplayerMenuForm;
 // Deleted with the HTML shell — typed nulls/empties keep the guarded debug
 // code paths compiling until those tools grow scene-drawn equivalents.
 const classicHud: HTMLElement | null = null;
@@ -331,6 +321,9 @@ const debugFlyModeOption: HTMLInputElement | null = null;
 const debugStatElements = new Map<string, HTMLElement>();
 const quakeText = createQuakeTextController();
 const quakeIntermission = createQuakeIntermissionFlow({
+  onBackdropVisibilityChange: (visible) => {
+    quakeInterface.classList.toggle("quake-intermission-visible", visible);
+  },
   renderBitmapText: mountQuakeBitmapText,
   root: quakeIntermissionRoot,
 });
@@ -405,11 +398,11 @@ function quakeParseGlyphView(
 
 function quakeDebugMonsterMotionMaterialPolicy(
   params: URLSearchParams,
-): QuakeRenderBundleFrameSetMotionMaterialOptions | null {
+): QuakeModelFrameSetMotionMaterialOptions | null {
   if (!import.meta.env.DEV) return null;
   const mode = params.get("debugMonsterMaterial")?.trim().toLowerCase();
   if (!mode || mode === "0" || mode === "false" || mode === "off") return null;
-  const policy: QuakeRenderBundleFrameSetMotionMaterialOptions = {};
+  const policy: QuakeModelFrameSetMotionMaterialOptions = {};
   const ratioOverride = quakeUrlNumberParam(params, "debugMonsterMaterialTextureRatio", 0, 1);
   if (ratioOverride !== null) {
     policy.texturedAreaRatio = ratioOverride;
@@ -571,17 +564,10 @@ function quakeDebugMonsterCameraStandoffCandidate(
     targetDistance: number;
   } | null = null;
   const classSet = new Set(classnames);
-  for (const element of document.querySelectorAll<HTMLElement>(".polycss-mesh.shootable.enemy")) {
-    if (
-      element.classList.contains("quake-shootable-prewarmed") ||
-      element.classList.contains("quake-frame-hidden")
-    ) {
-      continue;
-    }
-    const classname = element.dataset.classname ?? "";
+  for (const target of shootables.weaponTargets()) {
+    const classname = target.entity.classname;
     if (!classSet.has(classname)) continue;
-    const enemyOrigin = quakeDebugMonsterCameraStandoffMeshOrigin(element);
-    if (!enemyOrigin) continue;
+    const enemyOrigin = target.origin;
     const targetDistance = quakeDebugMonsterCameraStandoffDistance(classname, extraUnits);
     const dx = origin[0] - enemyOrigin[0];
     const dy = origin[1] - enemyOrigin[1];
@@ -600,7 +586,7 @@ function quakeDebugMonsterCameraStandoffCandidate(
       best = {
         classname,
         distance,
-        entityIndex: quakeDebugMonsterCameraStandoffEntityIndex(element),
+        entityIndex: target.entity.index,
         origin: candidate,
         pressure,
         targetDistance,
@@ -608,18 +594,6 @@ function quakeDebugMonsterCameraStandoffCandidate(
     }
   }
   return best;
-}
-
-function quakeDebugMonsterCameraStandoffMeshOrigin(element: HTMLElement): Vec3 | null {
-  const x = Number(element.dataset.originX);
-  const y = Number(element.dataset.originY);
-  const z = Number(element.dataset.originZ);
-  return Number.isFinite(x) && Number.isFinite(y) && Number.isFinite(z) ? [x, y, z] : null;
-}
-
-function quakeDebugMonsterCameraStandoffEntityIndex(element: HTMLElement): number | null {
-  const entityIndex = Number(element.dataset.entityIndex);
-  return Number.isFinite(entityIndex) ? entityIndex : null;
 }
 
 function quakeDebugMonsterCameraStandoffDistance(classname: string, extraUnits: number): number {
@@ -735,7 +709,6 @@ function quakeGlyphCellForBudget(cells: number): number {
 }
 
 
-const QUAKE_RENDER_MODE_STORAGE_KEY = "cssquake.renderMode";
 const QUAKE_GLYPH_PALETTE_STORAGE_KEY = "cssquake.glyphPalette";
 
 // Glyph sets (glyphcss ramp palettes) offered in the options menu, in cycle
@@ -761,16 +734,6 @@ function resolveQuakeGlyphPalette(): string {
     new URLSearchParams(window.location.search).get("glyphPalette") ??
     quakeStorageValue(QUAKE_GLYPH_PALETTE_STORAGE_KEY);
   return requested ? sanitizeQuakeGlyphPalette(requested) : QUAKE_WORLD_GLYPH_PALETTE_DEFAULT;
-}
-
-// Render backend is picked once at startup: `?renderMode=` wins (shareable,
-// mirrors the debug params), then the persisted preference, then the default.
-function resolveQuakeRenderMode(): QuakeRenderMode {
-  const fromUrl = new URLSearchParams(window.location.search).get("renderMode");
-  if (isQuakeRenderMode(fromUrl)) return fromUrl;
-  const stored = quakeStorageValue(QUAKE_RENDER_MODE_STORAGE_KEY);
-  if (isQuakeRenderMode(stored)) return stored;
-  return QUAKE_DEFAULT_RENDER_MODE;
 }
 
 function sanitizeQuakeMultiplayerDisplayName(value: string | null | undefined): string {
@@ -831,10 +794,10 @@ const QUAKE_MENU_ENABLED = true;
 const QUAKE_MONSTER_RUNTIME_ENABLED = true;
 const QUAKE_MONSTER_MOUNT_VIEW_DOT_MIN = -0.1;
 const quakeStartupUrlParams = new URLSearchParams(window.location.search);
-const quakeRenderMode = resolveQuakeRenderMode();
+const quakeRenderMode: QuakeRenderMode = "glyphcss";
 // The ASCII backend draws bitmap text as real characters rather than conchars
 // sprite slices — set before any bitmap text is built.
-setQuakeBitmapTextAsCharacters(quakeRenderMode === "glyphcss");
+setQuakeBitmapTextAsCharacters(true);
 setQuakeLoadingRendererLine(quakeRenderMode);
 const quakeDebugMonsterMotionMaterial = quakeDebugMonsterMotionMaterialPolicy(quakeStartupUrlParams);
 const quakeDebugMonsterPlayerClearance = quakeDebugMonsterPlayerClearancePolicy(quakeStartupUrlParams);
@@ -944,26 +907,6 @@ let quakeMultiplayerSpectating = false;
 let quakeMultiplayerSpectatorFollowedPlayerId: string | null = null;
 let quakeMultiplayerSpectatorCenterPrint = "";
 let quakeMultiplayerSpectatorCount = 0;
-
-function installInspectableQuakePolycssCamera(
-  sceneHandle: { applyCamera(): void },
-  cameraElement: HTMLElement,
-): void {
-  const applyCamera = sceneHandle.applyCamera.bind(sceneHandle);
-  sceneHandle.applyCamera = () => {
-    applyCamera();
-    stripQuakePolycssCameraDataAttributes(cameraElement);
-  };
-  stripQuakePolycssCameraDataAttributes(cameraElement);
-}
-
-function stripQuakePolycssCameraDataAttributes(cameraElement: HTMLElement): void {
-  for (const attribute of Array.from(cameraElement.attributes)) {
-    if (attribute.name.startsWith("data-polycss-camera-")) {
-      cameraElement.removeAttribute(attribute.name);
-    }
-  }
-}
 
 function quakeUrlRouteFromLocation(): QuakeUrlRoute {
   return quakeRoute.routeFromLocation();
@@ -1076,8 +1019,12 @@ function quakeMultiplayerDefaultCreateMapName(): string {
     : currentMapName;
 }
 
+let quakeMultiplayerMenuInitialized = false;
+
 function syncQuakeMultiplayerMenu(): void {
   mountQuakeMultiplayerMapSelector();
+  if (quakeMultiplayerMenuInitialized) return;
+  quakeMultiplayerMenuInitialized = true;
   if (multiplayerNameInput) multiplayerNameInput.value = QUAKE_MULTIPLAYER_LOCAL_DISPLAY_NAME;
   if (multiplayerColorInput) multiplayerColorInput.value = QUAKE_MULTIPLAYER_LOCAL_COLOR;
   if (multiplayerMapSelect) multiplayerMapSelect.value = quakeMultiplayerDefaultCreateMapName();
@@ -1269,9 +1216,7 @@ function startQuakeMultiplayerFromMenu(): void {
   window.location.assign(url.toString());
 }
 
-injectQuakeWorldAnimations();
-
-const quakeRenderEngine = createQuakeRenderEngine(quakeRenderMode, quakeApp, {
+const quakeRenderEngine = createQuakeRenderEngine(quakeRenderMode, quakeGame, {
   camera: {
     perspective: quakeCameraViewConfig.perspective,
     zoom: quakeCameraViewConfig.zoom,
@@ -1279,63 +1224,16 @@ const quakeRenderEngine = createQuakeRenderEngine(quakeRenderMode, quakeApp, {
     rotY: 270,
     target: [0, 0, 1.72],
   },
-  scene: {
-    ambientLight: { color: "#ffffff", intensity: Math.PI },
-    directionalLight: { direction: [-0.4, -0.55, -0.65], color: "#ffffff", intensity: 0 },
-    textureLighting: "baked",
-    textureQuality: 1,
-    textureLeafSizing: "raster",
-    textureBackend: "atlas",
-    textureProjection: "affine",
-    autoCenter: false,
-  },
 });
 const camera = quakeRenderEngine.camera;
 const scene = quakeRenderEngine.scene;
 const host = quakeRenderEngine.cameraEl;
-if (import.meta.env?.DEV) {
-  // Parity calibration probe: project a world point through polycss's real CSS
-  // transform pipeline (ground truth) by dropping a zero-size marker into the
-  // transformed scene root and reading its screen position. Compared against the
-  // glyph camera's projection to calibrate the overlay's perspective/zoom.
-  (window as unknown as { __quakePolyProjectScreen?: (p: Vec3) => [number, number] }).__quakePolyProjectScreen = (p) => {
-    const sceneEl = host.querySelector(".polycss-scene");
-    if (!sceneEl) return [Number.NaN, Number.NaN];
-    const d = document.createElement("div");
-    const [x, y, z] = worldPositionToPolyCss(p);
-    d.style.cssText = `position:absolute;left:0;top:0;width:0;height:0;transform:translate3d(${x}px,${y}px,${z}px);transform-style:preserve-3d`;
-    sceneEl.appendChild(d);
-    const r = d.getBoundingClientRect();
-    d.remove();
-    return [r.left, r.top];
-  };
-  // Poly camera params + world→polycss scale (K), so we can compute the glyph
-  // camera params that make the projections coincide (glyph_zoom = poly_zoom·K).
-  (window as unknown as { __quakeParityParams?: () => unknown }).__quakeParityParams = () => {
-    const a = worldPositionToPolyCss([0, 0, 0]);
-    const bx = worldPositionToPolyCss([1, 0, 0]);
-    const by = worldPositionToPolyCss([0, 1, 0]);
-    const bz = worldPositionToPolyCss([0, 0, 1]);
-    return {
-      perspective: quakeCameraViewConfig.perspective,
-      zoom: quakeCameraViewConfig.zoom,
-      kx: [bx[0] - a[0], bx[1] - a[1], bx[2] - a[2]],
-      ky: [by[0] - a[0], by[1] - a[1], by[2] - a[2]],
-      kz: [bz[0] - a[0], bz[1] - a[1], bz[2] - a[2]],
-    };
-  };
-}
 if (quakeSceneRoot) {
   quakeSceneRoot.appendChild(host);
 } else {
-  quakeApp.insertBefore(host, weapon);
+  quakeGame.insertBefore(host, weapon);
 }
 host.tabIndex = 0;
-installInspectableQuakePolycssCamera(scene, host);
-// PolyCSS controls read scene.host when they are created; keep that target on the inspectable camera node.
-(scene as unknown as { host: HTMLElement }).host = host;
-const sceneElement = quakeRenderEngine.sceneElement;
-sceneElement.removeAttribute("data-polycss-lighting");
 
 // Both glyph overlays encode against glyphcss's ASCII-only atlas variant:
 // 94 printable-ASCII glyphs, which frees the shared PUA budget for 68 palette
@@ -1407,19 +1305,11 @@ let quakeUiHudBarPalette = quakeStartupUrlParams.get("glyphImageHudBarPalette")
   : quakeUiGlyphPalette;
 let quakeUiHudArtPalette = quakeElementPalette("glyphImageHudArtPalette");
 
-// glyphcss world overlay (Phase 3 milestone): when the ASCII backend is
-// selected, polycss still drives all game logic/camera/controls while this
-// overlay mirrors the world geometry as ASCII driven by the live camera.
-const quakeGlyphOverlay: QuakeGlyphWorldOverlay | null =
-  quakeRenderMode === "glyphcss"
-    ? createQuakeGlyphWorldOverlay({
-        host: quakeApp,
+// GlyphCSS is the renderer; gameplay feeds this retained ASCII scene directly.
+const quakeGlyphOverlay: QuakeGlyphWorldOverlay = createQuakeGlyphWorldOverlay({
+        host: quakeGame,
         fontAtlas: quakeGlyphFontAtlas,
         insertBefore: weapon,
-        // Skip the (fully hidden) polycss world render while the opaque ASCII is
-        // up — polycss was still rasterizing every textured DOM polygon behind it.
-        // Toggling composite to poly/both brings the layer straight back.
-        polyWorldLayer: sceneElement,
         // Live-tunable, e.g. ?glyphCell=18&glyphTaa=0.6&ssaa=2&glyphBright=4
         supersample: quakeUrlNumberParam(quakeStartupUrlParams, "ssaa", 1, 4) ?? undefined,
         temporalBlend: quakeUrlNumberParam(quakeStartupUrlParams, "glyphTaa", 0, 0.9) ?? undefined,
@@ -1428,11 +1318,9 @@ const quakeGlyphOverlay: QuakeGlyphWorldOverlay | null =
         cellPx: quakeUrlNumberParam(quakeStartupUrlParams, "glyphCell", 6, 40)
           ?? quakeGlyphCellForBudget(quakeGlyphDetailBudget),
         lineHeight: quakeUrlNumberParam(quakeStartupUrlParams, "glyphLine", 4, 40) ?? undefined,
-        // PARITY, out of the box: glyphcss's camera is now polycss-native (zoom =
-        // CSS px/unit, perspective = CSS px) and projects with measured cell metrics,
-        // so we just hand it polycss's OWN camera params and the two projections are
-        // pixel-identical — no FOV magic. `?glyphPersp=`/`?glyphZoom=`/`?glyphFovScale=`
-        // remain only for experiments.
+        // GlyphCSS inherits cssQuake's CSS-perspective camera units (zoom = CSS
+        // px/unit, perspective = CSS px), so measured cell metrics preserve the
+        // original projection without a second FOV conversion.
         perspective: quakeUrlNumberParam(quakeStartupUrlParams, "glyphPersp", 100, 40000) ?? quakeCameraViewConfig.perspective,
         pinPerspective: quakeUrlNumberParam(quakeStartupUrlParams, "glyphPersp", 100, 40000) !== null,
         zoom: quakeUrlNumberParam(quakeStartupUrlParams, "glyphZoom", 0.01, 500) ?? quakeCameraViewConfig.zoom,
@@ -1488,8 +1376,8 @@ const quakeGlyphOverlay: QuakeGlyphWorldOverlay | null =
         entityOutline: quakeStartupUrlParams.get("glyphEntityOutline") === "1",
         // BSP PVS cull: the glyph backend re-projects the whole map every frame,
         // so cull world polygons not in the player's potentially-visible set. The
-        // eye is the same poly-frame origin the visibility expects (controls.getOrigin).
-        // `?glyphPvs=0` disables. Polycss is unaffected (it composites DOM, no cull).
+        // eye is the same camera origin the visibility expects (controls.getOrigin).
+        // `?glyphPvs=0` disables.
         pvsVisibleLeavesAt: quakeStartupUrlParams.get("glyphPvs") === "0"
           ? undefined
           : (eye) => currentResult?.visibility?.visibleLeavesAt(eye) ?? null,
@@ -1522,14 +1410,7 @@ const quakeGlyphOverlay: QuakeGlyphWorldOverlay | null =
         hiddenLines: ((m): "show" | "hide" | undefined => (m === "show" || m === "hide" ? m : undefined))(
           quakeStartupUrlParams.get("glyphHiddenLines"),
         ),
-        // Initial backend composite (cycle live with `V`): glyph | poly | both
-        // (50% ASCII over the polycss world for parity). `?glyphComposite=both`.
-        composite: ((c): QuakeGlyphComposite | undefined =>
-          c === "poly" || c === "both" || c === "glyph" ? c : undefined)(
-          quakeStartupUrlParams.get("glyphComposite"),
-        ),
-      })
-    : null;
+      });
 
 // Dedicated first-person weapon glyph scene. A near-field viewmodel cannot
 // live in the world camera (glyphcss clips eyeDepth<=0; scale/reach cancel).
@@ -1537,9 +1418,7 @@ const quakeGlyphOverlay: QuakeGlyphWorldOverlay | null =
 // over the world (inside #quake-weapon, z-index 2). The world overlay is
 // untouched — pickups/enemies/movers still register there.
 const quakeGlyphWeaponCellPinned = quakeUrlNumberParam(quakeStartupUrlParams, "glyphWeaponCell", 6, 40);
-const quakeGlyphWeaponOverlay: QuakeGlyphWeaponOverlay | null =
-  quakeRenderMode === "glyphcss"
-    ? (() => {
+const quakeGlyphWeaponOverlay: QuakeGlyphWeaponOverlay = (() => {
         const hostEl = document.createElement("div");
         hostEl.style.cssText =
           "position:absolute;inset:0;pointer-events:none;overflow:hidden;background:transparent";
@@ -1579,11 +1458,7 @@ const quakeGlyphWeaponOverlay: QuakeGlyphWeaponOverlay | null =
           ambientLight: quakeWorldGlyphTuning.ambient,
           directionalLight: quakeWorldGlyphTuning.dir,
         });
-      })()
-    : null;
-if (quakeStartupUrlParams.get("glyphComposite") === "poly") {
-  quakeGlyphWeaponOverlay?.setVisible(false);
-}
+      })();
 if (quakeGlyphWeaponOverlay) {
   // Align the panel's live values with what we actually constructed (zoom
   // follows the world camera; cell follows the world grid unless pinned;
@@ -1605,29 +1480,20 @@ let quakeApplyGlyphWeaponTuning: ((v: QuakeGlyphTuningValues) => void) | null = 
 // the rasterizer's depth test. The scene manifest below is ALSO the menu
 // controller's hit-map, so it is created once and shared.
 //
-// Unconditional now (previously glyphcss-mode only): the HTML menu this used
-// to fall back to is gone, so the glyph UI scene is the ONLY menu renderer —
-// in polycss world-render mode too.
+// The glyph UI scene is the only menu renderer.
 const quakeMenuManifest = createQuakeMenuSceneManifest({
   density: quakeUiGlyphTuning.density,
   backdropBrightness: quakeUiGlyphTuning.backdrop,
   logoDensity: quakeUiGlyphTuning.logoDensity,
 });
-// A DEDICATED, always-present host — not the loading overlay. Hosting the
-// scene on `#quake-loading-overlay` tied its life to that overlay's `hidden`
-// flag: the moment gameplay started the host collapsed to zero size, sync()
-// bailed, and neither the in-game Esc menu nor the HUD could ever draw.
-// Placement: immediately BEFORE the overlay at the overlay's own z-index (2),
-// so during boot/loading the overlay's interior HTML (the progress bar) still
-// paints above the glyph grid exactly as it did when the grid lived inside
-// it, while `#quake-menu` (z-index 3) keeps its interactive HTML on top. The
-// overlay's own black ground moves to the glyph surface (see the overlay's
-// chrome handling) — quake.css makes the overlay itself transparent.
+// A dedicated, always-present interface host. Keeping it out of temporary
+// loading/menu elements prevents those elements' visibility from collapsing
+// the in-game HUD and Esc menu scene.
 const quakeGlyphUiHost = document.createElement("div");
 quakeGlyphUiHost.id = "quake-glyph-ui-host";
 quakeGlyphUiHost.setAttribute("aria-hidden", "true");
 quakeGlyphUiHost.style.cssText = "position:absolute;inset:0;z-index:2;pointer-events:none;overflow:hidden";
-quakeApp.appendChild(quakeGlyphUiHost);
+quakeInterface.appendChild(quakeGlyphUiHost);
 
 let quakeGlyphUiOverlayHandle: QuakeGlyphUiOverlay | null = null;
 /**
@@ -1940,47 +1806,7 @@ if (quakeStartupUrlParams.has("debug")) {
   }
 }
 
-if (quakeGlyphOverlay) {
-  // polycss keeps driving camera/controls/collision underneath; the opaque
-  // ASCII overlay (z-index 1, after the camera) paints over its world.
-  setQuakeBodyClass("quake-glyph-render", true);
-
-  // Live parity tool: press `V` to cycle the backend composite WITHOUT reloading
-  // — glyph (ASCII) → both (ASCII at 50% over the polycss world, to check they
-  // line up) → poly (overlay hidden, raw polycss). Possible because polycss is
-  // always the engine and glyphcss is just an overlay on top of its render.
-  const quakeGlyphCompositeCycle: QuakeGlyphComposite[] = ["glyph", "both", "poly"];
-  let quakeGlyphCompositeToast: HTMLDivElement | null = null;
-  let quakeGlyphCompositeToastTimer = 0;
-  const showQuakeGlyphCompositeToast = (mode: QuakeGlyphComposite): void => {
-    if (!quakeGlyphCompositeToast) {
-      quakeGlyphCompositeToast = document.createElement("div");
-      quakeGlyphCompositeToast.style.cssText =
-        "position:fixed;top:8px;left:50%;transform:translateX(-50%);z-index:99999;" +
-        "font:600 13px monospace;color:#0f0;background:rgba(0,0,0,0.8);padding:4px 10px;" +
-        "border-radius:4px;pointer-events:none;transition:opacity .2s";
-      document.body.appendChild(quakeGlyphCompositeToast);
-    }
-    const label =
-      mode === "glyph" ? "glyphcss (ASCII)" : mode === "poly" ? "polycss" : "BOTH - glyph 50% over poly";
-    quakeGlyphCompositeToast.textContent = `render: ${label}   [V]`;
-    quakeGlyphCompositeToast.style.opacity = "1";
-    window.clearTimeout(quakeGlyphCompositeToastTimer);
-    quakeGlyphCompositeToastTimer = window.setTimeout(() => {
-      if (quakeGlyphCompositeToast) quakeGlyphCompositeToast.style.opacity = "0";
-    }, 1400);
-  };
-  window.addEventListener("keydown", (event) => {
-    if (event.code !== "KeyV" || event.repeat || event.metaKey || event.ctrlKey || event.altKey) return;
-    const current = quakeGlyphOverlay!.getComposite();
-    const next = quakeGlyphCompositeCycle[
-      (quakeGlyphCompositeCycle.indexOf(current) + 1) % quakeGlyphCompositeCycle.length
-    ]!;
-    quakeGlyphOverlay!.setComposite(next);
-    quakeGlyphWeaponOverlay?.setVisible(next !== "poly");
-    showQuakeGlyphCompositeToast(next);
-  });
-}
+setQuakeBodyClass("quake-glyph-render", true);
 
 // Track which mover glyph entities are registered so we can clear stale ones on
 // a scene change (entity id = `mover:<entityIndex>`).
@@ -2004,8 +1830,7 @@ function syncQuakeGlyphOverlayGeometry(): void {
   }
 }
 // Movers (doors/plats) sit flush in walls/floors, so they're coplanar with the
-// static world. Polycss composites DOM by stacking order; the glyph backend
-// paints a projection with a depth buffer, so coplanar surfaces z-fight and the
+// static world. The GlyphCSS projection uses a depth buffer, so coplanar surfaces z-fight and the
 // mover drops in patches. A tiny depth bias toward the camera makes the mover —
 // the active surface — win those cells cleanly.
 const QUAKE_MOVER_GLYPH_DEPTH_BIAS = 0.004;
@@ -2026,7 +1851,6 @@ const quakeCameraView = createQuakeCameraViewFlow({
   playerSpawn: (spawn) => getPlayer().spawn(spawn),
   renderSupersample: QUAKE_RENDER_SUPERSAMPLE,
   scene,
-  sceneElement,
   setCameraLookEnabledBodyClass: (enabled) => setQuakeBodyClass("quake-camera-look-enabled", enabled),
   syncCrosshairTarget: syncQuakeCrosshairTarget,
   syncShootablesVisibility: (origin, force) => shootables.syncVisibility(origin, force),
@@ -2119,8 +1943,8 @@ controls.update = (partial) => {
 quakeCameraView.compactCameraInlineStyle();
 
 // Mirror the camera to the glyph overlay at the single chokepoint every camera
-// update funnels through. The polycss first-person controls call applyCamera()
-// directly on locked mouse-look (bypassing the app's camera flow), so wrapping
+// update funnels through. The first-person controls call applyCamera() directly
+// on locked mouse-look (bypassing the app's camera flow), so wrapping
 // applyCamera is the only hook that catches both look and movement.
 // The glyph weapon lives in a local screen-space scene, but bob/punch still
 // need a live tick on camera updates (incl. direct mouse-look applyCamera).
@@ -2128,10 +1952,10 @@ quakeCameraView.compactCameraInlineStyle();
 // exists.
 let quakeGlyphSyncWeapon: (() => void) | null = null;
 if (quakeGlyphOverlay) {
-  const applyPolyCamera = scene.applyCamera.bind(scene);
+  const applyCamera = scene.applyCamera.bind(scene);
   const cameraState = scene.camera.state as { rotX?: number; rotY?: number; target?: Vec3 };
   scene.applyCamera = () => {
-    applyPolyCamera();
+    applyCamera();
     quakeGlyphOverlay.syncCamera(
       controls.getOrigin(),
       cameraState.rotX ?? 90,
@@ -2227,17 +2051,13 @@ const quakeDebugFly = createQuakeDebugFlyController({
 });
 
 const world = createQuakeWorldController({
-  applyMoverLeafTransform: (leaf) => quakeMoverInteractions.applyLeafTransform(leaf),
   getOrigin: () => controls.getOrigin(),
-  sceneElement,
-  syncButtonLeafVisual: (leaf) => quakeMoverInteractions.syncButtonLeafVisual(leaf),
   syncPickupsVisibility: (origin) => getPickups().syncVisibility(origin),
 });
 const quakeEntityMeshes = createQuakeEntityMeshMountFlow({
   pixelate: (handle) => world.pixelate(handle),
-  pointToPoly: quakeCameraView.pointToPoly,
+  pointToWorld: quakeCameraView.pointToWorld,
   scene,
-  sceneElement,
   schedulePresentationResync: (handle) => world.schedulePresentationResync(handle),
 });
 
@@ -2256,19 +2076,6 @@ function quakeShootablePrewarmLeavesAt(origin: [number, number, number]): Set<nu
     prewarmLeaves.add(adjacentLeafIndex);
     for (const visibleLeafIndex of adjacentLeaf.visibleLeafIndexes ?? []) {
       prewarmLeaves.add(visibleLeafIndex);
-    }
-  }
-  for (const mover of movers.debugStats().movers) {
-    if (mover.kind === "button" || mover.mode === "closed") continue;
-    const modelIndex = entityByIndex.get(mover.entityIndex)?.modelIndex;
-    if (modelIndex === undefined) continue;
-    for (const moverLeaf of world.modelLeaves(modelIndex)) {
-      const leaf = metadata.leaves[moverLeaf.leafIndex];
-      if (!leaf) continue;
-      prewarmLeaves.add(moverLeaf.leafIndex);
-      for (const visibleLeafIndex of leaf.visibleLeafIndexes ?? []) {
-        prewarmLeaves.add(visibleLeafIndex);
-      }
     }
   }
   return prewarmLeaves;
@@ -2299,6 +2106,8 @@ const menu = createQuakeMenuController({
     ] as const)
       .filter((entry): entry is [typeof entry[0], HTMLElement] => entry[1] !== null)
       .map(([id, element]) => ({ id, element })),
+  mountMultiplayerControls: quakeMultiplayerMenuForm.mount,
+  unmountMultiplayerControls: quakeMultiplayerMenuForm.unmount,
   onMultiplayerSubmit: startQuakeMultiplayerFromMenu,
   onSelectNewGame: startQuakeNewGame,
   onShowMultiplayer: syncQuakeMultiplayerMenu,
@@ -2368,10 +2177,10 @@ const quakeDebugPanelFlow = createQuakeDebugPanelFlow({
   initialShowMenu: true,
   initialShowOutlines: false,
   pickupMeshCounts: () => {
-    const pickupMeshes = Array.from(document.querySelectorAll<HTMLElement>(".polycss-mesh.pickup"));
+    const stats = getPickups().debugStats();
     return {
-      active: pickupMeshes.filter((element) => !element.hidden).length,
-      total: pickupMeshes.length,
+      active: stats.visibleEntityIndexes.length,
+      total: stats.total,
     };
   },
   removeBodyClasses: removeQuakeBodyClasses,
@@ -2522,7 +2331,6 @@ viewmodel = createQuakeViewmodelController({
   // Dedicated glyph weapon scene (own camera). Must not be the world overlay —
   // a shared world camera clips the near-field model.
   glyphWeaponOverlay: quakeGlyphWeaponOverlay ?? undefined,
-  renderModeIsGlyph: () => quakeRenderMode === "glyphcss",
   glyphWeaponScale: quakeUrlNumberParam(quakeStartupUrlParams, "glyphWeaponScale", 0.01, 20) ?? undefined,
   glyphWeaponReach: quakeUrlNumberParam(quakeStartupUrlParams, "glyphWeaponReach", 0.02, 20) ?? undefined,
   glyphWeaponRoll: quakeUrlNumberParam(quakeStartupUrlParams, "glyphWeaponRoll", -180, 180) ?? undefined,
@@ -2607,7 +2415,6 @@ const quakeOptions = createQuakeOptionsFlow({
   audioMuted: () => audio.isMuted(),
   damageDisabled: () => quakeDamageDisabled,
   dynamicLightingEnabled: () => quakeDynamicLighting,
-  renderModeIsGlyph: () => quakeRenderMode === "glyphcss",
   enemiesDisabled: () => quakeEnemiesDisabled,
   enemiesFrozen: () => quakeEnemiesFrozen,
   attacksDisabled: () => quakeAttacksDisabled,
@@ -2624,7 +2431,6 @@ const quakeOptions = createQuakeOptionsFlow({
   setAudioMuted: setQuakeAudioMuted,
   setDamageDisabled: setQuakeDamageDisabled,
   setDynamicLighting: setQuakeDynamicLighting,
-  setRenderMode: setQuakeRenderMode,
   setEnemiesDisabled: setQuakeEnemiesDisabled,
   setEnemiesFrozen: setQuakeEnemiesFrozen,
   setAttacksDisabled: setQuakeAttacksDisabled,
@@ -2719,7 +2525,7 @@ const shootables = createQuakeShootablesController({
       radiusUnits: event.radiusUnits,
     });
   },
-  pointToPoly: quakeCameraView.pointToPoly,
+  pointToWorld: quakeCameraView.pointToWorld,
   shouldSpawn: shouldSpawnQuakeShootableForCurrentMode,
   pixelate: world.pixelate,
   schedulePresentationResync: world.schedulePresentationResync,
@@ -2752,7 +2558,7 @@ const quakePointHazards = createQuakePointHazardFlow({
   isEntityDisabled: (entityIndex) => targetSystem.isDisabled(entityIndex),
   isPaused: isQuakeGamePaused,
   onHazardsChanged: () => syncQuakeHazards(getPlayer().currentOrigin()),
-  pointToPoly: quakeCameraView.pointToPoly,
+  pointToWorld: quakeCameraView.pointToWorld,
 });
 const movers = createQuakeMoversController({
   applyState: (state, movePlayer) => quakeMoverInteractions.applyState(state, movePlayer),
@@ -2808,7 +2614,7 @@ pickups = createQuakePickupController({
   leafIndexAt: world.leafIndexAt,
   playerForward: () => forwardDirection(scene.camera.state.rotX ?? 90, scene.camera.state.rotY ?? 270),
   playerViewDot: (point) => quakeSceneMount.playerViewDot(point),
-  pointToPoly: quakeCameraView.pointToPoly,
+  pointToWorld: quakeCameraView.pointToWorld,
   gameLogic: () => currentResult?.gameLogic ?? null,
   isGameplayPaused: isQuakeGamePaused,
   programMetadata: () => currentProgramMetadata,
@@ -2986,7 +2792,7 @@ player = createQuakePlayerController({
   onHazardState: () => undefined,
   onInventoryChanged: syncQuakeHud,
   onRespawn: (result, previousOrigin) => quakeSceneMount.respawnScene(result, previousOrigin),
-  pointToPoly: quakeCameraView.pointToPoly,
+  pointToWorld: quakeCameraView.pointToWorld,
   resolveShootablesCollision: shootables.resolvePlayerCollision,
   syncCrosshairTarget: syncQuakeCrosshairTarget,
   syncCamera: quakeCameraView.syncCameraOrigin,
@@ -3096,10 +2902,10 @@ let quakeAppLoading = true;
 quakeWeaponPresentation = createQuakeWeaponPresentationFlow({
   addBodyClasses: addQuakeBodyClasses,
   currentModelLibrary: () => currentPickupModelLibrary,
+  ...(quakeGlyphOverlay ? { glyphEntitySink: quakeGlyphOverlay } : {}),
   playWeaponFireFeedback: (animation) => quakeCameraFeedback.playWeaponFireFeedback(animation),
   removeBodyClasses: removeQuakeBodyClasses,
   scene,
-  sceneElement,
 });
 quakeTextPresentation = createQuakeTextPresentationFlow({
   currentGameLogic: () => currentResult?.gameLogic ?? null,
@@ -3109,15 +2915,12 @@ quakeTextPresentation = createQuakeTextPresentationFlow({
 });
 quakeMoverInteractions = createQuakeMoverInteractionFlow({
   audio,
-  applyButtonLeafVisual: applyQuakeButtonLeafVisual,
   ...(quakeGlyphOverlay ? { syncGlyphMoverOffset: syncQuakeGlyphMoverOffset } : {}),
-  compactInlineStyle: quakeCameraView.compactInlineStyle,
   currentCollisionWorld: () => currentCollisionWorld,
   currentGroundEntity: () => getPlayer().currentGroundEntity(),
   doorMessageCooldownMs: QUAKE_DOOR_MESSAGE_COOLDOWN_MS,
   getMover: (entityIndex) => movers.get(entityIndex),
   isDebugFlyModeActive: isQuakeDebugFlyModeActive,
-  modelLeaves: (modelIndex) => world.modelLeaves(modelIndex),
   playerCarryWithMover: (delta, entityIndex) => getPlayer().carryWithMover(delta, entityIndex),
   playerDamage: (amount) => getPlayer().damage(amount),
   playerEyeHeight: () => getPlayer().eyeHeight(),
@@ -3254,7 +3057,7 @@ quakeEntityActivation = createQuakeEntityActivationFlow({
   onSecretActivated: (entity) => quakeLevelStats.markSecret(entity.index),
   pickups: getPickups(),
   player: getPlayer,
-  pointToPoly: quakeCameraView.pointToPoly,
+  pointToWorld: quakeCameraView.pointToWorld,
   publishWorldChanged: sendQuakeMultiplayerWorldChanged,
   shootables,
   syncCrosshairTarget: syncQuakeCrosshairTarget,
@@ -3344,7 +3147,7 @@ function hidePersistedQuakeLoadingConsole(): void {
   quakeLoading.hidePersistedConsole();
 }
 
-function makeParseResult(polygons: Polygon[]): ParseResult {
+function makeParseResult(polygons: Polygon[]): QuakeMeshSource {
   return { polygons, objectUrls: [], warnings: [], dispose: () => undefined };
 }
 
@@ -3623,13 +3426,6 @@ function cycleQuakeGlyphDetail(direction: number): void {
   quakeGlyphDetailBudget = next.cells;
   const url = new URL(window.location.href);
   url.searchParams.set("glyphCell", String(nextCell));
-  if (!quakeGlyphOverlay) {
-    // No ASCII overlay yet (we're in polycss): switching detail implies switching
-    // backend, which swaps the whole engine/DOM graph — that still needs a reload.
-    url.searchParams.set("renderMode", "glyphcss");
-    window.location.assign(url.toString());
-    return;
-  }
   // Live resize — the cell is a font metric, so the grid re-fits in place. Record
   // the choice in the URL (still shareable, still the reload seed) WITHOUT
   // navigating, mirroring how the glyph set swaps without a reload.
@@ -3657,17 +3453,6 @@ function cycleQuakeGlyphPalette(direction: number): void {
   // which changes the cell size and rebuilds the grid).
   quakeGlyphOverlay?.setGlyphPalette(next.palette);
   quakeGlyphWeaponOverlay?.setGlyphPalette(next.palette);
-}
-
-function setQuakeRenderMode(glyph: boolean): void {
-  const nextMode: QuakeRenderMode = glyph ? "glyphcss" : "polycss";
-  if (nextMode === quakeRenderMode) return;
-  setQuakeStorageValue(QUAKE_RENDER_MODE_STORAGE_KEY, nextMode);
-  // Switching the render backend swaps the entire engine/DOM graph, so reload
-  // with the choice carried in the URL instead of reconstructing it live.
-  const url = new URL(window.location.href);
-  url.searchParams.set("renderMode", nextMode);
-  window.location.assign(url.toString());
 }
 
 function setQuakeImpactParticles(enabled: boolean): void {
@@ -3977,23 +3762,24 @@ function createQuakeRemotePlayerVisual(
   return {
     element: remote.handle.element,
     setState: (state) => syncQuakeRemotePlayerVisual(remote, state),
-    remove: () => remote.handle.remove(),
+    remove: () => {
+      quakeGlyphOverlay?.removeEntity(quakeRemotePlayerGlyphId(remote));
+      remote.handle.remove();
+    },
   };
 }
 
 interface QuakeRemotePlayerMeshMount {
-  activeFrameSet: "run" | undefined;
   animationFrames: readonly QuakePickupModelAnimationFrame[];
   attackFrameIndexesByWeapon: Record<string, readonly number[]>;
   color: string | undefined;
   clientId: string;
   currentFrameIndex: number;
-  fullFrameSet: QuakeRenderBundleFrameSet | undefined;
-  handle: PolyMeshHandle;
+  fullFrameSet: QuakeModelFrameSet | undefined;
+  handle: QuakeMeshHandle;
   deathFrameIndexes: readonly number[];
   painFrameIndexes: readonly number[];
   playerId: string;
-  runFrameSet: QuakeRenderBundleFrameSet | undefined;
   runFrameIndexes: readonly number[];
   scale: number;
   standFrameIndex: number;
@@ -4002,9 +3788,7 @@ interface QuakeRemotePlayerMeshMount {
 
 function addQuakeRemotePlayerMesh(): QuakeRemotePlayerMeshMount | null {
   const model = quakeRemotePlayerModel();
-  const frameSet = model
-    ? quakeRemotePlayerMountableFrameSet(quakePickupModelRenderBundleFrameSet(model))
-    : undefined;
+  const frameSet = model ? quakePickupModelFrameSet(model) : undefined;
   const animationFrames = model?.animationFrames ?? [];
   const standFrameIndex = frameSet
     ? quakeRemotePlayerDefaultFrameIndex(frameSet)
@@ -4019,27 +3803,15 @@ function addQuakeRemotePlayerMesh(): QuakeRemotePlayerMeshMount | null {
     ? quakeRemotePlayerFrameIndexes(frameSet, QUAKE_MULTIPLAYER_REMOTE_DEATH_FRAME_PREFIX)
     : quakeRemotePlayerAnimationFrameIndexes(animationFrames, QUAKE_MULTIPLAYER_REMOTE_DEATH_FRAME_PREFIX);
   const attackFrameIndexesByWeapon = quakeRemotePlayerAttackFrameIndexesByWeapon(frameSet, animationFrames);
-  const runFrameSet = !frameSet && model
-    ? quakeRemotePlayerAnimationFrameSetForIndexes(animationFrames, runFrameIndexes)
-    : undefined;
   const handle = frameSet
-    ? mountQuakeRenderBundleFrameSetMesh(sceneElement, frameSet, standFrameIndex)
-    : model && animationFrames.length
-    ? mountQuakeRenderBundleMesh(
-      sceneElement,
-      quakeRemotePlayerMountableRenderBundle(quakePickupModelRenderBundle(model, standFrameIndex)),
-    )
+    ? mountQuakeModelFrameSetMesh(scene, frameSet, standFrameIndex)
     : model
-    ? mountQuakeRenderBundleMesh(
-      sceneElement,
-      quakeRemotePlayerMountableRenderBundle(quakePickupModelRenderBundle(model, 0)),
-    )
+    ? mountQuakeModelMesh(scene, model.glyphGeometry)
     : addQuakeProceduralRemotePlayerMesh();
   if (!handle) return null;
   world.pixelate(handle);
   void world.schedulePresentationResync(handle);
   return {
-    activeFrameSet: undefined,
     animationFrames,
     attackFrameIndexesByWeapon,
     clientId: "",
@@ -4049,7 +3821,6 @@ function addQuakeRemotePlayerMesh(): QuakeRemotePlayerMeshMount | null {
     deathFrameIndexes,
     painFrameIndexes,
     playerId: "",
-    runFrameSet,
     runFrameIndexes,
     scale: model?.renderScale ? 1 / model.renderScale : 1,
     standFrameIndex,
@@ -4082,7 +3853,19 @@ function syncQuakeRemotePlayerVisual(
     rotation: [0, 0, appliedRotY],
     scale: remote.scale,
   });
+  const geometry = remote.animationFrames[frameIndex]?.glyphGeometry ?? remote.fullFrameSet?.baseGeometry;
+  if (geometry) {
+    quakeGlyphOverlay?.setEntity(quakeRemotePlayerGlyphId(remote), geometry, {
+      position: origin,
+      rotation: [0, 0, appliedRotY],
+      scale: remote.scale,
+    });
+  }
   syncQuakeRemotePlayerPoseMetadata(remote, state, origin, rotY, appliedRotY);
+}
+
+function quakeRemotePlayerGlyphId(remote: QuakeRemotePlayerMeshMount): string {
+  return `remote-player:${remote.playerId || remote.clientId}`;
 }
 
 function syncQuakeRemotePlayerElementMetadata(remote: QuakeRemotePlayerMeshMount): void {
@@ -4093,59 +3876,26 @@ function syncQuakeRemotePlayerElementMetadata(remote: QuakeRemotePlayerMeshMount
     remote.handle.element.dataset.playerColor = remote.color;
     remote.handle.element.style.setProperty("--quake-multiplayer-player-color", remote.color);
   }
-  stripPolyMeshMetadata(remote.handle.element);
 }
 
 function syncQuakeRemotePlayerMeshFrame(remote: QuakeRemotePlayerMeshMount, frameIndex: number): void {
   if (remote.fullFrameSet) {
-    setQuakeRenderBundleFrameSetHandleFrame(remote.handle, frameIndex);
+    setQuakeModelFrameSetHandleFrame(remote.handle, frameIndex);
     remote.currentFrameIndex = frameIndex;
     syncQuakeRemotePlayerFrameMetadata(remote, frameIndex, remote.fullFrameSet.frames[frameIndex]?.name);
     return;
   }
-  const runFrameIndex = remote.runFrameIndexes.indexOf(frameIndex);
-  if (runFrameIndex >= 0 && remote.runFrameSet) {
-    if (remote.activeFrameSet !== "run") {
-      replaceQuakeRemotePlayerHandle(
-        remote,
-        mountQuakeRenderBundleFrameSetMesh(sceneElement, remote.runFrameSet, runFrameIndex),
-        "run",
-      );
-    } else {
-      setQuakeRenderBundleFrameSetHandleFrame(remote.handle, runFrameIndex);
-    }
-    remote.currentFrameIndex = frameIndex;
-    syncQuakeRemotePlayerFrameMetadata(remote, frameIndex, remote.runFrameSet.frames[runFrameIndex]?.name);
-    return;
-  }
-  if (remote.activeFrameSet === undefined && remote.currentFrameIndex === frameIndex) {
+  if (remote.currentFrameIndex === frameIndex) {
     syncQuakeRemotePlayerFrameMetadata(remote, frameIndex, quakeRemotePlayerAnimationFrameName(remote, frameIndex));
     return;
   }
   const frame = remote.animationFrames[frameIndex];
   if (!frame) return;
-  replaceQuakeRemotePlayerHandle(
-    remote,
-    mountQuakeRenderBundleMesh(sceneElement, quakeRemotePlayerMountableRenderBundle(frame.renderBundle)),
-    undefined,
-  );
+  remote.handle.setPolygons(frame.glyphGeometry
+    ? frame.glyphGeometry.polygons.map((polygon) => ({ vertices: polygon.v, color: polygon.c }))
+    : []);
   remote.currentFrameIndex = frameIndex;
   syncQuakeRemotePlayerFrameMetadata(remote, frameIndex, frame.name);
-}
-
-function replaceQuakeRemotePlayerHandle(
-  remote: QuakeRemotePlayerMeshMount,
-  nextHandle: PolyMeshHandle,
-  activeFrameSet: "run" | undefined,
-): void {
-  const previousHandle = remote.handle;
-  nextHandle.element.hidden = previousHandle.element.hidden;
-  remote.handle = nextHandle;
-  remote.activeFrameSet = activeFrameSet;
-  world.pixelate(nextHandle);
-  syncQuakeRemotePlayerElementMetadata(remote);
-  void world.schedulePresentationResync(nextHandle);
-  previousHandle.remove();
 }
 
 function syncQuakeRemotePlayerFrameMetadata(
@@ -4202,7 +3952,7 @@ function quakeRemotePlayerAnimationFrameName(
   return remote.animationFrames[frameIndex]?.name ?? remote.fullFrameSet?.frames[frameIndex]?.name;
 }
 
-function quakeRemotePlayerDefaultFrameIndex(frameSet: QuakeRenderBundleFrameSet): number {
+function quakeRemotePlayerDefaultFrameIndex(frameSet: QuakeModelFrameSet): number {
   const frameIndex = frameSet.frames.findIndex((frame) => frame.name === QUAKE_MULTIPLAYER_REMOTE_DEFAULT_FRAME);
   return frameIndex >= 0 ? frameIndex : 0;
 }
@@ -4215,7 +3965,7 @@ function quakeRemotePlayerDefaultAnimationFrameIndex(
 }
 
 function quakeRemotePlayerFrameIndexes(
-  frameSet: QuakeRenderBundleFrameSet,
+  frameSet: QuakeModelFrameSet,
   prefix: string,
 ): readonly number[] {
   return frameSet.frames
@@ -4225,7 +3975,7 @@ function quakeRemotePlayerFrameIndexes(
 }
 
 function quakeRemotePlayerFrameIndexesByName(
-  frameSet: QuakeRenderBundleFrameSet,
+  frameSet: QuakeModelFrameSet,
   frameNames: readonly string[],
 ): readonly number[] {
   const desired = new Set(frameNames);
@@ -4257,7 +4007,7 @@ function quakeRemotePlayerAnimationFrameIndexesByName(
 }
 
 function quakeRemotePlayerAttackFrameIndexesByWeapon(
-  frameSet: QuakeRenderBundleFrameSet | undefined,
+  frameSet: QuakeModelFrameSet | undefined,
   frames: readonly QuakePickupModelAnimationFrame[],
 ): Record<string, readonly number[]> {
   const indexes: Record<string, readonly number[]> = {};
@@ -4267,66 +4017,6 @@ function quakeRemotePlayerAttackFrameIndexesByWeapon(
       : quakeRemotePlayerAnimationFrameIndexesByName(frames, frameNames);
   }
   return indexes;
-}
-
-function quakeRemotePlayerAnimationFrameSetForIndexes(
-  frames: readonly QuakePickupModelAnimationFrame[],
-  frameIndexes: readonly number[],
-): QuakeRenderBundleFrameSet | undefined {
-  if (!frameIndexes.length) return undefined;
-  const frameSetFrames = frameIndexes
-    .map((index) => frames[index])
-    .filter((frame): frame is QuakePickupModelAnimationFrame => Boolean(frame))
-    .map((frame) => ({
-      name: frame.name,
-      renderBundle: quakeRemotePlayerMountableRenderBundle(frame.renderBundle),
-    }));
-  const leafCount = frameSetFrames[0]
-    ? quakeRemotePlayerRenderBundleMountLeafCount(frameSetFrames[0].renderBundle)
-    : 0;
-  if (!leafCount || frameSetFrames.length !== frameIndexes.length) return undefined;
-  if (!frameSetFrames.every((frame) =>
-    quakeRemotePlayerRenderBundleMountLeafCount(frame.renderBundle) === leafCount
-  )) {
-    return undefined;
-  }
-  return {
-    leafCount,
-    renderBundle: frameSetFrames[0].renderBundle,
-    frames: frameSetFrames,
-  };
-}
-
-function quakeRemotePlayerMountableFrameSet(
-  frameSet: QuakeRenderBundleFrameSet | undefined,
-): QuakeRenderBundleFrameSet | undefined {
-  if (!frameSet) return undefined;
-  const frames = frameSet.frames.map((frame) => ({
-    name: frame.name,
-    renderBundle: quakeRemotePlayerMountableRenderBundle(frame.renderBundle),
-  }));
-  const leafCount = frames[0]
-    ? quakeRemotePlayerRenderBundleMountLeafCount(frames[0].renderBundle)
-    : frameSet.leafCount;
-  return {
-    leafCount,
-    renderBundle: quakeRemotePlayerMountableRenderBundle(frameSet.renderBundle),
-    frames,
-  };
-}
-
-function quakeRemotePlayerMountableRenderBundle(
-  renderBundle: QuakePreparedRenderBundle,
-): QuakePreparedRenderBundle {
-  const leafCount = quakeRemotePlayerRenderBundleMountLeafCount(renderBundle);
-  return leafCount === renderBundle.leafCount ? renderBundle : {
-    ...renderBundle,
-    leafCount,
-  };
-}
-
-function quakeRemotePlayerRenderBundleMountLeafCount(renderBundle: QuakePreparedRenderBundle): number {
-  return renderBundle.leafMetadata.length || renderBundle.leafCount;
 }
 
 function quakeRemotePlayerVisualFrameIndex(
@@ -4433,7 +4123,7 @@ function quakeRemotePlayerVisualRotYOffset(element: HTMLElement): number {
     : QUAKE_MULTIPLAYER_REMOTE_MODEL_ROT_Y_OFFSET;
 }
 
-function addQuakeProceduralRemotePlayerMesh(): PolyMeshHandle | null {
+function addQuakeProceduralRemotePlayerMesh(): QuakeMeshHandle | null {
   const polygons = quakeRemotePlayerFallbackPolygons();
   if (!polygons.length) return null;
   const handle = scene.add(makeParseResult(polygons), {
@@ -4495,7 +4185,7 @@ function currentQuakeMultiplayerRoomKey(): QuakeMultiplayerRoomCompatibilityKey 
 function applyQuakeMultiplayerInitialSpawnHint(): void {
   if (!QUAKE_MULTIPLAYER_ENABLED || !currentResult || quakeMultiplayerLocalSpawnId) return;
   const gameplayDefinitions = quakeMultiplayerGameplayDefinitionsFromScene(currentResult, {
-    pointToRoom: quakeCameraView.pointToPoly,
+    pointToRoom: quakeCameraView.pointToWorld,
     playerEyeHeight: getPlayer().eyeHeight(),
     playerMinsZ: QUAKE_PLAYER_MINS_Z,
   });
@@ -5597,7 +5287,7 @@ function currentQuakeMultiplayerWorldIntentDefinitions(): readonly QuakeMultipla
   if (quakeMultiplayerWorldIntentDefinitionsScene !== currentResult) {
     quakeMultiplayerWorldIntentDefinitionsScene = currentResult;
     quakeMultiplayerWorldIntentDefinitions = quakeMultiplayerWorldDefinitionsFromScene(currentResult, {
-      pointToRoom: quakeCameraView.pointToPoly,
+      pointToRoom: quakeCameraView.pointToWorld,
       playerEyeHeight: getPlayer().eyeHeight(),
     });
   }
@@ -5703,7 +5393,7 @@ function applyQuakeMultiplayerView(originValue: readonly [number, number, number
 function sendQuakeMultiplayerHello(roomKey: QuakeMultiplayerRoomCompatibilityKey): void {
   const gameplayDefinitions = currentResult
     ? quakeMultiplayerGameplayDefinitionsFromScene(currentResult, {
-        pointToRoom: quakeCameraView.pointToPoly,
+        pointToRoom: quakeCameraView.pointToWorld,
         playerEyeHeight: getPlayer().eyeHeight(),
         playerMinsZ: QUAKE_PLAYER_MINS_Z,
       })
@@ -5771,7 +5461,7 @@ function currentQuakeMultiplayerPickupDefinitions(): readonly QuakeMultiplayerPi
   if (quakeMultiplayerPickupDefinitionsScene !== currentResult) {
     quakeMultiplayerPickupDefinitionsScene = currentResult;
     quakeMultiplayerPickupDefinitions = quakeMultiplayerGameplayDefinitionsFromScene(currentResult, {
-      pointToRoom: quakeCameraView.pointToPoly,
+      pointToRoom: quakeCameraView.pointToWorld,
       playerEyeHeight: getPlayer().eyeHeight(),
       playerMinsZ: QUAKE_PLAYER_MINS_Z,
     }).pickupDefinitions;
@@ -6039,7 +5729,7 @@ function quakeLoopbackSimulatedPlayers(): readonly QuakeMultiplayerAuthoritative
 function quakeLoopbackTrustedWorldDefinitions(roomKey: QuakeMultiplayerRoomCompatibilityKey) {
   if (!currentResult || currentMapName !== roomKey.mapName || !player) return null;
   return quakeMultiplayerWorldDefinitionsFromScene(currentResult, {
-    pointToRoom: quakeCameraView.pointToPoly,
+    pointToRoom: quakeCameraView.pointToWorld,
     playerEyeHeight: getPlayer().eyeHeight(),
   });
 }
@@ -6065,7 +5755,7 @@ function resetQuakeLevelStatsForCurrentScene(): void {
 function syncQuakeIntermissionCamera(): void {
   const point = quakeIntermissionPointForCurrentScene();
   if (!point) return;
-  const origin = quakeCameraView.pointToPoly(point.origin);
+  const origin = quakeCameraView.pointToWorld(point.origin);
   const { rotX, rotY } = quakeIntermissionCameraRotation(point);
   quakeCameraView.syncSceneCameraAt(origin, rotX, rotY);
   shootables.syncVisibility(origin as [number, number, number], true);
@@ -6178,34 +5868,6 @@ function quakeRuntimeTriggerWait(entity: QuakeEntity, fallback: number): number 
   return quakeEntityActivation.triggerWait(entity, fallback);
 }
 
-function applyQuakeButtonLeafVisual(leaf: QuakeFaceLeaf, pressed: boolean): void {
-  const baseTexture = leaf.buttonBaseTexture;
-  const pressedTexture = leaf.buttonPressedTexture;
-  const texture = pressed ? pressedTexture : baseTexture;
-  if (texture) {
-    setQuakeTextureAnimationLeafActive(leaf.element, true);
-    leaf.element.style.backgroundImage = quakeCssUrl(texture);
-    leaf.element.style.backgroundPosition = "center";
-    leaf.element.style.backgroundSize = "100% 100%";
-    if (pressed) {
-      leaf.element.style.animationName = "none";
-    } else {
-      setQuakeTextureAnimationLeafActive(leaf.element, false);
-      leaf.element.style.removeProperty("animation-name");
-      syncQuakeTextureAnimationLeafAnimationClock(leaf.element);
-    }
-    syncQuakeRenderBundleDebugOutlineLeaves(leaf.element, [leaf.element]);
-    return;
-  }
-  setQuakeTextureAnimationLeafActive(leaf.element, false);
-  leaf.element.style.removeProperty("animation-name");
-  leaf.element.style.backgroundImage = leaf.baseBackgroundImage;
-  leaf.element.style.backgroundPosition = leaf.baseBackgroundPosition;
-  leaf.element.style.backgroundSize = leaf.baseBackgroundSize;
-  leaf.element.style.removeProperty("background-repeat");
-  syncQuakeRenderBundleDebugOutlineLeaves(leaf.element, [leaf.element]);
-}
-
 function syncQuakeCrosshairTarget(): void {
   quakeCrosshairInteraction?.sync();
 }
@@ -6289,7 +5951,7 @@ function installQuakeAppDebugHooks(): void {
     forwardDirection,
     loadMap: loadQuakeMap,
     mapExists: quakeAssetCatalog.mapExists,
-    pointToPoly: quakeCameraView.pointToPoly,
+    pointToWorld: quakeCameraView.pointToWorld,
     renderOrigin: quakeCameraView.currentRenderOrigin,
     requestMultiplayerPickup: requestQuakeMultiplayerPickup,
     setCollisionBypassUntil: (until) => {
@@ -6310,14 +5972,14 @@ async function loadPickupModels(progress?: QuakeLoadingProgressTracker): Promise
   await quakeAssetWarmup.loadPickupModels(progress);
 }
 
-async function preloadQuakeMapModelRenderBundleAssets(
+async function preloadQuakeMapModelAssets(
   mapName: string,
   progress?: QuakeLoadingProgressTracker,
 ): Promise<void> {
   await quakeAssetWarmup.preloadMapModelAssets(mapName, progress);
 }
 
-async function preloadQuakeSceneModelRenderBundleAssets(
+async function preloadQuakeSceneModelAssets(
   result: QuakeScene,
   progress?: QuakeLoadingProgressTracker,
 ): Promise<void> {
@@ -6365,8 +6027,8 @@ function handleQuakePopState(): void {
 
 function handleViewportResize(): void {
   quakeCameraView.syncViewportProjection();
-  // Re-derive the camera target under the refreshed perspective. The polycss
-  // controls only recompute the target on their next look/move, so a player
+  // Re-derive the camera target under the refreshed perspective. The controls
+  // only recompute the target on their next look/move, so a player
   // standing still through a rotation would keep a target placed at the OLD
   // viewport's look distance — displacing every renderer that derives the eye
   // back out of it (see syncViewportProjection's perspectiveStyle note).
@@ -6429,6 +6091,7 @@ function disposeQuakeApp(): void {
   controls.removeEventListener("end", quakeGameplayInput.clearCrouchInput);
   controls.destroy();
   menu.dispose();
+  quakeMultiplayerMenuForm.dispose();
   audio.dispose();
   quakeStatsOverlay.hide();
   quakeGlyphWeaponOverlay?.dispose();
@@ -6504,8 +6167,8 @@ const quakeMapLoader = createQuakeAppMapLoader<QuakeCssView, QuakeViewmodelModel
     menu.setCurrentLevel(mapName);
     if (multiplayerMapSelect) multiplayerMapSelect.value = mapName;
   },
-  preloadMapAssets: preloadQuakeMapModelRenderBundleAssets,
-  preloadSceneAssets: preloadQuakeSceneModelRenderBundleAssets,
+  preloadMapAssets: preloadQuakeMapModelAssets,
+  preloadSceneAssets: preloadQuakeSceneModelAssets,
   preloadWeapon: (progress) => quakeViewmodelAssets.preload(progress),
   resumeGameplayAfterMapLoad: resumeQuakeGameplayAfterMapLoad,
   sceneUrl: quakeSceneUrlForCurrentMode,
@@ -6552,7 +6215,6 @@ const quakeAppRuntime = createQuakeAppRuntimeContext({
   scene,
   controls,
   host,
-  sceneElement,
   controllers: {
     audio,
     menu,

@@ -1,4 +1,4 @@
-import type { Vec3 } from "@layoutit/polycss";
+import type { Vec3 } from "glyphcss";
 
 import type { QuakeMonsterSpawnProfile } from "../../generated/quakeMonsterLogic";
 import type { QuakeGameLogicFacts } from "../../prepare/gameLogicFacts";
@@ -13,14 +13,14 @@ const QUAKE_MONSTER_DROP_TO_FLOOR_DISTANCE = 256 * QUAKE_COLLISION_UNIT_SCALE;
 
 export function buildQuakeMonsterPathCornerIndex(
   entities: QuakeEntity[],
-  pointToPoly: (point: { x: number; y: number; z: number }) => Vec3,
+  pointToWorld: (point: { x: number; y: number; z: number }) => Vec3,
 ): Map<string, QuakeMonsterPathCorner> {
   const out = new Map<string, QuakeMonsterPathCorner>();
   for (const entity of entities) {
     if (entity.classname !== "path_corner" || !entity.origin || !entity.properties.targetname) continue;
     out.set(entity.properties.targetname, {
       entity,
-      origin: pointToPoly(entity.origin),
+      origin: pointToWorld(entity.origin),
       ...(entity.properties.target ? { target: entity.properties.target } : {}),
       targetname: entity.properties.targetname,
     });

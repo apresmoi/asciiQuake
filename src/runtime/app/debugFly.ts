@@ -1,4 +1,4 @@
-import type { Vec3 } from "@layoutit/polycss";
+import type { Vec3 } from "glyphcss";
 import { distanceSq3, normalizeVec3 } from "../math";
 
 interface QuakeDebugFlyControlsUpdate {

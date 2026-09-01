@@ -1,8 +1,9 @@
-import type { Polygon, PolyMeshHandle, Vec3 } from "@layoutit/polycss";
+import type { Polygon, Vec3 } from "glyphcss";
+import type { QuakeMeshHandle } from "./render/engine";
 
 import type { QuakeGameLogicFacts } from "../prepare/gameLogicFacts";
 import { quakeGameLogicResolvedPickupFact } from "../prepare/gameLogicFacts";
-import type { QuakeEntity, QuakeGlyphGeometry, QuakePreparedRenderBundle } from "../types/quake";
+import type { QuakeEntity, QuakeGlyphGeometry } from "../types/quake";
 import type { QuakeGlyphEntityGeometry, QuakeGlyphEntityTransform } from "./render/glyphWorldOverlay";
 
 /**
@@ -29,10 +30,10 @@ import { distanceSq3, dotVec3, normalizeVec3 } from "./math";
 import { quakeEntityNumber, quakeEntitySpawnflags } from "./entities";
 import { quakeAliasModelRenderYaw, normalizeQuakeRenderYaw } from "./aliasModelOrientation";
 import {
-  isQuakeRenderBundleFrameSetHandle,
-  setQuakeRenderBundleFrameSetHandleFrame,
-  type QuakeRenderBundleFrameSet,
-} from "./renderBundleMesh";
+  isQuakeModelFrameSetHandle,
+  setQuakeModelFrameSetHandleFrame,
+  type QuakeModelFrameSet,
+} from "./modelMesh";
 
 const QUAKE_PICKUP_RADIUS = 34 * QUAKE_COLLISION_UNIT_SCALE;
 const QUAKE_PICKUP_HEIGHT = 64 * QUAKE_COLLISION_UNIT_SCALE;
@@ -52,11 +53,9 @@ const QUAKE_PICKUP_PAUSED_TIMER_POLL_MS = 100;
 
 export interface QuakePickupModel {
   source: string;
-  renderBundle?: QuakePreparedRenderBundle;
   animationFrames?: QuakePickupModelAnimationFrame[];
-  animationFrameSet?: QuakePickupModelAnimationFrameSet;
   renderScale?: number;
-  /** Base-frame ASCII geometry for the glyph backend (Phase 4). */
+  /** Base-frame ASCII geometry. */
   glyphGeometry?: QuakeGlyphGeometry;
   bounds: {
     min: Vec3;
@@ -66,15 +65,8 @@ export interface QuakePickupModel {
 
 export interface QuakePickupModelAnimationFrame {
   name: string;
-  renderBundle: QuakePreparedRenderBundle;
-  /** Per-frame ASCII geometry for the glyph backend (Phase 4). */
+  /** Per-frame ASCII geometry. */
   glyphGeometry?: QuakeGlyphGeometry;
-}
-
-export interface QuakePickupModelAnimationFrameSet {
-  leafCount: number;
-  droppedLeafCount?: number;
-  renderBundle: QuakePreparedRenderBundle;
 }
 
 export interface QuakePickupModelLibrary {
@@ -142,7 +134,7 @@ interface QuakePickupState {
   radius: number;
   height: number;
   model?: QuakePickupModel;
-  handle: PolyMeshHandle | null;
+  handle: QuakeMeshHandle | null;
   renderRadius: number;
   effect: QuakePickupEffect;
   feedback?: QuakeRuntimePickupFeedback;
@@ -164,7 +156,7 @@ interface QuakePickupAnimationState {
 }
 
 export interface QuakePickupControllerOptions {
-  addMesh: (entity: QuakeEntity, model?: QuakePickupModel, frameIndex?: number) => PolyMeshHandle | null;
+  addMesh: (entity: QuakeEntity, model?: QuakePickupModel, frameIndex?: number) => QuakeMeshHandle | null;
   /** Glyph (ASCII) entity layer — present only when the glyph backend is active. */
   glyphEntitySink?: QuakeGlyphEntitySink;
   applyEffect: (effect: QuakePickupEffect, entity: QuakeEntity, feedback?: QuakeRuntimePickupFeedback) => void;
@@ -175,7 +167,7 @@ export interface QuakePickupControllerOptions {
   onRespawnScheduled?: (entity: QuakeEntity, delaySeconds: number) => void;
   playerForward: () => Vec3;
   playerViewDot: (origin: Vec3) => number;
-  pointToPoly: (point: { x: number; y: number; z: number }) => Vec3;
+  pointToWorld: (point: { x: number; y: number; z: number }) => Vec3;
   gameLogic: () => QuakeGameLogicFacts | null;
   programMetadata: () => QuakeProgramMetadata | null;
   shouldSpawn: (entity: QuakeEntity) => boolean;
@@ -300,7 +292,7 @@ function synthesizePickupBoundsGlyphGeometry(
 }
 
 export function createQuakePickupController(options: QuakePickupControllerOptions): QuakePickupController {
-  let handles: PolyMeshHandle[] = [];
+  let handles: QuakeMeshHandle[] = [];
   let pickups: QuakePickupState[] = [];
   let currentModelLibrary: QuakePickupModelLibrary | null = null;
   let animationTimer: number | null = null;
@@ -340,7 +332,7 @@ export function createQuakePickupController(options: QuakePickupControllerOption
       const modelPath = quakePickupModelPath(entity, programMetadata, gameLogic);
       if (!effect && !modelPath) continue;
 
-      const origin = options.pointToPoly(entity.origin);
+      const origin = options.pointToWorld(entity.origin);
       const model = quakePickupModelForEntity(entity, modelLibrary, programMetadata, gameLogic);
       addPickupState({
         entity,
@@ -581,8 +573,7 @@ export function createQuakePickupController(options: QuakePickupControllerOption
 
   // --- Glyph (ASCII) entity mirror (Phase 4C) -----------------------------
   // When the glyph backend is active, mirror each pickup's mesh into the overlay
-  // entity layer: world-space transform (raw entity.origin — glyph renders in
-  // world coords, unlike the poly path's pointToPoly), current frame geometry.
+  // entity layer using the current frame geometry and world-space transform.
   const pickupGlyphId = (pickup: QuakePickupState): string => `pickup:${pickup.entity.index}`;
 
   const pickupGlyphGeometry = (pickup: QuakePickupState): QuakeGlyphEntityGeometry | null => {
@@ -596,8 +587,7 @@ export function createQuakePickupController(options: QuakePickupControllerOption
     );
   };
 
-  // The glyph world frame == the poly transform frame (both (raw-pivot)*scale,
-  // BASE_TILE parity), so the glyph transform mirrors the poly one exactly:
+  // The glyph world frame uses the same scaled model coordinates as gameplay:
   // pickup.origin (+ bob) for position, the same yaw, scale 1 (renderScale is
   // already baked into the glyph vertices).
   const pickupGlyphTransform = (
@@ -689,8 +679,8 @@ export function createQuakePickupController(options: QuakePickupControllerOption
       if (animation.frameCount > 1 && now >= animation.nextFrameAt) {
         animation.frameIndex = (animation.frameIndex + 1) % animation.frameCount;
         animation.nextFrameAt = now + 1000 / QUAKE_PICKUP_ALIAS_ANIMATION_FPS;
-        if (isQuakeRenderBundleFrameSetHandle(pickup.handle)) {
-          setQuakeRenderBundleFrameSetHandleFrame(pickup.handle, animation.frameIndex);
+        if (isQuakeModelFrameSetHandle(pickup.handle)) {
+          setQuakeModelFrameSetHandleFrame(pickup.handle, animation.frameIndex);
         } else {
           const previousHandle = pickup.handle;
           const nextHandle = options.addMesh(pickup.entity, animation.model, animation.frameIndex);
@@ -953,24 +943,12 @@ export function quakePickupModelForEntity(
   return model ?? fallbackModel;
 }
 
-export function quakePickupModelRenderBundle(
+export function quakePickupModelFrameSet(
   model: QuakePickupModel,
-  frameIndex = 0,
-): QuakePreparedRenderBundle {
-  const renderBundle = model.animationFrames?.[frameIndex]?.renderBundle ?? model.renderBundle;
-  if (!renderBundle) {
-    throw new Error(`Prepared Quake model ${model.source} is missing its render bundle.`);
-  }
-  return renderBundle;
-}
-
-export function quakePickupModelRenderBundleFrameSet(
-  model: QuakePickupModel,
-): QuakeRenderBundleFrameSet | undefined {
-  if (!model.animationFrameSet || !model.animationFrames?.length) return undefined;
+): QuakeModelFrameSet | undefined {
+  if (!model.animationFrames?.length) return undefined;
   return {
-    leafCount: model.animationFrameSet.leafCount,
-    renderBundle: model.animationFrameSet.renderBundle,
+    baseGeometry: model.glyphGeometry,
     frames: model.animationFrames,
   };
 }

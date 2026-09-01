@@ -99,7 +99,10 @@ function preparedFixture() {
         triggerBrushIndexes: [],
       },
     },
-    renderBundle: renderBundleFixture(),
+    glyphMovers: {
+      version: 2,
+      movers: [1, 2, 3, 4].map((entityIndex) => ({ entityIndex, modelIndex: entityIndex, polygons: [] })),
+    },
   };
 }
 
@@ -111,39 +114,11 @@ function entity(index, classname, spawnflags) {
   };
 }
 
-function renderBundleFixture() {
-  return {
-    version: 1,
-    kind: "polycss-mesh",
-    polycssVersion: "test",
-    textureLighting: "baked",
-    textureQuality: 1,
-    meshHtml: '<div class="polycss-mesh"><s></s><s></s><s></s><s></s><s></s></div>',
-    assetUrls: [],
-    assetUrlsComplete: true,
-    leafMetadata: [{ f: 0 }, { f: 1, e: 1 }, { f: 2, e: 2 }, { f: 3, e: 3 }, { f: 4, e: 4 }],
-    leafFrameStyles: [["w"], ["a"], ["dm"], ["sp"], ["spawn"]],
-    polygonCount: 5,
-    leafCount: 5,
-    atlasLeafCount: 5,
-    atlasResidency: {
-      version: 1,
-      mode: "pvs-pages",
-      pageSize: 4096,
-      pages: [],
-      leafPageIndexes: [0, 1, 2, 3, 4],
-      visibilityLeafPages: [],
-      visibilityLeafPrewarmPages: [],
-    },
-  };
-}
-
 test("singleplayer prepared scene variant removes deathmatch-only brush surfaces and collision", () => {
   const variant = quakePreparedSceneVariant(preparedFixture(), "singleplayer");
 
   assert.deepEqual(variant.entities.map((item) => item.index), [0, 1, 3]);
-  assert.deepEqual(variant.renderBundle.leafMetadata.map((item) => item?.e ?? 0), [0, 1, 3]);
-  assert.equal(variant.renderBundle.leafCount, 3);
+  assert.deepEqual(variant.glyphMovers.movers.map((mover) => mover.entityIndex), [1, 3]);
   assert.equal(variant.collision.runtime.brushes.some((brush) => brush.entityIndex === 2), false);
   assert.deepEqual(variant.collision.runtime.solidBrushIndexes, [0, 1, 2]);
   assert.deepEqual(variant.entityManifest.runtime.targetEntities, { t1: [1, 3] });
@@ -157,7 +132,7 @@ test("deathmatch prepared scene variant keeps deathmatch-only brush and removes 
   const variant = quakePreparedSceneVariant(preparedFixture(), "deathmatch");
 
   assert.deepEqual(variant.entities.map((item) => item.index), [0, 1, 2, 4]);
-  assert.deepEqual(variant.renderBundle.leafMetadata.map((item) => item?.e ?? 0), [0, 1, 2, 4]);
+  assert.deepEqual(variant.glyphMovers.movers.map((mover) => mover.entityIndex), [1, 2, 4]);
   assert.equal(variant.collision.runtime.brushes.some((brush) => brush.entityIndex === 2), true);
   assert.equal(variant.collision.runtime.brushes.some((brush) => brush.entityIndex === 3), false);
   assert.deepEqual(variant.entityManifest.runtime.targetEntities, { t1: [1, 2, 4] });

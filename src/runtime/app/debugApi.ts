@@ -1,4 +1,4 @@
-import type { Vec3 } from "@layoutit/polycss";
+import type { Vec3 } from "glyphcss";
 
 import type { QuakeDebugRecorder } from "../debug/recording";
 import { QUAKE_WEAPON_ITEM_FLAGS, type QuakeWeaponId } from "../hud";
@@ -27,7 +27,7 @@ export interface QuakeAppDebugApiOptions {
   forwardDirection(rotX: number, rotY: number): Vec3;
   loadMap(mapName: string): Promise<void>;
   mapExists(mapName: string): boolean;
-  pointToPoly(point: { x: number; y: number; z: number }): Vec3;
+  pointToWorld(point: { x: number; y: number; z: number }): Vec3;
   renderOrigin(): Vec3;
   requestMultiplayerPickup(entityIndex: number): boolean;
   setCollisionBypassUntil(until: number): void;
@@ -55,7 +55,7 @@ function createQuakeAppDebugRuntime({
   forwardDirection,
   loadMap,
   mapExists,
-  pointToPoly,
+  pointToWorld,
   renderOrigin,
   requestMultiplayerPickup,
   setCollisionBypassUntil,
@@ -76,10 +76,10 @@ function createQuakeAppDebugRuntime({
     }),
     canDamage: (inflictorOrigin, targetOrigin): QuakeCanDamageResult =>
       runtime.controllers.shootables.debugCanDamageTrace(
-        pointToPoly(inflictorOrigin),
-        quakecCanDamageTracePointsForTargetOrigin(targetOrigin, pointToPoly),
+        pointToWorld(inflictorOrigin),
+        quakecCanDamageTracePointsForTargetOrigin(targetOrigin, pointToWorld),
       ),
-    contentsAt: (point) => runtime.session.collisionWorld()?.contentsAt?.(pointToPoly(point)) ?? null,
+    contentsAt: (point) => runtime.session.collisionWorld()?.contentsAt?.(pointToWorld(point)) ?? null,
     copyViewUrl,
     controls: {
       getOrigin: () => runtime.controls.getOrigin(),
@@ -100,7 +100,7 @@ function createQuakeAppDebugRuntime({
       runtime.controllers.shootables.debugForceEnemyAttack(
         entityIndex,
         targetOrigin
-          ? pointToPoly({ x: targetOrigin[0], y: targetOrigin[1], z: targetOrigin[2] })
+          ? pointToWorld({ x: targetOrigin[0], y: targetOrigin[1], z: targetOrigin[2] })
           : undefined,
       ),
     enemyForceAttackChain: (entityIndex, chain, targetOrigin) =>
@@ -108,7 +108,7 @@ function createQuakeAppDebugRuntime({
         entityIndex,
         chain,
         targetOrigin
-          ? pointToPoly({ x: targetOrigin[0], y: targetOrigin[1], z: targetOrigin[2] })
+          ? pointToWorld({ x: targetOrigin[0], y: targetOrigin[1], z: targetOrigin[2] })
           : undefined,
       ),
     enemyProjectileTraceCapture: () => runtime.controllers.shootables.debugEnemyProjectileCapture(),
@@ -153,7 +153,7 @@ function createQuakeAppDebugRuntime({
     pickupsStats: () => runtime.controllers.pickups().debugStats(),
     playerEyeHeight: () => runtime.controllers.player().eyeHeight(),
     playerMoveDebug: () => runtime.controllers.player().debugMovement(),
-    pointToPoly,
+    pointToWorld,
     renderOrigin,
     requestMultiplayerPickup,
     projectileImpact: (weapon, entityIndex, origin, directDamage) =>
@@ -167,6 +167,7 @@ function createQuakeAppDebugRuntime({
     setShootableOrigin: (entityIndex, origin) => runtime.controllers.shootables.debugSetOrigin(entityIndex, origin),
     setShootableYaw: (entityIndex, yaw) => runtime.controllers.shootables.debugSetYaw(entityIndex, yaw),
     shootablesStats: () => runtime.controllers.shootables.debugStats(),
+    shootableCulling: (origin) => runtime.controllers.shootables.debugCullingSnapshot(origin),
     triggersStats: () => runtime.controllers.triggers.debugStats(),
     syncCrosshairTarget,
     syncGameplay,

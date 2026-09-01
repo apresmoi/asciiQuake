@@ -1,5 +1,3 @@
-import type { createPolyFirstPersonControls, createPolyScene } from "@layoutit/polycss";
-
 import type { QuakeEntity, QuakeScene } from "../../types/quake";
 import type { QuakeCollisionWorld } from "../collision";
 import type { createQuakeSoundController } from "../audio";
@@ -14,9 +12,9 @@ import type { createQuakeTriggersController } from "../triggers";
 import type { createQuakeViewmodelController } from "../viewmodel";
 import type { createQuakeWeaponsController } from "../weapons";
 import type { createQuakeWorldController } from "../world";
+import type { QuakeAppControlsHandle, QuakeAppSceneHandle } from "../render/engine";
 
-export type QuakeAppSceneHandle = ReturnType<typeof createPolyScene>;
-export type QuakeAppControlsHandle = ReturnType<typeof createPolyFirstPersonControls>;
+export type { QuakeAppControlsHandle, QuakeAppSceneHandle } from "../render/engine";
 export type QuakeAppAudioController = ReturnType<typeof createQuakeSoundController>;
 export type QuakeAppMenuController = ReturnType<typeof createQuakeMenuController>;
 export type QuakeAppMoversController = ReturnType<typeof createQuakeMoversController>;
@@ -32,7 +30,6 @@ export interface QuakeAppRuntimeContext {
   readonly scene: QuakeAppSceneHandle;
   readonly controls: QuakeAppControlsHandle;
   readonly host: HTMLElement;
-  readonly sceneElement: HTMLElement;
   readonly controllers: {
     readonly audio: QuakeAppAudioController;
     readonly damageableBrushes: QuakeDamageableBrushFlow;

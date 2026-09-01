@@ -1,4 +1,4 @@
-import type { Vec3 } from "@layoutit/polycss";
+import type { Vec3 } from "glyphcss";
 
 import type { QuakeGameLogicFacts } from "../../prepare/gameLogicFacts";
 import type { QuakeEntity } from "../../types/quake";
@@ -56,7 +56,7 @@ export interface QuakeEntityActivationFlowOptions {
   onSecretActivated?(entity: QuakeEntity): void;
   pickups: Pick<QuakeEntityActivationPickups, "syncCollision">;
   player(): Pick<QuakePlayerController, "clearLevelState" | "currentOrigin" | "damage" | "eyeHeight" | "push" | "teleportTo">;
-  pointToPoly(point: { x: number; y: number; z: number }): Vec3;
+  pointToWorld(point: { x: number; y: number; z: number }): Vec3;
   publishWorldChanged(eventType: "entity.activate" | "level.complete", entityIndex: number, payload?: Record<string, unknown>): void;
   shootables: Pick<QuakeShootablesController, "activate" | "destroy" | "has" | "triggerBossLightning">;
   syncCrosshairTarget(): void;
@@ -389,7 +389,7 @@ export function createQuakeEntityActivationFlow(
 
   function activateSpikeShooter(entity: QuakeEntity): boolean {
     if (!entity.origin) return false;
-    const start = options.pointToPoly(entity.origin);
+    const start = options.pointToWorld(entity.origin);
     const target = options.player().currentOrigin();
     const toPlayer = subtractVec3(target, start);
     const direction = entityDirection(entity);

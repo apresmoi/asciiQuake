@@ -1,4 +1,4 @@
-import type { Vec3 } from "@layoutit/polycss";
+import type { Vec3 } from "glyphcss";
 
 import { QUAKE_COLLISION_UNIT_SCALE } from "../constants";
 
@@ -98,7 +98,6 @@ export function createQuakeEffectSpriteFlow(options: QuakeEffectSpriteFlowOption
     element.setAttribute("aria-hidden", "true");
     element.dataset.quakeEffectSpriteActive = "false";
     initializeEffectSpriteElement(element);
-    options.layer.appendChild(element);
     handles.push({
       active: false,
       element,
@@ -151,6 +150,7 @@ export function createQuakeEffectSpriteFlow(options: QuakeEffectSpriteFlowOption
     handle.element.dataset.quakeEffectSpriteActive = "true";
     handle.element.dataset.quakeEffectSpriteSource = sprite.sourcePath;
     handle.element.style.opacity = "1";
+    if (handle.element.parentElement !== options.layer) options.layer.appendChild(handle.element);
     syncHandle(handle);
     ensureFrame();
   }
@@ -167,6 +167,7 @@ export function createQuakeEffectSpriteFlow(options: QuakeEffectSpriteFlowOption
       delete handle.element.dataset.quakeEffectSpriteSource;
       handle.element.style.opacity = "0";
       handle.element.style.transform = "translate3d(-50%, -50%, 0) scale(1)";
+      handle.element.remove();
     }
     cancelFrame();
   }
@@ -334,6 +335,7 @@ export function createQuakeEffectSpriteFlow(options: QuakeEffectSpriteFlowOption
         handle.active = false;
         handle.element.dataset.quakeEffectSpriteActive = "false";
         handle.element.style.opacity = "0";
+        handle.element.remove();
         continue;
       }
       handle.frameIndex = clampNumber(frameIndex, 0, sprite.frameCount - 1);

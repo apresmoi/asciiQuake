@@ -8,6 +8,7 @@ export interface QuakeIntermissionStats {
 }
 
 export interface QuakeIntermissionFlowOptions {
+  onBackdropVisibilityChange?(visible: boolean): void;
   renderBitmapText(root: HTMLElement): void;
   root: HTMLElement | null;
 }
@@ -46,9 +47,11 @@ export function createQuakeIntermissionFlow(
 
   function clear(): void {
     visible = false;
-    if (!options.root) return;
-    options.root.replaceChildren();
-    options.root.hidden = true;
+    if (options.root) {
+      options.root.replaceChildren();
+      options.root.hidden = true;
+    }
+    options.onBackdropVisibilityChange?.(false);
   }
 
   function show(stats: QuakeIntermissionStats): void {
@@ -58,6 +61,7 @@ export function createQuakeIntermissionFlow(
       intermissionScrim(),
       intermissionCanvas(stats),
     );
+    options.onBackdropVisibilityChange?.(true);
     options.root.hidden = false;
     options.renderBitmapText(options.root);
   }

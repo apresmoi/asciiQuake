@@ -1,15 +1,16 @@
 /**
- * The page shell, as data. The shell is FLAT now: engine mounts, the gameplay
- * tint/intermission layer, the multiplayer form's native controls and the
- * corner links — everything else (menus, panels, HUD anchors, the loading
- * overlay, bitmap text) renders from the scene manifest + scene state inside
- * the glyph overlay's `<pre>` layers, so no element exists for it.
+ * The page shell, as data. Its three semantic surfaces group gameplay,
+ * interface, and project links; menus and HUD art still render from scene
+ * state inside the GlyphCSS overlay rather than expanding the DOM.
  */
 export interface QuakeAppDomElements {
   app: HTMLElement;
-  /** polycss world mount. */
+  game: HTMLElement;
+  interfaceLayer: HTMLElement;
+  social: HTMLElement;
+  /** World renderer input mount. */
   scene: HTMLElement | null;
-  /** polycss viewmodel mount. */
+  /** Viewmodel renderer mount. */
   weapon: HTMLElement | null;
   /** Gameplay impact-particle pool layer. */
   impactParticlesLayer: HTMLElement | null;
@@ -19,18 +20,14 @@ export interface QuakeAppDomElements {
   damageOverlay: HTMLElement | null;
   /** Intermission card root — its content is built at show time. */
   intermission: HTMLElement | null;
-  /** The multiplayer form's NATIVE controls (positioned by the menu
-   *  controller over their manifest rects). */
-  multiplayerNameInput: HTMLInputElement | null;
-  multiplayerColorInput: HTMLInputElement | null;
-  multiplayerMapSelect: HTMLSelectElement | null;
-  multiplayerFragLimitInput: HTMLInputElement | null;
-  multiplayerMaxPlayersInput: HTMLInputElement | null;
 }
 
 export function queryQuakeAppDom(): QuakeAppDomElements {
   return {
     app: requiredQuakeElement("quake-app"),
+    game: requiredQuakeElement("quake-game"),
+    interfaceLayer: requiredQuakeElement("quake-interface"),
+    social: requiredQuakeElement("quake-social"),
     scene: quakeElement("quake-scene"),
     weapon: quakeElement("quake-weapon"),
     impactParticlesLayer: quakeElement("quake-impact-particles"),
@@ -38,11 +35,6 @@ export function queryQuakeAppDom(): QuakeAppDomElements {
     bonusOverlay: quakeElement("quake-bonus-overlay"),
     damageOverlay: quakeElement("quake-damage-overlay"),
     intermission: quakeElement("quake-intermission"),
-    multiplayerNameInput: quakeElement("quake-multiplayer-name"),
-    multiplayerColorInput: quakeElement("quake-multiplayer-color"),
-    multiplayerMapSelect: quakeElement("quake-multiplayer-map"),
-    multiplayerFragLimitInput: quakeElement("quake-multiplayer-fraglimit"),
-    multiplayerMaxPlayersInput: quakeElement("quake-multiplayer-maxplayers"),
   };
 }
 

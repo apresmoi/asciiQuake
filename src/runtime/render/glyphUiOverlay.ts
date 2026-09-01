@@ -1,5 +1,5 @@
 import { createGlyphOrthographicCamera, createGlyphScene, quantizeGlyphAtlasPalette, type GlyphFontAtlas } from "glyphcss";
-import type { Polygon } from "@layoutit/polycss";
+import type { Polygon } from "glyphcss";
 import {
   remapQuakeInkGlyphsToAscii,
   type QuakeGlyphUiSceneMode,

@@ -1,61 +1,55 @@
+import type { Polygon, Vec3 } from "glyphcss";
 import type {
-  ParseResult,
-  Polygon,
-  PolyMeshHandle,
-  PolySceneHandle,
-  Vec3,
-} from "@layoutit/polycss";
+  QuakeAppSceneHandle,
+  QuakeMeshHandle,
+  QuakeMeshSource,
+} from "../render/engine";
 
 import type { QuakeEntity } from "../../types/quake";
 import { isQuakeDebugDomMetadataEnabled } from "../debug/traceMarks";
 import { quakeEntityNumber } from "../entities";
 import { quakeAliasModelRenderYaw, normalizeQuakeRenderYaw } from "../aliasModelOrientation";
 import {
-  quakePickupModelRenderBundle,
-  quakePickupModelRenderBundleFrameSet,
   quakePickupPolygons,
   type QuakePickupModel,
 } from "../pickups";
 import {
-  mountQuakeRenderBundleFrameSetMesh,
-  mountQuakeRenderBundleMesh,
-  stripPolyMeshMetadata,
-  type QuakeRenderBundleFrameSetMountOptions,
-} from "../renderBundleMesh";
+  mountQuakeModelFrameSetMesh,
+  mountQuakeModelMesh,
+  type QuakeModelFrameSetMountOptions,
+} from "../modelMesh";
 import { quakeShootableFallbackPolygons } from "../shootables";
 
 export interface QuakeEntityMeshMountFlowOptions {
-  pixelate(handle?: PolyMeshHandle | null): void;
-  pointToPoly(point: { x: number; y: number; z: number }): Vec3;
-  scene: Pick<PolySceneHandle, "add">;
-  sceneElement: HTMLElement;
-  schedulePresentationResync(handle?: PolyMeshHandle | null): Promise<void>;
+  pixelate(handle?: QuakeMeshHandle | null): void;
+  pointToWorld(point: { x: number; y: number; z: number }): Vec3;
+  scene: Pick<QuakeAppSceneHandle, "add">;
+  schedulePresentationResync(handle?: QuakeMeshHandle | null): Promise<void>;
 }
 
 export interface QuakeEntityMeshMountFlow {
-  addPickupMesh(entity: QuakeEntity, model?: QuakePickupModel, frameIndex?: number): PolyMeshHandle | null;
+  addPickupMesh(entity: QuakeEntity, model?: QuakePickupModel, frameIndex?: number): QuakeMeshHandle | null;
   addShootableMesh(
     entity: QuakeEntity,
     model?: QuakePickupModel,
     frameIndex?: number,
     options?: QuakeEntityShootableMeshMountOptions,
-  ): PolyMeshHandle | null;
+  ): QuakeMeshHandle | null;
 }
 
 export interface QuakeEntityShootableMeshMountOptions {
-  frameSetMountOptions?: QuakeRenderBundleFrameSetMountOptions;
+  frameSetMountOptions?: QuakeModelFrameSetMountOptions;
 }
 
 export function createQuakeEntityMeshMountFlow(
   options: QuakeEntityMeshMountFlowOptions,
 ): QuakeEntityMeshMountFlow {
-  function addPickupMesh(entity: QuakeEntity, model?: QuakePickupModel, frameIndex = 0): PolyMeshHandle | null {
+  function addPickupMesh(entity: QuakeEntity, model?: QuakePickupModel, frameIndex = 0): QuakeMeshHandle | null {
     if (!entity.origin) return null;
-    const handle = mountEntityModelMesh(options.sceneElement, model, frameIndex)
+    const handle = mountEntityModelMesh(options.scene, model, frameIndex)
       ?? addProceduralPickupMesh(entity);
     if (!handle) return null;
     handle.element.classList.add("pickup");
-    stripPolyMeshMetadata(handle.element);
     keepPickupBackfacesVisible(handle.element);
     if (isQuakeDebugDomMetadataEnabled()) {
       handle.element.dataset.entityIndex = String(entity.index);
@@ -63,7 +57,7 @@ export function createQuakeEntityMeshMountFlow(
     }
     const angle = entity.angle ?? quakeEntityNumber(entity, "angle", 0);
     handle.setTransform({
-      position: options.pointToPoly(entity.origin),
+      position: options.pointToWorld(entity.origin),
       rotation: [0, 0, model ? quakeAliasModelRenderYaw(angle) : normalizeQuakeRenderYaw(angle)],
       scale: 1,
     });
@@ -79,15 +73,14 @@ export function createQuakeEntityMeshMountFlow(
     model?: QuakePickupModel,
     frameIndex = 0,
     mountOptions: QuakeEntityShootableMeshMountOptions = {},
-  ): PolyMeshHandle | null {
-    const handle = mountEntityModelMesh(options.sceneElement, model, frameIndex, mountOptions.frameSetMountOptions)
+  ): QuakeMeshHandle | null {
+    const handle = mountEntityModelMesh(options.scene, model, frameIndex, mountOptions.frameSetMountOptions)
       ?? addProceduralShootableMesh(entity);
     if (!handle) return null;
-    stripPolyMeshMetadata(handle.element);
     return handle;
   }
 
-  function addProceduralShootableMesh(entity: QuakeEntity): PolyMeshHandle | null {
+  function addProceduralShootableMesh(entity: QuakeEntity): QuakeMeshHandle | null {
     const polygons = quakeShootableFallbackPolygons(entity);
     if (!polygons.length) return null;
     return options.scene.add(makeParseResult(polygons), {
@@ -97,7 +90,7 @@ export function createQuakeEntityMeshMountFlow(
     });
   }
 
-  function addProceduralPickupMesh(entity: QuakeEntity): PolyMeshHandle | null {
+  function addProceduralPickupMesh(entity: QuakeEntity): QuakeMeshHandle | null {
     const polygons = quakePickupPolygons(entity);
     if (!polygons.length) return null;
     return options.scene.add(makeParseResult(polygons), {
@@ -114,16 +107,16 @@ export function createQuakeEntityMeshMountFlow(
 }
 
 function mountEntityModelMesh(
-  sceneElement: HTMLElement,
+  scene: Pick<QuakeAppSceneHandle, "add">,
   model: QuakePickupModel | undefined,
   frameIndex: number,
-  frameSetMountOptions?: QuakeRenderBundleFrameSetMountOptions,
-): PolyMeshHandle | null {
+  frameSetMountOptions?: QuakeModelFrameSetMountOptions,
+): QuakeMeshHandle | null {
   if (!model) return null;
-  const frameSet = quakePickupModelRenderBundleFrameSet(model);
-  return frameSet
-    ? mountQuakeRenderBundleFrameSetMesh(sceneElement, frameSet, frameIndex, frameSetMountOptions)
-    : mountQuakeRenderBundleMesh(sceneElement, quakePickupModelRenderBundle(model, frameIndex));
+  const frames = model.animationFrames ?? [];
+  return frames.length > 1
+    ? mountQuakeModelFrameSetMesh(scene, { baseGeometry: model.glyphGeometry, frames }, frameIndex, frameSetMountOptions)
+    : mountQuakeModelMesh(scene, frames[frameIndex]?.glyphGeometry ?? model.glyphGeometry);
 }
 
 function keepPickupBackfacesVisible(element: HTMLElement): void {
@@ -132,6 +125,6 @@ function keepPickupBackfacesVisible(element: HTMLElement): void {
   }
 }
 
-function makeParseResult(polygons: Polygon[]): ParseResult {
+function makeParseResult(polygons: Polygon[]): QuakeMeshSource {
   return { polygons, objectUrls: [], warnings: [], dispose: () => undefined };
 }

@@ -1,4 +1,4 @@
-import type { Vec3 } from "@layoutit/polycss";
+import type { Vec3 } from "glyphcss";
 
 import type { QuakeEntity } from "../../types/quake";
 import {
@@ -19,7 +19,7 @@ export interface QuakePointHazardFlowOptions {
   isEntityDisabled(entityIndex: number): boolean;
   isPaused(): boolean;
   onHazardsChanged(): void;
-  pointToPoly(point: { x: number; y: number; z: number }): Vec3;
+  pointToWorld(point: { x: number; y: number; z: number }): Vec3;
 }
 
 export interface QuakePointHazardFlow {
@@ -54,7 +54,7 @@ export function createQuakePointHazardFlow(
     for (const entityIndex of entityIndexes) {
       const entity = options.getEntity(entityIndex);
       if (!entity || options.isEntityDisabled(entity.index) || !entity.origin) continue;
-      const emitter = quakeFireballEmitterFromEntity(entity, options.pointToPoly, now);
+      const emitter = quakeFireballEmitterFromEntity(entity, options.pointToWorld, now);
       if (emitter) emitters.push(emitter);
     }
     if (emitters.length) start();

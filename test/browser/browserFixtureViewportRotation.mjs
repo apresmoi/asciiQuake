@@ -5,10 +5,10 @@ import { defineBrowserFixture } from "./fixtureHarness.mjs";
  * Portrait boot → landscape rotation must keep the camera's look-target
  * distance in sync with the viewport perspective.
  *
- * polycss's first-person controls place the camera target at
+ * the CSS renderer's first-person controls place the camera target at
  * `parseFloat(scene.camera.perspectiveStyle) / BASE_TILE` in front of the eye,
  * and `perspectiveStyle` is a plain property frozen at camera creation. The
- * app refreshes the CSS `--polycss-fpv-perspective` var on resize, but until
+ * app refreshes the CSS `--quake-fpv-perspective` var on resize, but until
  * the fix in cameraViewFlow.syncViewportProjection it never refreshed the
  * JS-side property — so after rotating a portrait boot to landscape the
  * controls kept placing the target at the portrait look distance while every
@@ -97,7 +97,7 @@ async function runViewportRotationCameraFixture({ browser, baseUrl, options }) {
 
 async function measureCameraState(page) {
   return page.evaluate(async (pose) => {
-    const POLYCSS_BASE_TILE = 50; // px per poly unit; the controls' target sits at perspective/BASE_TILE.
+    const GLYPH_BASE_TILE = 50; // CSS px per world unit; target distance is perspective / BASE_TILE.
     const overlay = window.__quakeGlyphOverlay;
     // Measure the LIVE camera state before any debug teleport: setViewpos would
     // re-place the target through the app's (viewport-aware) path and hide the
@@ -108,11 +108,11 @@ async function measureCameraState(page) {
     const targetDistance = target && eye
       ? Math.hypot(target[0] - eye[0], target[1] - eye[1], target[2] - eye[2])
       : Number.NaN;
-    const perspectiveHost = document.querySelector('[style*="--polycss-fpv-perspective"]');
+    const perspectiveHost = document.querySelector('[style*="--quake-fpv-perspective"]');
     const appliedPerspectivePx = perspectiveHost
-      ? Number.parseFloat(perspectiveHost.style.getPropertyValue("--polycss-fpv-perspective"))
+      ? Number.parseFloat(perspectiveHost.style.getPropertyValue("--quake-fpv-perspective"))
       : Number.NaN;
-    const expectedTargetDistance = appliedPerspectivePx / POLYCSS_BASE_TILE;
+    const expectedTargetDistance = appliedPerspectivePx / GLYPH_BASE_TILE;
     // Behavioral check: the ASCII world grid at the wall-hug pose.
     let wallPoseInk = -1;
     if (overlay && typeof overlay.setFixedView === "function") {

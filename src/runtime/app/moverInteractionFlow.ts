@@ -1,18 +1,12 @@
-import { worldPositionToPolyCss, type Vec3 } from "@layoutit/polycss";
-
+import type { Vec3 } from "glyphcss";
 import { PLAYER_RADIUS, COLLISION_EPSILON, GROUND_SNAP, QUAKE_COLLISION_UNIT_SCALE } from "../constants";
 import type { QuakeCollisionWorld } from "../collision";
 import type { QuakeDoorKey } from "../doors";
 import { quakeDoorGroupKeyRequirement, quakePlayerHasDoorKey } from "../doors";
 import { distanceSq3, subtractVec3 } from "../math";
 import type { QuakeMoverState } from "../movers";
-import {
-  quakeButtonIsPressed,
-  quakeMoverBlockDamage,
-  quakeMoverBlockDamageCooldownMs,
-} from "../movers";
+import { quakeMoverBlockDamage, quakeMoverBlockDamageCooldownMs } from "../movers";
 import type { QuakeSoundController } from "../audio";
-import type { QuakeFaceLeaf } from "../world";
 import type { QuakePlayerInventory } from "../hud";
 import type { QuakeShootableBounds, QuakeShootablesController } from "../shootables";
 
@@ -21,13 +15,10 @@ type MoverBounds = { minX: number; maxX: number; minY: number; maxY: number; min
 export interface QuakeMoverInteractionFlowOptions {
   audio: QuakeSoundController;
   doorMessageCooldownMs: number;
-  applyButtonLeafVisual(leaf: QuakeFaceLeaf, pressed: boolean): void;
-  compactInlineStyle(element: HTMLElement): void;
   currentCollisionWorld(): QuakeCollisionWorld | null;
   currentGroundEntity(): number | null;
   getMover(entityIndex: number): QuakeMoverState | undefined;
   isDebugFlyModeActive(): boolean;
-  modelLeaves(modelIndex: number): QuakeFaceLeaf[];
   playerCarryWithMover(delta: Vec3, entityIndex: number): void;
   playerDamage(amount: number): boolean;
   playerEyeHeight(): number;
@@ -43,14 +34,12 @@ export interface QuakeMoverInteractionFlowOptions {
 }
 
 export interface QuakeMoverInteractionFlow {
-  applyLeafTransform(leaf: QuakeFaceLeaf): void;
   applyState(state: QuakeMoverState, movePlayer?: boolean): void;
   clear(): void;
   groupUnlocked(state: QuakeMoverState): boolean;
   playerBlocks(state: QuakeMoverState, nextOffset: Vec3, delta: Vec3): boolean;
   resumeAfterPause(durationMs: number): void;
   setModelPivot(pivot: { x: number; y: number; z: number }): void;
-  syncButtonLeafVisual(leaf: QuakeFaceLeaf): void;
 }
 
 export function createQuakeMoverInteractionFlow(options: QuakeMoverInteractionFlowOptions): QuakeMoverInteractionFlow {
@@ -199,10 +188,6 @@ export function createQuakeMoverInteractionFlow(options: QuakeMoverInteractionFl
     const delta = subtractVec3(state.offset, state.lastOffset);
     const carryPlayer = movePlayer && shouldCarryPlayerWithMover(state, delta);
     options.currentCollisionWorld()?.setBrushOffset?.(state.entity.index, state.offset);
-    for (const leaf of options.modelLeaves(state.model.index)) {
-      applyLeafTransform(leaf);
-      if (state.kind === "button") options.applyButtonLeafVisual(leaf, quakeButtonIsPressed(state));
-    }
     if (carryPlayer) carryPlayerWithMover(state, delta);
     options.syncGlyphMoverOffset?.(state.entity.index, state.offset);
     if (shouldSyncShootablesAfterMoverApply(state, delta)) {
@@ -324,36 +309,12 @@ export function createQuakeMoverInteractionFlow(options: QuakeMoverInteractionFl
     options.playerCarryWithMover(delta, state.entity.index);
   }
 
-  function applyLeafTransform(leaf: QuakeFaceLeaf): void {
-    const state = leaf.entityIndex !== undefined ? options.getMover(leaf.entityIndex) : undefined;
-    if (!state || distanceSq3(state.offset, [0, 0, 0]) <= COLLISION_EPSILON) {
-      leaf.element.style.transform = leaf.baseTransform;
-      options.compactInlineStyle(leaf.element);
-      return;
-    }
-    leaf.element.style.transform = `${offsetCss(state.offset)} ${leaf.baseTransform}`;
-    options.compactInlineStyle(leaf.element);
-  }
-
-  function syncButtonLeafVisual(leaf: QuakeFaceLeaf): void {
-    const state = leaf.entityIndex !== undefined ? options.getMover(leaf.entityIndex) : undefined;
-    if (state?.kind !== "button") return;
-    options.applyButtonLeafVisual(leaf, quakeButtonIsPressed(state));
-  }
-
   return {
-    applyLeafTransform,
     applyState,
     clear,
     groupUnlocked,
     playerBlocks,
     resumeAfterPause,
     setModelPivot,
-    syncButtonLeafVisual,
   };
-}
-
-function offsetCss(offset: Vec3): string {
-  const [x, y, z] = worldPositionToPolyCss(offset);
-  return `translate3d(${x.toFixed(3)}px, ${y.toFixed(3)}px, ${z.toFixed(3)}px)`;
 }

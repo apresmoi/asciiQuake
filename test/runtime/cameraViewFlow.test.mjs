@@ -24,7 +24,6 @@ test("camera viewport projection uses visual viewport center", () => {
 
     const host = document.createElement("div");
     const cameraEl = document.createElement("div");
-    const sceneElement = document.createElement("div");
     const flow = createQuakeCameraViewFlow({
       cameraFeedback: () => cameraFeedback(),
       getPlayerOrigin: () => [0, 0, 0],
@@ -39,7 +38,6 @@ test("camera viewport projection uses visual viewport center", () => {
         },
         cameraEl,
       },
-      sceneElement,
       setCameraLookEnabledBodyClass: () => undefined,
       syncCrosshairTarget: () => undefined,
       syncShootablesVisibility: () => undefined,
@@ -50,8 +48,6 @@ test("camera viewport projection uses visual viewport center", () => {
     flow.syncViewportProjection();
 
     assert.equal(cameraEl.style.perspectiveOrigin, "512px 358px");
-    assert.equal(sceneElement.style.left, "512px");
-    assert.equal(sceneElement.style.top, "358px");
   } finally {
     globals.restore();
   }

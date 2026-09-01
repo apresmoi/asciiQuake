@@ -88,8 +88,8 @@ export function inspectAssetState(options = {}) {
       }
       try {
         const scene = JSON.parse(readFileSync(scenePath, "utf8"));
-        if (options.requireRenderBundle && !scene.renderBundle) {
-          problems.push(`${mapName} prepared scene is missing renderBundle`);
+        if (options.requireGlyphGeometry && !scene.glyphGeometry) {
+          problems.push(`${mapName} prepared scene is missing glyphGeometry`);
         }
         if (options.requireGameLogic && !scene.gameLogic) {
           problems.push(`${mapName} prepared scene is missing gameLogic`);
@@ -148,7 +148,7 @@ async function main() {
   const requiredMaps = parseMapList(option(args, "maps", ""));
   const state = inspectAssetState({
     requiredMaps,
-    requireRenderBundle: hasFlag(args, "require-render-bundle"),
+    requireGlyphGeometry: hasFlag(args, "require-glyph-geometry"),
     requireGameLogic: hasFlag(args, "require-game-logic"),
   });
   printState(state, hasFlag(args, "json"));
