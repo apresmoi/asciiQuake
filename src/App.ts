@@ -769,7 +769,7 @@ function sanitizeQuakeMultiplayerInteger(
 
 function defaultQuakeMultiplayerPartyHost(): string {
   const configuredHost = normalizeQuakePartySocketHost(
-    (import.meta.env as { VITE_CSSQUAKE_PARTY_HOST?: string }).VITE_CSSQUAKE_PARTY_HOST,
+    (import.meta.env as { VITE_ASCIIQUAKE_PARTY_HOST?: string }).VITE_ASCIIQUAKE_PARTY_HOST,
   );
   if (configuredHost) return configuredHost;
   return normalizeQuakePartySocketHost(import.meta.env.DEV ? "localhost:1999" : window.location.host) ??
