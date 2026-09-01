@@ -8,9 +8,6 @@ importers:
 
   .:
     dependencies:
-      '@layoutit/polycss':
-        specifier: ^0.2.6
-        version: 0.2.6
       glyphcss:
         specifier: ^0.1.6
         version: 0.1.6
@@ -716,12 +713,6 @@ packages:
 
   '@jridgewell/trace-mapping@0.3.9':
     resolution: {integrity: sha512-3Belt6tdc8bPgAtbcmdtNJlirVoTmEb5e2gC94PnkwEW9jI6CAHUeoG85tjWP5WquqfavoMtMwiG4P926ZKKuQ==}
-
-  '@layoutit/polycss-core@0.2.6':
-    resolution: {integrity: sha512-wo5TbmuEJBSeSbnZ+3U6woDCiHFcK6UVuTwX3INNP5X42Y0LWC7rtY484hT41uLHYbEmvF3ossoO5LebtcPzOA==}
-
-  '@layoutit/polycss@0.2.6':
-    resolution: {integrity: sha512-cZO9BeHgOb5mAKB5XzYVo0bRxHSqAIeHrIpAMkPuZBgECcMoJlyxcxod6vi3e0wl+vSeNKlGmRt8H426AhDtvw==}
 
   '@napi-rs/canvas-android-arm64@1.0.0':
     resolution: {integrity: sha512-3hNKJObUK7JsCF9aJlVCs1J0/KE/gGfZNeK8MO1ge6bB3aicr5walGme9t9No1f/oyk9GgvdAT/rjSdsx3gbIw==}
@@ -1718,12 +1709,6 @@ snapshots:
     dependencies:
       '@jridgewell/resolve-uri': 3.1.2
       '@jridgewell/sourcemap-codec': 1.5.5
-
-  '@layoutit/polycss-core@0.2.6': {}
-
-  '@layoutit/polycss@0.2.6':
-    dependencies:
-      '@layoutit/polycss-core': 0.2.6
 
   '@napi-rs/canvas-android-arm64@1.0.0':
     optional: true

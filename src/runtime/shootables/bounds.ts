@@ -1,4 +1,4 @@
-import type { Polygon, Vec3 } from "@layoutit/polycss";
+import type { Polygon, Vec3 } from "glyphcss";
 
 import {
   QUAKE_MONSTER_LOGIC,

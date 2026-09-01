@@ -1,4 +1,5 @@
-import { polyCssDistanceToWorld, type Vec3 } from "@layoutit/polycss";
+import type { Vec3 } from "glyphcss";
+import { renderDistanceToWorld } from "../../quakeScale.js";
 
 import { COLLISION_EPSILON, QUAKE_COLLISION_UNIT_SCALE } from "../constants";
 import type { QuakePlayerDamageFeedback } from "../player";
@@ -95,7 +96,7 @@ export function createQuakeCameraFeedbackFlow(
     if (!active && mode !== "smooth-step") {
       cameraRenderOrigin = [origin[0], origin[1], origin[2]];
       cameraStepSmoothAt = 0;
-      // This fast path skips applyAt() (the polycss controls already moved the
+      // This fast path skips applyAt() (the the CSS renderer controls already moved the
       // camera), but currentRenderOrigin() consumers — the viewmodel anchors the
       // world-space glyph weapon on it — still need the applied origin to track
       // the player. Leaving it stale here froze the weapon at the last applyAt()
@@ -284,7 +285,7 @@ export function createQuakeCameraFeedbackFlow(
   function lookOffset(): number {
     const perspectiveStyle = options.cameraPerspectiveStyle() || options.scene.camera.perspectiveStyle;
     const value = Number.parseFloat(perspectiveStyle);
-    return polyCssDistanceToWorld(Number.isFinite(value) && value > 0 ? value : 900);
+    return renderDistanceToWorld(Number.isFinite(value) && value > 0 ? value : 900);
   }
 
   function cancelStepSmoothingFrame(): void {

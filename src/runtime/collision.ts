@@ -1,4 +1,4 @@
-import type { Polygon, Vec3 } from "@layoutit/polycss";
+import type { Polygon, Vec3 } from "glyphcss";
 
 import type { QuakePreparedCollision } from "../types/quake";
 import {

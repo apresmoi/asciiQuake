@@ -1,4 +1,4 @@
-import type { Vec3 } from "@layoutit/polycss";
+import type { Vec3 } from "glyphcss";
 
 const QUAKE_IMPACT_PARTICLE_DEFAULT_MAX = 24;
 const QUAKE_IMPACT_PARTICLE_MAX_SPAWN = 5;
@@ -107,7 +107,6 @@ export function createQuakeImpactParticleFlow(options: QuakeImpactParticleFlowOp
     element.className =
       `${QUAKE_IMPACT_PARTICLE_CLASS} ${QUAKE_IMPACT_PARTICLE_BLOOD_COLORS[index % QUAKE_IMPACT_PARTICLE_BLOOD_COLORS.length]}`;
     element.setAttribute("aria-hidden", "true");
-    options.layer.appendChild(element);
     particles.push({
       active: false,
       dx: 0,
@@ -180,6 +179,7 @@ export function createQuakeImpactParticleFlow(options: QuakeImpactParticleFlowOp
       particle.element.className = `${QUAKE_IMPACT_PARTICLE_CLASS} ${colorClass}`;
       particle.element.style.transform = particleTransform(particle, 0);
       particle.element.style.opacity = "1";
+      if (particle.element.parentElement !== options.layer) options.layer.appendChild(particle.element);
     }
     ensureFrame();
   }
@@ -189,6 +189,7 @@ export function createQuakeImpactParticleFlow(options: QuakeImpactParticleFlowOp
       particle.active = false;
       particle.element.style.opacity = "0";
       particle.element.style.transform = "translate3d(0, 0, 0) scale(1, 1)";
+      particle.element.remove();
       particle.scaleEnd = 0.65;
       particle.scaleStart = 1;
     }
@@ -479,6 +480,7 @@ export function createQuakeImpactParticleFlow(options: QuakeImpactParticleFlowOp
         particle.active = false;
         particle.element.style.opacity = "0";
         particle.element.style.transform = particleTransform(particle, 1);
+        particle.element.remove();
         continue;
       }
       activeCount++;

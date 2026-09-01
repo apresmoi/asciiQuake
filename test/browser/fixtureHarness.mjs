@@ -18,7 +18,7 @@ export function defineBrowserFixture({
     family,
     requirements: {
       requiredMaps,
-      requireRenderBundle: true,
+      requireGlyphGeometry: true,
       ...requirements,
     },
     run,

@@ -55,7 +55,7 @@ const QUAKE_MULTIPLAYER_DEATHMATCH_MAX_REWIND_MS = 250;
 const QUAKE_MULTIPLAYER_DEATHMATCH_SPAWN_CLEAR_RADIUS = 84 * QUAKE_COLLISION_UNIT_SCALE;
 
 export interface QuakeMultiplayerDeathmatchSpawnOptions {
-  pointToPoly(point: { x: number; y: number; z: number }): QuakeMultiplayerVec3;
+  pointToWorld(point: { x: number; y: number; z: number }): QuakeMultiplayerVec3;
   playerEyeHeight: number;
   playerMinsZ: number;
 }
@@ -166,7 +166,7 @@ function quakeMultiplayerSpawnPointFromEntity(
   options: QuakeMultiplayerDeathmatchSpawnOptions,
 ): QuakeMultiplayerSpawnPoint | null {
   if (!entity.origin) return null;
-  const origin = options.pointToPoly(entity.origin);
+  const origin = options.pointToWorld(entity.origin);
   return {
     spawnId: `entity:${entity.index}`,
     classname: entity.classname as QuakeMultiplayerSpawnPoint["classname"],

@@ -74,6 +74,8 @@ export interface QuakeMenuControllerOptions {
   optionRows?: () => readonly QuakeMenuOptionRow[];
   levels?: () => readonly QuakeMenuSceneLevel[];
   multiplayerControls?: () => readonly QuakeMenuMultiplayerControlBinding[];
+  mountMultiplayerControls?(): void;
+  unmountMultiplayerControls?(): void;
   onMultiplayerSubmit?(): void;
   onSelectNewGame?(): void | Promise<void>;
   onShowMultiplayer?(): void;
@@ -194,8 +196,8 @@ export function createQuakeMenuController(options: QuakeMenuControllerOptions): 
     syncMultiplayerControls();
     if (!wasOpen) {
       options.onMenuVisibilityChange?.(true);
-      options.onMenuPauseChange?.(true);
     }
+    options.onMenuPauseChange?.(true);
     options.clearCrosshairTarget();
   }
 
@@ -407,26 +409,27 @@ export function createQuakeMenuController(options: QuakeMenuControllerOptions): 
       return;
     }
     updateQuakeMenuSceneTexts({ "mp:failure": title });
+    updateQuakeMenuSceneState({ multiplayerFailure: true });
     openScreen("multiplayer");
-    updateQuakeMenuSceneState({ multiplayerFailure: true, activeItem: "back" });
-    syncMultiplayerControls();
+    updateQuakeMenuSceneState({ activeItem: "back" });
   }
 
-  /** Position (or hide) the native controls over their manifest rects. */
+  /** Mount and position native controls only while their screen is visible. */
   function syncMultiplayerControls(): void {
-    const bindings = multiplayerBindings();
-    if (!bindings.length) return;
     const st = state();
     const visible = st.screen === "multiplayer" && !st.multiplayerFailure && !st.deferred;
+    if (!visible) {
+      options.unmountMultiplayerControls?.();
+      return;
+    }
+    options.mountMultiplayerControls?.();
+    const bindings = multiplayerBindings();
+    if (!bindings.length) return;
     const frame = quakeMenuSceneFrame(window.innerWidth, window.innerHeight);
     const sx = frame.w / QUAKE_MENU_SCENE_FRAME_W;
     const sy = frame.h / QUAKE_MENU_SCENE_FRAME_H;
     bindings.forEach((binding, index) => {
       const el = binding.element;
-      if (!visible) {
-        el.style.display = "none";
-        return;
-      }
       const rect = quakeMenuMultiplayerControlRect(index);
       el.style.display = "block";
       el.style.position = "absolute";
@@ -673,6 +676,7 @@ export function createQuakeMenuController(options: QuakeMenuControllerOptions): 
       binding.element.removeEventListener("focus", handleControlFocus);
       binding.element.removeEventListener("blur", handleControlBlur);
     }
+    options.unmountMultiplayerControls?.();
     controls.removeEventListener("start", handleControlsStart);
     controls.removeEventListener("end", handleControlsEnd);
     document.body.style.cursor = "";
@@ -680,7 +684,7 @@ export function createQuakeMenuController(options: QuakeMenuControllerOptions): 
 
   if (enabled) {
     window.addEventListener("pointermove", handlePointerMove);
-    // Capture: the polycss camera host swallows pointer events for mouselook.
+    // Capture: the camera host owns pointer events for mouselook.
     window.addEventListener("pointerdown", handlePointerDown, { capture: true });
     window.addEventListener("resize", handleWindowResize);
     for (const binding of multiplayerBindings()) {

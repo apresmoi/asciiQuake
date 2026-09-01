@@ -4,11 +4,7 @@ import {
 } from "./fixtureHarness.mjs";
 
 const LOGICAL_MAP = "e1m1";
-const LOGICAL_ANCHOR_ENTITY = 21;
 const LOGICAL_TARGET_ORIGIN = { x: 616, y: 72, z: 40 };
-const LOGICAL_VIEW_DISTANCE = 4.96;
-const LOGICAL_VIEW_ROT_X = 90;
-const LOGICAL_VIEW_ROT_Y = 90;
 const LOGICAL_SOURCE_REFERENCE = {
   engine: "Quake/vkQuake",
   monsterClassname: "monster_army",
@@ -140,13 +136,9 @@ async function runLogicalTargetabilityFixture({ browser, baseUrl, options }) {
     mapName: LOGICAL_MAP,
     run: async ({ page, pageErrors }) => {
     const result = await page.evaluate(async ({
-      anchorEntity,
       candidateEntities,
       sourceReference,
       targetOrigin,
-      viewDistance,
-      viewRotX,
-      viewRotY,
     }) => {
       const debug = window.__cssQuakeDebug;
       if (!debug?.stats) return { hasDebug: false };
@@ -190,14 +182,24 @@ async function runLogicalTargetabilityFixture({ browser, baseUrl, options }) {
       ];
       const enableExpandedOk = Boolean(debug.setExpandedLogicalCombat?.(true));
       const disableUnmountedAiOk = Boolean(debug.setUnmountedAi?.(false));
-      const viewPoseOk = Boolean(debug.focusEntity?.(anchorEntity, viewDistance, viewRotX, viewRotY));
+      const viewPoseOk = Boolean(debug.setViewpos?.(
+        sourceReference.playerOrigin.x,
+        sourceReference.playerOrigin.y,
+        sourceReference.playerOrigin.z,
+        sourceReference.playerAngles.pitch,
+        sourceReference.playerAngles.yaw,
+        sourceReference.playerAngles.roll,
+      ));
       debug.setWeapon?.("rocketlauncher");
       await new Promise(requestAnimationFrame);
       await new Promise(requestAnimationFrame);
 
       const beforeStats = debug.stats();
-      const targetMountedBefore = activeEnemyElementsForEntity(targetEntity).length > 0;
-      const activeEnemyIndexesBefore = activeEnemyEntityIndexes();
+      const targetMountedBefore = activeEnemyEntries(beforeStats)
+        .some((entry) => entry.entityIndex === targetEntity);
+      const activeEnemyIndexesBefore = activeEnemyEntries(beforeStats)
+        .map((entry) => entry.entityIndex)
+        .sort((a, b) => a - b);
       const beforeDeadShootables = beforeStats.shootables?.deadShootables ?? 0;
       const beforeLiveShootables = beforeStats.shootables?.liveShootables ?? 0;
       const beforeBudget = beforeStats.shootables?.combatBudget ?? null;
@@ -237,38 +239,18 @@ async function runLogicalTargetabilityFixture({ browser, baseUrl, options }) {
         viewPoseOk,
       };
 
-      function activeEnemyElementsForEntity(entityIndex) {
-        return [...document.querySelectorAll(`.polycss-mesh.shootable.enemy[data-entity-index="${entityIndex}"]`)]
-          .filter((element) =>
-            !element.classList.contains("quake-frame-hidden") &&
-            !element.classList.contains("quake-shootable-prewarmed") &&
-            !element.hidden
-          );
-      }
-
-      function activeEnemyEntityIndexes() {
-        return [...document.querySelectorAll(".polycss-mesh.shootable.enemy[data-entity-index]")]
-          .filter((element) =>
-            !element.classList.contains("quake-frame-hidden") &&
-            !element.classList.contains("quake-shootable-prewarmed") &&
-            !element.hidden
-          )
-          .map((element) => Number(element.dataset.entityIndex))
-          .filter((entityIndex) => Number.isFinite(entityIndex))
-          .sort((a, b) => a - b);
+      function activeEnemyEntries(stats) {
+        return (stats.shootableCulling?.entries ?? [])
+          .filter((entry) => entry.enemy && entry.mounted && entry.visible && entry.handleCount > 0);
       }
 
       function sleepInPage(ms) {
         return new Promise((resolve) => setTimeout(resolve, ms));
       }
     }, {
-      anchorEntity: LOGICAL_ANCHOR_ENTITY,
       candidateEntities: LOGICAL_CANDIDATE_ENTITIES,
       sourceReference: LOGICAL_SOURCE_REFERENCE,
       targetOrigin: LOGICAL_TARGET_ORIGIN,
-      viewDistance: LOGICAL_VIEW_DISTANCE,
-      viewRotX: LOGICAL_VIEW_ROT_X,
-      viewRotY: LOGICAL_VIEW_ROT_Y,
     });
     result.pageErrors = pageErrors;
     const failures = validateLogicalTargetabilityResult(result);

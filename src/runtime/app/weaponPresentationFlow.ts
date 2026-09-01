@@ -1,18 +1,22 @@
-import type { ParseResult, Polygon, PolyMeshHandle, PolySceneHandle, Vec3 } from "@layoutit/polycss";
+import type { Polygon, Vec3 } from "glyphcss";
+import type {
+  QuakeAppSceneHandle,
+  QuakeMeshHandle,
+  QuakeMeshSource,
+} from "../render/engine";
 
 import { COLLISION_EPSILON } from "../constants";
 import type { QuakeWeaponId } from "../hud";
 import { addVec3, crossVec3, normalizeVec3, subtractVec3 } from "../math";
 import {
-  quakePickupModelRenderBundle,
-  quakePickupModelRenderBundleFrameSet,
+  quakePickupModelFrameSet,
+  type QuakeGlyphEntitySink,
   type QuakePickupModelLibrary,
 } from "../pickups";
 import {
-  mountQuakeRenderBundleFrameSetMesh,
-  mountQuakeRenderBundleMesh,
-  stripPolyMeshMetadata,
-} from "../renderBundleMesh";
+  mountQuakeModelFrameSetMesh,
+  mountQuakeModelMesh,
+} from "../modelMesh";
 import type { QuakeViewmodelFireAnimation } from "../viewmodel";
 import type {
   QuakeWeaponLightningBeamVisual,
@@ -27,10 +31,10 @@ const QUAKE_LIGHTNING_BEAM_OUTER_RADIUS = 0.045;
 export interface QuakeWeaponPresentationFlowOptions {
   addBodyClasses(...classNames: string[]): void;
   currentModelLibrary(): QuakePickupModelLibrary | null;
+  glyphEntitySink?: QuakeGlyphEntitySink;
   playWeaponFireFeedback(animation?: QuakeViewmodelFireAnimation): void;
   removeBodyClasses(...classNames: string[]): void;
-  scene: Pick<PolySceneHandle, "add">;
-  sceneElement: HTMLElement;
+  scene: Pick<QuakeAppSceneHandle, "add">;
 }
 
 export interface QuakeWeaponPresentationFlow {
@@ -46,9 +50,10 @@ export interface QuakeWeaponPresentationFlow {
 export function createQuakeWeaponPresentationFlow(
   options: QuakeWeaponPresentationFlowOptions,
 ): QuakeWeaponPresentationFlow {
-  const lightningBeamHandles = new Set<PolyMeshHandle>();
-  const lightningBeamTimers = new Map<PolyMeshHandle, number>();
+  const lightningBeamHandles = new Set<QuakeMeshHandle>();
+  const lightningBeamTimers = new Map<QuakeMeshHandle, number>();
   let crosshairHitTimer: number | null = null;
+  let nextVisualId = 0;
 
   function addProjectileMesh(
     modelPath: string,
@@ -56,13 +61,17 @@ export function createQuakeWeaponPresentationFlow(
   ): QuakeWeaponProjectileVisualHandle | null {
     const model = options.currentModelLibrary()?.models[modelPath];
     if (!model) return null;
-    const frameSet = quakePickupModelRenderBundleFrameSet(model);
+    const frameSet = quakePickupModelFrameSet(model);
     const handle = frameSet
-      ? mountQuakeRenderBundleFrameSetMesh(options.sceneElement, frameSet, 0)
-      : mountQuakeRenderBundleMesh(options.sceneElement, quakePickupModelRenderBundle(model, 0));
+      ? mountQuakeModelFrameSetMesh(options.scene, frameSet, 0)
+      : mountQuakeModelMesh(options.scene, model.glyphGeometry);
     if (!handle) return null;
     handle.element.classList.add("player-projectile", `player-projectile-${weapon}`);
-    stripPolyMeshMetadata(handle.element);
+    mirrorHandleInGlyph(
+      handle,
+      `projectile:${++nextVisualId}`,
+      model.animationFrames?.[0]?.glyphGeometry ?? model.glyphGeometry ?? null,
+    );
     return {
       handle,
       scale: model.renderScale ? 1 / model.renderScale : 1,
@@ -80,13 +89,17 @@ export function createQuakeWeaponPresentationFlow(
     });
     handle.element.classList.add("player-lightning-beam", `player-lightning-beam-${beam.weapon}`);
     handle.element.dataset.tempEntity = beam.tempEntity;
-    stripPolyMeshMetadata(handle.element);
+    mirrorHandleInGlyph(handle, `lightning:${++nextVisualId}`, {
+      version: 2,
+      polygonCount: polygons.length,
+      polygons: polygons.map((polygon) => ({ v: polygon.vertices, c: polygon.color ?? "#d9ffff" })),
+    }, true);
     lightningBeamHandles.add(handle);
     const timer = window.setTimeout(() => removeLightningBeam(handle), QUAKE_LIGHTNING_BEAM_VISUAL_MS);
     lightningBeamTimers.set(handle, timer);
   }
 
-  function removeLightningBeam(handle: PolyMeshHandle): void {
+  function removeLightningBeam(handle: QuakeMeshHandle): void {
     const timer = lightningBeamTimers.get(handle);
     if (timer !== undefined) window.clearTimeout(timer);
     lightningBeamTimers.delete(handle);
@@ -118,6 +131,39 @@ export function createQuakeWeaponPresentationFlow(
   function clear(): void {
     clearCrosshairHit();
     clearLightningBeams();
+  }
+
+  function mirrorHandleInGlyph(
+    handle: QuakeMeshHandle,
+    id: string,
+    geometry: Parameters<QuakeGlyphEntitySink["setEntity"]>[1],
+    mountImmediately = false,
+  ): void {
+    const sink = options.glyphEntitySink;
+    if (!sink || !geometry) return;
+    const originalSetTransform = handle.setTransform.bind(handle);
+    const originalRemove = handle.remove.bind(handle);
+    let removed = false;
+    const sync = (): void => {
+      const position = handle.getPosition();
+      if (!position && !mountImmediately) return;
+      sink.setEntity(id, geometry, {
+        position: position ?? [0, 0, 0],
+        ...(handle.getRotation() ? { rotation: handle.getRotation() } : {}),
+        ...(handle.getScale() !== undefined ? { scale: handle.getScale() } : {}),
+      });
+    };
+    handle.setTransform = (transform) => {
+      originalSetTransform(transform);
+      sync();
+    };
+    handle.remove = handle.dispose = () => {
+      if (removed) return;
+      removed = true;
+      sink.removeEntity(id);
+      originalRemove();
+    };
+    if (mountImmediately) sync();
   }
 
   return {
@@ -161,6 +207,6 @@ function scaleVec3(value: Vec3, scale: number): Vec3 {
   return [value[0] * scale, value[1] * scale, value[2] * scale];
 }
 
-function makeParseResult(polygons: Polygon[]): ParseResult {
+function makeParseResult(polygons: Polygon[]): QuakeMeshSource {
   return { polygons, objectUrls: [], warnings: [], dispose: () => undefined };
 }

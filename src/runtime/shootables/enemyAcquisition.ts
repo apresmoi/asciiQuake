@@ -1,4 +1,4 @@
-import type { Vec3 } from "@layoutit/polycss";
+import type { Vec3 } from "glyphcss";
 
 export type QuakeEnemyAcquisitionRange = "melee" | "near" | "mid" | "far";
 export type QuakeEnemyAcquisitionEntityId = number | string;

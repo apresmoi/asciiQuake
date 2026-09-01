@@ -53,7 +53,7 @@
     <title>asciiQuake - Powered by GlyphCSS</title>
     <meta
       name="description"
-      content="Play a browser Quake port rendered as inspectable HTML and CSS 3D geometry through PolyCSS, with no WebGL or canvas renderer."
+      content="Play Quake rendered as a live ASCII character grid through GlyphCSS, with no WebGL or canvas renderer."
     />
     <meta name="robots" content="index, follow" />
     <link rel="canonical" href="https://asciiquake.wtf/" />
@@ -63,7 +63,7 @@
     <meta property="og:title" content="asciiQuake - Powered by GlyphCSS" />
     <meta
       property="og:description"
-      content="Play a browser Quake port rendered as inspectable HTML and CSS 3D geometry through PolyCSS, with no WebGL or canvas renderer."
+      content="Play Quake rendered as a live ASCII character grid through GlyphCSS, with no WebGL or canvas renderer."
     />
     <meta property="og:image" content="https://asciiquake.wtf/assets/cssquake-social-20260701.png" />
     <meta property="og:image:type" content="image/png" />
@@ -79,7 +79,7 @@
     <meta name="twitter:title" content="asciiQuake - Powered by GlyphCSS" />
     <meta
       name="twitter:description"
-      content="Play a browser Quake port rendered as inspectable HTML and CSS 3D geometry through PolyCSS, with no WebGL or canvas renderer."
+      content="Play Quake rendered as a live ASCII character grid through GlyphCSS, with no WebGL or canvas renderer."
     />
     <meta name="twitter:image" content="https://asciiquake.wtf/assets/cssquake-social-20260701.png" />
     <script type="application/ld+json">
@@ -88,7 +88,7 @@
         "@type": ["VideoGame", "WebApplication"],
         "name": "asciiQuake",
         "url": "https://asciiquake.wtf/",
-        "description": "Play a browser Quake port rendered as inspectable HTML and CSS 3D geometry through PolyCSS, with no WebGL or canvas renderer.",
+        "description": "Play Quake rendered as a live ASCII character grid through GlyphCSS, with no WebGL or canvas renderer.",
         "applicationCategory": "GameApplication",
         "gamePlatform": "Web browser",
         "playMode": ["SinglePlayer", "MultiPlayer"],
@@ -121,8 +121,19 @@
         isolation: isolate;
       }
 
-      /* Engine mounts: polycss world + viewmodel; the glyph overlays add
-         their <pre> layers above (the UI host mounts at z-index 2). */
+      #quake-game,
+      #quake-interface,
+      #quake-social {
+        position: absolute;
+        inset: 0;
+      }
+
+      #quake-interface,
+      #quake-social {
+        pointer-events: none;
+      }
+
+      /* Glyph world, weapon, and UI scene mounts. */
       #quake-scene,
       #quake-weapon,
       #quake-hud {
@@ -134,7 +145,7 @@
         z-index: 1;
       }
 
-      #quake-scene > .polycss-camera {
+      #quake-scene > .quake-camera-host {
         position: absolute;
         inset: 0;
         outline: none;
@@ -145,10 +156,14 @@
         z-index: 2;
       }
 
-      /* The multiplayer form's NATIVE controls — flat body children the menu
-         controller positions over their manifest rects while the multiplayer
-         screen is up. Native so text entry (IME included), the colour picker
-         and the map dropdown keep real browser behaviour. */
+      #quake-multiplayer-controls {
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+      }
+
+      /* Native multiplayer controls are mounted only while their screen is
+         visible. */
       .quake-mp-control {
         display: none;
         box-sizing: border-box;
@@ -160,6 +175,7 @@
         letter-spacing: 0;
         padding: 0 5px;
         outline: none;
+        pointer-events: auto;
       }
       .quake-mp-control:focus {
         border-color: #ffd089;
@@ -176,11 +192,13 @@
     </style>
   </head>
   <body id="quake-app" class="quake-loading quake-menu-open quake-main-menu-pending">
-      <!-- Engine mounts: the polycss world and viewmodel render in here; the
-           glyph overlays append one <pre> per density layer above them. -->
+    <main id="quake-game">
+      <!-- GlyphCSS scene mounts; each retained scene owns one output <pre>. -->
       <div id="quake-scene"></div>
       <div id="quake-weapon"></div>
       <div id="quake-impact-particles" aria-hidden="true"></div>
+    </main>
+    <section id="quake-interface" aria-label="Game interface">
       <!-- Gameplay layer: screen-tint overlays, the intermission card (built
            at show time), and the multiplayer scoreboard mount. -->
       <div id="quake-hud">
@@ -188,14 +206,8 @@
         <div id="quake-damage-overlay" aria-hidden="true"></div>
         <div id="quake-intermission" role="status" aria-live="polite" hidden></div>
       </div>
-      <!-- Multiplayer form controls: native input sinks, positioned by the
-           menu controller (see .quake-mp-control). -->
-      <input id="quake-multiplayer-name" class="quake-mp-control" type="text" maxlength="16" spellcheck="false" autocomplete="nickname" aria-label="Player name" />
-      <input id="quake-multiplayer-color" class="quake-mp-control" type="color" value="#d8893f" aria-label="Player color" />
-      <select id="quake-multiplayer-map" class="quake-mp-control" aria-label="Map"></select>
-      <input id="quake-multiplayer-fraglimit" class="quake-mp-control" type="number" min="1" max="100" step="1" value="20" aria-label="Frag limit" />
-      <input id="quake-multiplayer-maxplayers" class="quake-mp-control" type="number" min="2" max="4" step="1" value="4" aria-label="Max players" />
-      <!-- Corner links -->
+    </section>
+    <nav id="quake-social" aria-label="Project links">
       <a
         class="btn-github"
         rel="noopener noreferrer"
@@ -251,6 +263,7 @@
           alt=""
         />
       </a>
+    </nav>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

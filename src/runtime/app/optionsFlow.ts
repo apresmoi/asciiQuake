@@ -30,7 +30,6 @@ export interface QuakeOptionsFlowOptions {
   audioMuted(): boolean;
   damageDisabled(): boolean;
   dynamicLightingEnabled(): boolean;
-  renderModeIsGlyph(): boolean;
   enemiesDisabled(): boolean;
   enemiesFrozen(): boolean;
   attacksDisabled(): boolean;
@@ -43,7 +42,6 @@ export interface QuakeOptionsFlowOptions {
   setAudioMuted(muted: boolean): void;
   setDamageDisabled(disabled: boolean): void;
   setDynamicLighting(enabled: boolean): void;
-  setRenderMode(glyph: boolean): void;
   setEnemiesDisabled(disabled: boolean): void;
   setEnemiesFrozen(frozen: boolean): void;
   setAttacksDisabled(disabled: boolean): void;
@@ -119,7 +117,6 @@ export function createQuakeOptionsFlow(options: QuakeOptionsFlowOptions): QuakeO
       options.setDynamicLighting(next);
       options.setStaticLightingClass(!next);
     }),
-    toggle("render-mode", options.renderModeIsGlyph, options.setRenderMode),
     {
       id: "glyph-detail",
       value: options.glyphDetailLabel,

@@ -1,13 +1,10 @@
 // Renderer-neutral world geometry for the glyphcss (ASCII) backend.
 //
-// The polycss render bundle bakes world surfaces into a CSS `meshHtml` string
-// with no recoverable vertex data, so the glyph backend cannot reuse it. This
-// module captures the raw `scene.polygons` (world-space vertices + the lit
+// Capture raw `scene.polygons` (world-space vertices + the lit
 // fallback colour that already encodes texture tone × brightness) into a
 // compact payload the runtime can hand straight to `glyphScene.add(...)`.
 //
-// glyphcss and polycss share the same `Polygon` shape (vertices/color), so the
-// payload is just a trimmed, rounded projection of the prepared polygons.
+// The payload is a trimmed, rounded projection of the prepared polygons.
 
 const QUAKE_GLYPH_GEOMETRY_VERSION = 2;
 const QUAKE_GLYPH_GEOMETRY_PRECISION = 1000; // 3 decimal places

@@ -41,7 +41,7 @@ function createMockController(options = {}) {
     leafIndexAt: () => 0,
     playerForward: () => [1, 0, 0],
     playerViewDot: () => 1,
-    pointToPoly: (point) => [point.x, point.y, point.z],
+    pointToWorld: (point) => [point.x, point.y, point.z],
     gameLogic: () => null,
     programMetadata: () => null,
     shouldSpawn: () => true,
@@ -58,12 +58,11 @@ test("BSP pickup model without glyphGeometry receives synthesized bounds box in 
 
   const bspModel = {
     source: "maps/b_shell0.bsp",
-    renderBundle: {},
     bounds: {
       min: [-0.16, -0.16, 0],
       max: [0.16, 0.16, 0.32],
     },
-    // glyphGeometry intentionally omitted (matches current disk assets)
+    // glyphGeometry intentionally omitted to exercise the runtime fallback.
   };
 
   const modelLibrary = {
@@ -105,7 +104,6 @@ test("health box BSP model synthesizes health color (#8b1510)", (t) => {
 
   const healthModel = {
     source: "maps/b_bh10.bsp",
-    renderBundle: {},
     bounds: {
       min: [-0.16, -0.16, 0],
       max: [0.16, 0.16, 0.32],
@@ -142,7 +140,6 @@ test("rocket ammo BSP model synthesizes rocket color (#8a3f24)", (t) => {
 
   const rocketModel = {
     source: "maps/b_rock0.bsp",
-    renderBundle: {},
     bounds: {
       min: [-0.16, -0.16, 0],
       max: [0.16, 0.16, 0.32],
@@ -183,7 +180,6 @@ test("alias model with prepared glyphGeometry uses prepared geometry and not syn
 
   const aliasModel = {
     source: "progs/armor.mdl",
-    renderBundle: {},
     bounds: {
       min: [-0.16, -0.16, 0],
       max: [0.16, 0.16, 0.32],

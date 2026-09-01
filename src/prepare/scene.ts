@@ -1,12 +1,12 @@
 import {
   BASE_TILE,
-  computeTextureAtlasPlanPublic,
   mergePolygons,
   type Polygon,
   type TextureTriangle,
   type Vec2,
   type Vec3,
-} from "@layoutit/polycss";
+} from "glyphcss";
+import { computeQuakeTexturePlan } from "./texturePlan";
 
 import { QUAKE_RENDER_SUPERSAMPLE, QUAKE_UNIT_SCALE } from "../quakeScale.js";
 import { buildEntityManifest, cloneEntityManifest } from "./entities";
@@ -550,71 +550,6 @@ export type QuakeSerializedPolygon = Omit<Polygon, "texture"> & {
   texture?: number | string;
 };
 
-export interface QuakeRenderBundleAtlasResidencyPage {
-  index: number;
-  varName: string;
-  url: string;
-  bytes?: number;
-  width?: number;
-  height?: number;
-}
-
-export interface QuakeRenderBundleAtlasResidency {
-  version: 1;
-  mode: "pvs-pages";
-  pageSize: number;
-  pages: QuakeRenderBundleAtlasResidencyPage[];
-  leafPageIndexes: number[];
-  visibilityLeafPages: number[][];
-  visibilityLeafPrewarmPages: number[][];
-}
-
-export interface QuakePreparedRenderBundle {
-  version: 1;
-  kind: "polycss-mesh";
-  polycssVersion: string;
-  textureLighting: "baked";
-  textureQuality: 1;
-  meshHtml: string;
-  meshCss?: string;
-  styleUrl?: string;
-  styleClassName?: string;
-  assetUrls: string[];
-  assetUrlsComplete: true;
-  debugOutlineSourceAssetUrls?: string[];
-  debugOutlineAssetUrls?: string[];
-  debugOutlineBackgrounds?: QuakeRenderBundleDebugOutlineBackground[];
-  debugOutlineOverpainted?: boolean;
-  debugTransparentOutlineSourceAssetUrls?: string[];
-  debugTransparentOutlineAssetUrls?: string[];
-  debugTransparentOutlineBackgrounds?: QuakeRenderBundleDebugOutlineBackground[];
-  leafMetadata: QuakeRenderBundleLeafMetadata[];
-  leafFrameStyles?: QuakeRenderBundleLeafFrameStyle[];
-  leafFrameStylesUrl?: string;
-  leafFrameStylesIndex?: number;
-  polygonCount: number;
-  leafCount: number;
-  atlasLeafCount: number;
-  atlasResidency?: QuakeRenderBundleAtlasResidency;
-}
-
-export type QuakeRenderBundleLeafFrameStyle = [
-  matrix: string,
-  background?: string | null,
-  extraStyle?: string | null,
-];
-
-export type QuakeRenderBundleDebugOutlineBackground = [position: string, size: string] | null;
-
-export interface QuakeRenderBundleLeafMetadata {
-  f: number;
-  p?: number;
-  m?: number;
-  e?: number;
-  t?: string;
-  l?: string;
-}
-
 export interface QuakePreparedVisibility {
   planes: QuakePlane[];
   nodes: QuakeNode[];
@@ -722,8 +657,6 @@ export interface QuakePreparedScene {
   polygons?: QuakeSerializedPolygon[];
   textures?: string[];
   skyTexture?: number | string;
-  renderBundle?: QuakePreparedRenderBundle;
-  lightstyleRenderBundle?: QuakePreparedRenderBundle;
   glyphGeometry?: QuakeGlyphGeometry;
   textureCount: number;
   faceCount: number;
@@ -748,8 +681,6 @@ export interface QuakePreparedScene {
 export interface QuakeScene {
   polygons: Polygon[];
   skyTextureUrl?: string;
-  renderBundle?: QuakePreparedRenderBundle;
-  lightstyleRenderBundle?: QuakePreparedRenderBundle;
   textureCount: number;
   faceCount: number;
   sourceFaceCount: number;
@@ -979,10 +910,6 @@ export function createQuakeSceneFromPreparedScene(prepared: QuakePreparedScene):
   return {
     polygons,
     ...(skyTextureUrl ? { skyTextureUrl } : {}),
-    ...(prepared.renderBundle ? { renderBundle: clonePreparedRenderBundle(prepared.renderBundle) } : {}),
-    ...(prepared.lightstyleRenderBundle
-      ? { lightstyleRenderBundle: clonePreparedRenderBundle(prepared.lightstyleRenderBundle) }
-      : {}),
     ...(prepared.glyphGeometry ? { glyphGeometry: prepared.glyphGeometry } : {}),
     ...(prepared.glyphMovers ? { glyphMovers: prepared.glyphMovers } : {}),
     textureCount: prepared.textureCount,
@@ -1015,44 +942,6 @@ export function createQuakeSceneFromPreparedScene(prepared: QuakePreparedScene):
         )
       : undefined,
     collision: prepared.collision,
-  };
-}
-
-function clonePreparedRenderBundle(renderBundle: QuakePreparedRenderBundle): QuakePreparedRenderBundle {
-  return {
-    ...renderBundle,
-    assetUrls: [...renderBundle.assetUrls],
-    ...(renderBundle.debugOutlineSourceAssetUrls ? {
-      debugOutlineSourceAssetUrls: [...renderBundle.debugOutlineSourceAssetUrls],
-    } : {}),
-    ...(renderBundle.debugOutlineAssetUrls ? {
-      debugOutlineAssetUrls: [...renderBundle.debugOutlineAssetUrls],
-    } : {}),
-    ...(renderBundle.debugOutlineBackgrounds ? {
-      debugOutlineBackgrounds: renderBundle.debugOutlineBackgrounds.map((background) =>
-        background ? [...background] as QuakeRenderBundleDebugOutlineBackground : null
-      ),
-    } : {}),
-    ...(renderBundle.debugOutlineOverpainted ? { debugOutlineOverpainted: true } : {}),
-    ...(renderBundle.debugTransparentOutlineSourceAssetUrls ? {
-      debugTransparentOutlineSourceAssetUrls: [...renderBundle.debugTransparentOutlineSourceAssetUrls],
-    } : {}),
-    ...(renderBundle.debugTransparentOutlineAssetUrls ? {
-      debugTransparentOutlineAssetUrls: [...renderBundle.debugTransparentOutlineAssetUrls],
-    } : {}),
-    ...(renderBundle.debugTransparentOutlineBackgrounds ? {
-      debugTransparentOutlineBackgrounds: renderBundle.debugTransparentOutlineBackgrounds.map((background) =>
-        background ? [...background] as QuakeRenderBundleDebugOutlineBackground : null
-      ),
-    } : {}),
-    leafMetadata: renderBundle.leafMetadata.map((leaf) => ({ ...leaf })),
-    ...(renderBundle.leafFrameStyles ? {
-      leafFrameStyles: renderBundle.leafFrameStyles.map((frameStyle) => [...frameStyle]),
-    } : {}),
-    ...(renderBundle.leafFrameStylesUrl ? { leafFrameStylesUrl: renderBundle.leafFrameStylesUrl } : {}),
-    ...(renderBundle.leafFrameStylesIndex !== undefined ? {
-      leafFrameStylesIndex: renderBundle.leafFrameStylesIndex,
-    } : {}),
   };
 }
 
@@ -3374,7 +3263,7 @@ function quakeWallBleedSharedEdgeIsVisible(owners: QuakeWallBleedEdgeOwner[]): b
 
 function quakeWallBleedRenderRiskScores(polygon: Polygon, faceIndex: number): number[] {
   const empty = Array.from({ length: polygon.vertices.length }, () => 0);
-  const plan = computeTextureAtlasPlanPublic(polygon, faceIndex, {
+  const plan = computeQuakeTexturePlan(polygon, faceIndex, {
     tileSize: BASE_TILE,
     layerElevation: BASE_TILE,
   });
@@ -6358,7 +6247,7 @@ async function textureAnimationSpriteFor(
   const animation = textureAnimationFrameTextures(texture, textures);
   if (!animation) return undefined;
   const frames = rotateTextureAnimationFrames(animation.frames, animation.frameIndex);
-  const plan = computeTextureAtlasPlanPublic(polygon, 0);
+  const plan = computeQuakeTexturePlan(polygon, 0);
   if (!plan) return undefined;
   const frameW = Math.max(1, Math.ceil(plan.canvasW));
   const frameH = Math.max(1, Math.ceil(plan.canvasH));
@@ -6418,7 +6307,7 @@ function rotateTextureAnimationFrames(frames: QuakeMipTexture[], frameIndex: num
 }
 
 async function textureAnimationSpriteUrlForPlan(
-  plan: NonNullable<ReturnType<typeof computeTextureAtlasPlanPublic>>,
+  plan: NonNullable<ReturnType<typeof computeQuakeTexturePlan>>,
   frameW: number,
   frameH: number,
   frames: QuakeMipTexture[],
@@ -6450,7 +6339,7 @@ async function textureAnimationSpriteUrlForPlan(
 }
 
 function textureAnimationUvAtPlanPoint(
-  plan: NonNullable<ReturnType<typeof computeTextureAtlasPlanPublic>>,
+  plan: NonNullable<ReturnType<typeof computeQuakeTexturePlan>>,
   x: number,
   y: number,
   frameW: number,

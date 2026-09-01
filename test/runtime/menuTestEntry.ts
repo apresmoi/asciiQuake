@@ -5,6 +5,7 @@
  * own state instance).
  */
 export { createQuakeMenuController } from "../../src/runtime/menu";
+export { createQuakeMultiplayerMenuForm } from "../../src/runtime/app/multiplayerMenuForm";
 export {
   createQuakeMenuSceneManifest,
   quakeMenuSceneFrame,

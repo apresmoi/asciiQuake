@@ -1,4 +1,5 @@
-import type { PolyMeshHandle, Vec3 } from "@layoutit/polycss";
+import type { Vec3 } from "glyphcss";
+import type { QuakeMeshHandle } from "../render/engine";
 
 import type { QuakeMonsterTouchDamageFrameEvent } from "../../generated/quakeMonsterLogic";
 import type { QuakeEntity } from "../../types/quake";
@@ -21,8 +22,8 @@ export interface QuakeShootableState {
     min: Vec3;
     max: Vec3;
   };
-  handle: PolyMeshHandle | null;
-  frameHandles: Map<number, PolyMeshHandle>;
+  handle: QuakeMeshHandle | null;
+  frameHandles: Map<number, QuakeMeshHandle>;
   visible: boolean;
   lastMountCandidateAt: number;
   yaw: number;
@@ -195,7 +196,7 @@ export interface QuakeEnemyProjectile {
   damage: number;
   debugId: number;
   expiresAt: number;
-  handle?: PolyMeshHandle | null;
+  handle?: QuakeMeshHandle | null;
   origin: Vec3;
   profile: QuakeMonsterCombatProfile;
   radius: number;
@@ -206,7 +207,7 @@ export interface QuakeEnemyProjectile {
 
 export interface QuakeMonsterDeathOutputVisualHandle {
   animation?: QuakeMonsterDeathOutputAnimation;
-  handle: PolyMeshHandle;
+  handle: QuakeMeshHandle;
 }
 
 export interface QuakeMonsterDeathOutputAnimation {

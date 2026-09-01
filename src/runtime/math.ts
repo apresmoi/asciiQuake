@@ -1,4 +1,4 @@
-import type { Vec3 } from "@layoutit/polycss";
+import type { Vec3 } from "glyphcss";
 
 import { COLLISION_EPSILON, QUAKE_COLLISION_UNIT_SCALE } from "./constants";
 
@@ -80,4 +80,3 @@ export function distanceSq3(a: Vec3, b: Vec3): number {
   const dz = a[2] - b[2];
   return dx * dx + dy * dy + dz * dz;
 }
-

@@ -59,10 +59,7 @@ export function createQuakeDebugRecordingSnapshotFlow(
       },
       shootables: options.shootablesStats(),
       shootableCulling: options.shootableCulling(view.origin),
-      pickups: {
-        ...capturePickupSnapshot(),
-        ...options.pickupsStats(),
-      },
+      pickups: options.pickupsStats(),
       movers: options.moversStats(),
       triggers: {
         ...options.triggersStats(),
@@ -83,49 +80,17 @@ export function createQuakeDebugRecordingSnapshotFlow(
   return { capture };
 }
 
-function capturePickupSnapshot(): Record<string, unknown> {
-  const pickupMeshes = Array.from(document.querySelectorAll<HTMLElement>(".polycss-mesh.pickup"));
-  return {
-    active: pickupMeshes.filter((element) => !element.hidden).length,
-    hidden: pickupMeshes.filter((element) => element.hidden).length,
-    total: pickupMeshes.length,
-  };
-}
-
 function captureDomSnapshot(): Record<string, unknown> {
-  const allMeshes = Array.from(document.querySelectorAll<HTMLElement>("#quake-app .polycss-mesh"));
-  const shootableMeshes = allMeshes.filter((element) => element.classList.contains("shootable"));
-  const enemyMeshes = shootableMeshes.filter((element) => element.classList.contains("enemy"));
-  const pickupMeshes = allMeshes.filter((element) => element.classList.contains("pickup"));
-  const worldMeshes = allMeshes.filter(
-    (element) => !element.classList.contains("shootable") && !element.classList.contains("pickup"),
-  );
+  const app = document.querySelector<HTMLElement>("#quake-app");
   return {
-    meshes: {
-      total: allMeshes.length,
-      world: worldMeshes.length,
-      shootables: shootableMeshes.length,
-      enemies: enemyMeshes.length,
-      pickups: pickupMeshes.length,
-      prewarmedEnemies: enemyMeshes.filter((element) => element.classList.contains("quake-shootable-prewarmed")).length,
-      hiddenEnemyFrames: enemyMeshes.filter((element) => element.classList.contains("quake-frame-hidden")).length,
-    },
-    leaves: {
-      total: countMeshLeaves(allMeshes),
-      world: countMeshLeaves(worldMeshes),
-      enemies: countMeshLeaves(enemyMeshes),
-      pickups: countMeshLeaves(pickupMeshes),
-    },
-    enemyEntityIndexes: enemyMeshes
-      .map((element) => Number(element.dataset.entityIndex))
-      .filter((entityIndex) => Number.isFinite(entityIndex))
-      .sort((a, b) => a - b),
+    elements: app?.querySelectorAll("*").length ?? 0,
+    cameraHosts: app?.querySelectorAll(".quake-camera-host").length ?? 0,
+    glyphOutputs: app?.querySelectorAll(
+      "pre.quake-glyph-overlay, pre.quake-glyph-weapon-overlay, pre.quake-glyph-ui",
+    ).length ?? 0,
+    activeEffects: app?.querySelectorAll(".quake-impact-particle, .quake-effect-sprite").length ?? 0,
     bodyClass: document.body.className,
   };
-}
-
-function countMeshLeaves(meshes: HTMLElement[]): number {
-  return meshes.reduce((total, element) => total + element.querySelectorAll("b,i,s,u").length, 0);
 }
 
 function triggerSnapshot(trigger: QuakeTouchedTrigger): Record<string, unknown> {

@@ -5,16 +5,12 @@ export const QUAKE_ASSETS_REGENERATING_ACTION =
   "Wait for pnpm prepare:quake to finish, then reload.";
 export const QUAKE_LOADING_CONSOLE_PAK_LINE = "Assets from id1/pak0.pak";
 
-declare const __POLYCSS_VERSION__: string;
 declare const __GLYPHCSS_VERSION__: string;
 
-/** Set by the app once the render backend is resolved. */
-let quakeLoadingRendererLine = `Using PolyCSS renderer v${__POLYCSS_VERSION__}`;
+let quakeLoadingRendererLine = `Using GlyphCSS renderer v${__GLYPHCSS_VERSION__}`;
 
-export function setQuakeLoadingRendererLine(mode: "polycss" | "glyphcss"): void {
-  quakeLoadingRendererLine = mode === "glyphcss"
-    ? `Using GlyphCSS renderer v${__GLYPHCSS_VERSION__}`
-    : `Using PolyCSS renderer v${__POLYCSS_VERSION__}`;
+export function setQuakeLoadingRendererLine(_mode: "glyphcss"): void {
+  quakeLoadingRendererLine = `Using GlyphCSS renderer v${__GLYPHCSS_VERSION__}`;
 }
 
 /** Exported for the glyph lab's "complete first screen" preview, which seeds

@@ -10,6 +10,7 @@ const moduleGlobals = installWindowGlobals(new Window());
 // manifest/state helpers must come from the SAME bundle instance.
 const {
   createQuakeMenuController,
+  createQuakeMultiplayerMenuForm,
   createQuakeMenuSceneManifest,
   quakeMenuSceneFrame,
   getQuakeMenuSceneState,
@@ -86,22 +87,73 @@ test("keyboard selection walks the hotspots and Enter activates", () => {
   }
 });
 
+test("showing an already-open main menu reasserts the pause state", () => {
+  const harness = createMenuHarness();
+  try {
+    harness.pauseEvents.length = 0;
+    harness.menu.showMainMenu();
+    harness.menu.showMainMenu();
+
+    assert.deepEqual(harness.pauseEvents, [true, true]);
+  } finally {
+    harness.restore();
+  }
+});
+
+test("multiplayer controls exist only while the setup screen is visible", () => {
+  const harness = createMenuHarness();
+  try {
+    assert.equal(harness.multiplayerForm.form.isConnected, false);
+
+    harness.key("ArrowDown");
+    harness.key("Enter");
+    assert.equal(harness.multiplayerForm.form.parentElement, harness.interfaceLayer);
+
+    harness.multiplayerForm.nameInput.value = "Ranger";
+    harness.key("Escape");
+    assert.equal(harness.multiplayerForm.form.isConnected, false);
+
+    harness.key("Enter");
+    assert.equal(harness.multiplayerForm.form.parentElement, harness.interfaceLayer);
+    assert.equal(harness.multiplayerForm.nameInput.value, "Ranger");
+
+    harness.menu.showMultiplayerFailure("ROOM FULL");
+    assert.equal(harness.multiplayerForm.form.isConnected, false);
+  } finally {
+    harness.restore();
+  }
+});
+
 function createMenuHarness() {
   document.body.replaceChildren();
   document.body.className = "";
 
   const controls = createControls();
   const host = document.createElement("div");
+  const interfaceLayer = document.createElement("section");
+  const multiplayerForm = createQuakeMultiplayerMenuForm(interfaceLayer);
+  const multiplayerBindings = [
+    ["mp-name", multiplayerForm.nameInput],
+    ["mp-color", multiplayerForm.colorInput],
+    ["mp-map", multiplayerForm.mapSelect],
+    ["mp-fraglimit", multiplayerForm.fragLimitInput],
+    ["mp-maxplayers", multiplayerForm.maxPlayersInput],
+  ].map(([id, element]) => ({ id, element }));
+  const pauseEvents = [];
   host.tabIndex = 0;
-  document.body.append(host);
+  document.body.append(host, interfaceLayer);
 
   const menu = createQuakeMenuController({
     enabled: true,
     host,
     controls,
     manifest: createQuakeMenuSceneManifest(),
+    multiplayerControls: () => multiplayerBindings,
+    mountMultiplayerControls: multiplayerForm.mount,
+    unmountMultiplayerControls: multiplayerForm.unmount,
     isMultiplayerEnabled: () => true,
     isQuitEnabled: () => false,
+    onMenuPauseChange: (paused) => pauseEvents.push(paused),
     clearCrosshairTarget: () => undefined,
     syncCrosshairTarget: () => undefined,
   });
@@ -113,6 +165,9 @@ function createMenuHarness() {
 
   return {
     menu,
+    interfaceLayer,
+    multiplayerForm,
+    pauseEvents,
     pointerDown: (clientX, clientY) => {
       document.body.dispatchEvent(new window.MouseEvent("pointerdown", {
         bubbles: true,
@@ -127,6 +182,7 @@ function createMenuHarness() {
     },
     restore: () => {
       menu.dispose();
+      multiplayerForm.dispose();
       document.body.replaceChildren();
       document.body.className = "";
     },

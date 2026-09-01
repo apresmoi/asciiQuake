@@ -1,4 +1,4 @@
-import type { Vec3 } from "@layoutit/polycss";
+import type { Vec3 } from "glyphcss";
 
 import type { QuakeGameLogicFacts } from "../prepare/gameLogicFacts";
 import type { QuakeEntity } from "../types/quake";

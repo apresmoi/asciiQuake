@@ -91,8 +91,17 @@ test("intermission flow renders classic completion rows and clears them", () => 
 
   try {
     const root = document.createElement("div");
+    root.hidden = true;
     let renderedRoot = null;
+    const backdropStates = [];
     const intermission = createQuakeIntermissionFlow({
+      onBackdropVisibilityChange: (visible) => {
+        backdropStates.push({
+          childCount: root.children.length,
+          hidden: root.hidden,
+          visible,
+        });
+      },
       renderBitmapText: (element) => { renderedRoot = element; },
       root,
     });
@@ -107,6 +116,7 @@ test("intermission flow renders classic completion rows and clears them", () => 
     });
 
     assert.equal(intermission.active(), true);
+    assert.deepEqual(backdropStates, [{ childCount: 2, hidden: true, visible: true }]);
     assert.equal(root.hidden, false);
     assert.equal(root.textContent, "COMPLETEDTIME1:05SECRETS1/ 2KILLS3/10");
     assert.equal(root.querySelector(".quake-intermission-scrim") instanceof window.HTMLElement, true);
@@ -132,6 +142,10 @@ test("intermission flow renders classic completion rows and clears them", () => 
     intermission.clear();
 
     assert.equal(intermission.active(), false);
+    assert.deepEqual(backdropStates, [
+      { childCount: 2, hidden: true, visible: true },
+      { childCount: 0, hidden: true, visible: false },
+    ]);
     assert.equal(root.hidden, true);
     assert.equal(root.children.length, 0);
   } finally {
@@ -203,7 +217,7 @@ test("level intermission input advance is gated by a minimum dwell", async () =>
         push: () => undefined,
         teleportTo: () => false,
       }),
-      pointToPoly: (point) => [point.x, point.y, point.z],
+      pointToWorld: (point) => [point.x, point.y, point.z],
       publishWorldChanged: () => undefined,
       shootables: {
         activate: () => false,

@@ -2,10 +2,8 @@ import { createQuakeSceneFromPreparedScene } from "../../prepare/scene";
 import type { QuakePreparedScene, QuakeScene } from "../../types/quake";
 import {
   QUAKE_ASSETS_REGENERATING_ACTION,
-  quakeLoadingProgressGroup,
   type QuakeLoadingProgressTracker,
 } from "../loadingConsole";
-import { preloadQuakeRenderBundleAssets, preloadQuakeRenderBundleFloorAssets } from "../renderBundleMesh";
 import type { QuakeUrlUpdateMode, QuakeUrlView } from "../routeState";
 
 export const QUAKE_ASSET_ROOT = "/q";
@@ -205,27 +203,11 @@ export async function fetchQuakeScene(
   progress?: QuakeLoadingProgressTracker,
 ): Promise<QuakeScene> {
   const worldStatus = mapName ? `World ${mapName.toLowerCase()}.bsp` : "World BSP";
-  const worldProgress = quakeLoadingProgressGroup(progress, worldStatus);
   const completeSceneTask = progress?.startTask(worldStatus);
   const response = await fetch(url);
   if (!response.ok) throw new Error(`Could not load ${url}.`);
   const prepared = await response.json() as QuakePreparedScene;
-  if (mapName && !prepared.renderBundle) {
-    throw new Error(`Prepared Quake map ${mapName.toUpperCase()} is missing its render bundle.`);
-  }
-  const renderBundlePreloads = [
-    ...(prepared.renderBundle
-      ? [
-          preloadQuakeRenderBundleAssets(prepared.renderBundle, worldProgress, { preloadImages: false }),
-          preloadQuakeRenderBundleFloorAssets(prepared.renderBundle, mapName ?? "", worldProgress),
-        ]
-      : []),
-    ...(prepared.lightstyleRenderBundle
-      ? [preloadQuakeRenderBundleAssets(prepared.lightstyleRenderBundle, worldProgress, { preloadImages: false })]
-      : []),
-  ];
   completeSceneTask?.();
-  await Promise.all(renderBundlePreloads);
   return createQuakeSceneFromPreparedScene(prepared);
 }
 

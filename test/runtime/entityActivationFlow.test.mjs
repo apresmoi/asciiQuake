@@ -153,7 +153,7 @@ function createFlow(overrides = {}) {
       push: () => undefined,
       teleportTo: () => false,
     }),
-    pointToPoly: (point) => [point.x, point.y, point.z],
+    pointToWorld: (point) => [point.x, point.y, point.z],
     publishWorldChanged: () => undefined,
     shootables: {
       activate: () => false,

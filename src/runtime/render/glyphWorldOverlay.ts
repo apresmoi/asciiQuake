@@ -1,21 +1,21 @@
-import { createGlyphPerspectiveCamera, createGlyphScene, quantizeGlyphAtlasPalette, type GlyphFontAtlas } from "glyphcss";
+import { BASE_TILE, createGlyphPerspectiveCamera, createGlyphScene, quantizeGlyphAtlasPalette, type GlyphFontAtlas } from "glyphcss";
 import type { GlyphMeshHandle, GlyphMeshTransform, GlyphOcclusionCoverage } from "glyphcss";
-import { BASE_TILE, type Vec3 } from "@layoutit/polycss";
+import type { Vec3 } from "glyphcss";
 import { quakeCameraPerspectiveForViewport } from "../app/cameraViewFlow";
 
 /**
  * Glyph world overlay — renders the prepared world geometry as ASCII art into a
- * `<pre>` that sits over the polycss viewport.
+ * `<pre>` that sits over the the CSS renderer viewport.
  *
- * For the first glyphcss milestone the polycss engine still owns all game logic
+ * For the first glyphcss milestone the the CSS renderer engine still owns all game logic
  * (movement, controls, collision, camera math, entities). This overlay mirrors
  * the world surfaces as ASCII driven by the live camera eye + orientation.
  *
- * Camera model: glyph's perspective camera uses polycss-native units (`zoom` =
+ * Camera model: glyph's perspective camera uses the CSS renderer-native units (`zoom` =
  * CSS px per world unit, `perspective` = CSS px) and projects with MEASURED cell
- * metrics, so feeding it polycss's OWN `zoom`/`perspective` makes the glyph
- * projection pixel-identical to polycss (glyphcss projection-conformance test) —
- * no FOV magic. cssQuake mirrors polycss's own first-person target, because the
+ * metrics, so feeding it the CSS renderer's OWN `zoom`/`perspective` makes the glyph
+ * projection pixel-identical to the CSS renderer (glyphcss projection-conformance test) —
+ * no FOV magic. cssQuake mirrors the CSS renderer's own first-person target, because the
  * controls place it at `perspective / BASE_TILE` in front of the eye.
  */
 
@@ -104,16 +104,7 @@ export interface QuakeGlyphWorldOverlayOptions {
   readonly cellPx?: number;
   /** Line height in px (vertical cell pitch). Defaults to ~0.6× cellPx. `?glyphLine=`. */
   readonly lineHeight?: number;
-  /** Initial composite mode (glyph/poly/both). Default "glyph". `?glyphComposite=`. */
-  readonly composite?: QuakeGlyphComposite;
-  /** The polycss world subtree (the transformed scene root holding every textured
-   *  polygon). In "glyph" composite the opaque ASCII covers it completely, so we
-   *  `display:none` it — polycss then skips style/layout/paint for the whole world
-   *  instead of rasterizing thousands of hidden DOM polygons every frame. The
-   *  camera element itself stays live (focus, pointer-lock, controls), and the
-   *  layer comes straight back for "poly"/"both". */
-  readonly polyWorldLayer?: HTMLElement | null;
-  /** FOV scale. Default 1 (polycss-native projection needs no scaling). `?glyphFovScale=`. */
+  /** FOV scale. Default 1 (the CSS renderer-native projection needs no scaling). `?glyphFovScale=`. */
   readonly fovScale?: number;
   /** Flatten colour variation toward a common tone (0..1) to kill scroll crawl. */
   readonly flat?: number;
@@ -124,7 +115,7 @@ export interface QuakeGlyphWorldOverlayOptions {
    * lifts the mids and darks the way a display gamma does, while a per-channel
    * clip guard keeps highlights from washing past white — the same curve the
    * UI overlay's `gamma` uses). This is the lever the linear `brighten` cannot
-   * express: measured against the polycss reference, raising `brighten` past
+   * express: measured against the the CSS renderer reference, raising `brighten` past
    * ~6.5 lifts the perceived MEAN but clips/compresses the perceived RANGE
    * (channel clamp turns brights flat yellow) — the curve instead spends its
    * lift on the mids and holds the top end. `?glyphGamma=` overrides.
@@ -144,7 +135,7 @@ export interface QuakeGlyphWorldOverlayOptions {
   /**
    * `-webkit-text-stroke` width (px) applied to the overlay's glyph output.
    * ASCII letterforms ink only a fraction of their cell, so the same colours
-   * read far darker than a solid render — measured against the polycss
+   * read far darker than a solid render — measured against the the CSS renderer
    * reference, a sub-pixel stroke raises perceived luminance ~50% while
    * preserving hue, where pushing colour lift alone clips. 0 disables.
    * `?glyphStroke=` overrides.
@@ -157,7 +148,7 @@ export interface QuakeGlyphWorldOverlayOptions {
   /**
    * Depth-test deadband (0 = off). Near-coplanar world surfaces (overlapping
    * brushes, water over its floor) resolve by paint order instead of z-fighting
-   * the depth buffer as the camera moves — glyph's equivalent of polycss DOM
+   * the depth buffer as the camera moves — glyph's equivalent of the CSS renderer DOM
    * stacking. Tunable via `?glyphEps=`. */
   readonly depthEpsilon?: number;
   /** Show an on-screen readout of eye position + orientation (`?glyphDebug=1`). */
@@ -216,16 +207,6 @@ export interface QuakeGlyphWorldGeometry {
   polygons: ReadonlyArray<{ v: number[][]; c: string; l?: number[] }>;
 }
 
-/**
- * How the glyph overlay composites against the polycss world rendered underneath
- * (polycss is always the engine; the overlay sits on top). Lets you flip between
- * the two backends live — and overlay them — without reloading:
- *  - "glyph": opaque ASCII over (and hiding) the poly world — normal glyph mode.
- *  - "poly":  overlay hidden → you see the polycss render underneath.
- *  - "both":  ASCII at 50% over the poly world → check the two line up (parity).
- */
-export type QuakeGlyphComposite = "glyph" | "poly" | "both";
-
 /** glyphcss scene render modes we expose. */
 export type QuakeGlyphSceneMode = "solid" | "wireframe" | "voxel" | "ink";
 
@@ -269,11 +250,6 @@ export interface QuakeGlyphWorldOverlay {
   setUiOcclusion(coverage: GlyphOcclusionCoverage | null): void;
   /** Diagnostic: render an exact frozen view (used by the flicker probes). */
   setFixedView(eyeX: number, eyeY: number, eyeZ: number, rotX: number, rotY: number): void;
-  setVisible(visible: boolean): void;
-  /** Live backend compositing (no reload): glyph / poly / both — see {@link QuakeGlyphComposite}. */
-  setComposite(mode: QuakeGlyphComposite): void;
-  /** Current composite mode. */
-  getComposite(): QuakeGlyphComposite;
   /** Swap the glyph set (intensity ramp) live — no reload. */
   setGlyphPalette(name: string): void;
   /** Swap the cell character encoding live (ascii/braille/halfblock/quadrant).
@@ -317,7 +293,7 @@ export interface QuakeGlyphWorldOverlay {
 }
 
 // Tuned for the char-grid resolution (glyph projects to cells, not the px
-// viewport, so these differ numerically from polycss while the projection math
+// viewport, so these differ numerically from the CSS renderer while the projection math
 // is identical). Larger perspective = wider FOV; larger zoom = closer.
 const QUAKE_GLYPH_OVERLAY_PERSPECTIVE = 1400;
 const QUAKE_GLYPH_OVERLAY_ZOOM = 50;
@@ -404,14 +380,14 @@ export function createQuakeGlyphWorldOverlay(
   const clampLineHeight = (px: number) => Math.max(4, Math.min(40, px));
   let lineHeightPx = clampLineHeight(options.lineHeight ?? Math.round(cellPx * 0.6));
   const zoom = options.zoom ?? QUAKE_GLYPH_OVERLAY_ZOOM;
-  // No FOV magic: glyphcss now projects with polycss-native camera units + measured
-  // cell metrics, so passing polycss's own `zoom` + `perspective` (see App) makes
-  // the projection pixel-identical to polycss. fovScale stays 1.
+  // No FOV magic: glyphcss now projects with the CSS renderer-native camera units + measured
+  // cell metrics, so passing the CSS renderer's own `zoom` + `perspective` (see App) makes
+  // the projection pixel-identical to the CSS renderer. fovScale stays 1.
   // `?glyphFovScale=` only for experiments.
   /**
    * Keep the first-person framing constant as the viewport shrinks.
    *
-   * The framing is tied to viewport HEIGHT (polycss derives `perspective` from
+   * The framing is tied to viewport HEIGHT (the CSS renderer derives `perspective` from
    * it — measured 923px at 1600x900 and 421.5px at 846x411, both 1.026x the
    * height). On a short viewport that reads as a camera pulled far back off the
    * eye point: the world looks third-person and the viewmodel shrinks to a
@@ -553,7 +529,7 @@ export function createQuakeGlyphWorldOverlay(
   // collapses adjacent faces toward the same colour → the crawl can't show. The
   // glyph char (lighting) still gives shape. Tunable via `?glyphFlat=`.
   let flatten = Math.max(0, Math.min(1, options.flat ?? 0));
-  // PolyCSS first-person controls define the look target this far in front of
+  // the CSS renderer first-person controls define the look target this far in front of
   // the eye, independent of zoom. Mirror that when a live target is not supplied
   // (fixed-view/debug paths). `let`: refreshViewportCamera() re-derives it when
   // the viewport perspective changes (a portrait→landscape rotation), otherwise
@@ -565,7 +541,7 @@ export function createQuakeGlyphWorldOverlay(
   element.className = "quake-glyph-overlay";
   element.style.position = "absolute";
   element.style.inset = "0";
-  // Same stacking level as the polycss camera (z-index 1); inserted after it in
+  // Same stacking level as the the CSS renderer camera (z-index 1); inserted after it in
   // the DOM so it paints over the textured world, while the viewmodel (2), HUD
   // (3) and menu (5+) layers still render on top.
   element.style.zIndex = "1";
@@ -573,7 +549,7 @@ export function createQuakeGlyphWorldOverlay(
   element.style.background = "#000";
   element.style.fontFamily = '"Menlo", "Consolas", monospace';
   // Coverage, not colour: ASCII ink fills ~a third of a cell, so the same
-  // colours read far darker than polycss's solid raster. The sub-pixel stroke
+  // colours read far darker than the CSS renderer's solid raster. The sub-pixel stroke
   // fattens every letterform (COLR atlas glyphs keep their palette colours;
   // span-mode strokes inherit each span's own colour via currentColor).
   const strokePx = Math.max(0, Math.min(2, options.strokePx ?? QUAKE_GLYPH_OVERLAY_STROKE_PX));
@@ -642,7 +618,7 @@ export function createQuakeGlyphWorldOverlay(
     // gradation — free for colored output (runs coalesce by colour, not glyph).
     glyphPalette,
     // Quake BSP faces aren't all wound toward the viewer; render both sides so
-    // none vanish, matching polycss's double-sided CSS rendering.
+    // none vanish, matching the CSS renderer's double-sided CSS rendering.
     doubleSided: true,
     // Supersampled AA: the detailed floor's sub-cell-sized polys otherwise crawl
     // and flip surfaces ("show-through") under motion. 2× cuts that ~70%.
@@ -651,17 +627,17 @@ export function createQuakeGlyphWorldOverlay(
     // supersampling can't reach (cost: a fading motion trail). Tunable.
     temporalBlend,
     // Quake colours are ALREADY baked-lit (the lightmap is in the texture tone),
-    // exactly what polycss shows. So keep ambient HIGH (the baked colour is the
+    // exactly what the CSS renderer shows. So keep ambient HIGH (the baked colour is the
     // truth) and the directional contribution SMALL — just enough to shade the
     // ASCII by surface orientation for shape. Too much directional darkens walls
     // whose normals face away from the light, so rotating the camera reveals
-    // "super dark" walls that polycss (lightmap-only, no view shading) never has.
+    // "super dark" walls that the CSS renderer (lightmap-only, no view shading) never has.
     ambientLight: { intensity: ambientLight },
     directionalLight: { intensity: directionalLight, direction: [-0.4, -0.55, -0.65] },
     // Near-coplanar world surfaces (overlapping brushes, a translucent water
     // plane over its floor) z-fight glyph's depth buffer — the per-cell winner
     // flips as the camera moves, tearing a surface in and out. The deadband
-    // resolves such ties by paint order (last drawn wins), matching how polycss
+    // resolves such ties by paint order (last drawn wins), matching how the CSS renderer
     // composites coincident faces via DOM stacking. Tunable via `?glyphEps=`.
     depthEpsilon,
     camera,
@@ -704,11 +680,11 @@ export function createQuakeGlyphWorldOverlay(
     scene.fit();
   }
 
-  // CRITICAL for parity: glyphcss projects polycss CSS px → glyph cells using the
+  // CRITICAL for parity: glyphcss projects the CSS renderer CSS px → glyph cells using the
   // MEASURED cell size, and caches that measurement. If the first measurement runs
   // before this overlay's <pre> is laid out (host size 0), it caches `measured:false`
   // and the projection permanently falls back to a BASE_TILE-sized cell — which
-  // blows the FOV out (~139° vs polycss's ~82°). Force a re-fit after layout so the
+  // blows the FOV out (~139° vs the CSS renderer's ~82°). Force a re-fit after layout so the
   // cache holds the real cell metrics. (`scene.fit()` invalidates + re-measures.)
   if (typeof requestAnimationFrame !== "undefined") {
     requestAnimationFrame(() => {
@@ -970,8 +946,6 @@ export function createQuakeGlyphWorldOverlay(
 
   let pendingFrame = 0;
   let needsCellRefit = true;
-  let composite: QuakeGlyphComposite = options.composite ?? "glyph";
-  const polyWorldLayer = options.polyWorldLayer ?? null;
   let latestEye: Vec3 = fixedView ? [fixedView[0], fixedView[1], fixedView[2]] : [0, 0, 0];
   let latestRotX = fixedView ? fixedView[3] : 90;
   let latestRotY = fixedView ? fixedView[4] : 270;
@@ -986,16 +960,6 @@ export function createQuakeGlyphWorldOverlay(
   }
   function renderFrame(): void {
     pendingFrame = 0;
-    // In "poly" composite the overlay is hidden (you see polycss underneath), so
-    // skip the expensive rasterize entirely — the camera still syncs cheaply.
-    if (composite === "poly") {
-      // Still apply staged mutations: the scene is hidden, not frozen, and
-      // dropping them here would leave entity state stale until the next glyph
-      // frame — a monster that moved while you were in poly composite would
-      // teleport on the way back.
-      applyStagedEntities();
-      return;
-    }
     // First real (game-driven) frame is guaranteed post-layout: re-measure the
     // cell so the projection uses the true cell size, not the BASE_TILE fallback
     // (a stale pre-layout measurement blows the FOV out — see the fit below).
@@ -1064,27 +1028,6 @@ export function createQuakeGlyphWorldOverlay(
     renderFrame();
   }
 
-  // Live backend compositing against the polycss world rendered underneath. No
-  // reload: "glyph" = opaque ASCII (hides poly), "poly" = overlay hidden (poly
-  // shows), "both" = ASCII at 50% over poly to eyeball parity.
-  function setComposite(mode: QuakeGlyphComposite): void {
-    composite = mode;
-    // Opaque ASCII hides the poly world entirely — don't pay to render it.
-    // "poly"/"both" need it back.
-    if (polyWorldLayer) polyWorldLayer.style.display = mode === "glyph" ? "none" : "";
-    if (mode === "poly") {
-      element.style.display = "none";
-      return;
-    }
-    element.style.display = "";
-    element.style.opacity = mode === "both" ? "0.5" : "1";
-    element.style.background = mode === "both" ? "transparent" : "#000";
-    scheduleRender(); // refresh now that we're visible again
-  }
-  function getComposite(): QuakeGlyphComposite {
-    return composite;
-  }
-
   // The glyph set is just an intensity ramp lookup, so glyphcss can swap it on a
   // live scene — no reload, no geometry rebuild.
   function setGlyphPalette(name: string): void {
@@ -1100,7 +1043,7 @@ export function createQuakeGlyphWorldOverlay(
   // Detail = cell size, and the cell is measured off the <pre>'s font metrics, so
   // a live resize is a style write plus `scene.fit()` — glyphcss re-measures the
   // cell box, recomputes cols/rows under `autoSize`, and the projection follows
-  // the new metrics (it maps polycss CSS px → cells through the MEASURED cell, so
+  // the new metrics (it maps the CSS renderer CSS px → cells through the MEASURED cell, so
   // the FOV stays put instead of scaling with the grid). No engine rebuild, no
   // geometry re-upload: the world mesh and every entity mesh keep their handles.
   function setCellPx(next: number): void {
@@ -1205,10 +1148,6 @@ export function createQuakeGlyphWorldOverlay(
   function getSceneMode(): QuakeGlyphSceneMode {
     return sceneMode;
   }
-  function setVisible(visible: boolean): void {
-    setComposite(visible ? "glyph" : "poly");
-  }
-
   function dispose(): void {
     window.removeEventListener("resize", refreshViewportCamera);
     window.removeEventListener("orientationchange", refreshViewportCamera);
@@ -1226,13 +1165,9 @@ export function createQuakeGlyphWorldOverlay(
     element.remove();
   }
 
-  // Apply the initial composite. Always run it (not just for non-default modes):
-  // even "glyph" has work to do now — it has to hide the poly world layer.
-  setComposite(composite);
-
   const overlay: QuakeGlyphWorldOverlay = {
     element, setGeometry, syncCamera, setEntity, setEntityTransform, removeEntity, setUiOcclusion, setFixedView,
-    setVisible, setComposite, getComposite, setGlyphPalette, getGlyphPalette,
+    setGlyphPalette, getGlyphPalette,
     setCharMode, getCharMode, setSceneMode, getSceneMode, setCellPx, getCellPx, setTuning, dispose,
   };
   // Dev-only: expose for the flicker probes / coordinate / entity debugging.
@@ -1247,7 +1182,7 @@ export function createQuakeGlyphWorldOverlay(
     });
     (window as unknown as { __quakeGlyphOverlay?: QuakeGlyphWorldOverlay }).__quakeGlyphOverlay = overlay;
     // Parity calibration probe: project a world point through the glyph camera to
-    // screen px (mirrors renderFrame's camera setup). Compared to polycss's
+    // screen px (mirrors renderFrame's camera setup). Compared to the CSS renderer's
     // ground-truth projection to calibrate perspective/zoom.
     (overlay as unknown as { __projectScreen?: (p: Vec3) => [number, number] }).__projectScreen = (p) => {
       camera.rotX = latestRotX;
@@ -1255,7 +1190,7 @@ export function createQuakeGlyphWorldOverlay(
       camera.target = latestTarget ?? derivedTarget();
       const o = scene.getOptions();
       // Pass the MEASURED cell metrics the same way the render does (glyphcss maps
-      // polycss CSS px → cells via the live cell size; without it project() falls
+      // the CSS renderer CSS px → cells via the live cell size; without it project() falls
       // back to BASE_TILE/cellAspect and the FOV is wrong).
       const probe = document.createElement("span");
       probe.textContent = Array(20).fill("M").join("\n");
@@ -1291,7 +1226,7 @@ export function createQuakeGlyphWorldOverlay(
  * two world-camera knobs (scale / reach) are a one-parameter family and
  * cannot recover the missing geometry.
  *
- * This overlay is the ASCII analogue of the polycss weapon stage: its own
+ * This overlay is the ASCII analogue of the the CSS renderer weapon stage: its own
  * perspective camera, its own `<pre>`, stacked over the world. Projection
  * (perspective, zoom, fovScale, center) is pushed by the viewmodel so it can
  * mirror the raster stage (1280×720 reference, bottom-anchored layerScale,

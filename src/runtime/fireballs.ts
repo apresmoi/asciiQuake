@@ -1,4 +1,4 @@
-import type { Vec3 } from "@layoutit/polycss";
+import type { Vec3 } from "glyphcss";
 
 import type { QuakeEntity } from "../types/quake";
 import { QUAKE_COLLISION_UNIT_SCALE } from "./constants";
@@ -35,7 +35,7 @@ export const QUAKE_POINT_HAZARD_DT_CLAMP = 0.05;
 
 export function quakeFireballEmitterFromEntity(
   entity: QuakeEntity,
-  pointToPoly: (point: { x: number; y: number; z: number }) => Vec3,
+  pointToWorld: (point: { x: number; y: number; z: number }) => Vec3,
   now: number,
   random = Math.random,
 ): QuakeFireballEmitter | null {
@@ -43,7 +43,7 @@ export function quakeFireballEmitterFromEntity(
   const rawSpeed = quakeEntityNumber(entity, "speed", QUAKE_FIREBALL_DEFAULT_SPEED);
   return {
     entityIndex: entity.index,
-    origin: pointToPoly(entity.origin),
+    origin: pointToWorld(entity.origin),
     speed: quakeFireballSpeed(rawSpeed),
     nextSpawnAt: now + random() * QUAKE_FIREBALL_INITIAL_DELAY_MS,
   };

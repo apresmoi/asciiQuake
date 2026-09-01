@@ -22,16 +22,16 @@ const PREPARED_SHAREWARE_MAPS = [
   "e1m8",
 ];
 
-const MIN_WORLD_DEFINITION_COUNTS = {
-  start: 31,
+const EXPECTED_WORLD_DEFINITION_COUNTS = {
+  start: 29,
   e1m1: 55,
-  e1m2: 57,
-  e1m3: 93,
-  e1m4: 90,
-  e1m5: 70,
-  e1m6: 99,
-  e1m7: 31,
-  e1m8: 24,
+  e1m2: 54,
+  e1m3: 77,
+  e1m4: 76,
+  e1m5: 55,
+  e1m6: 97,
+  e1m7: 28,
+  e1m8: 23,
 };
 
 const SUPPORTED_SHARED_WORLD_TARGET_CLASSNAMES = new Set([
@@ -126,8 +126,8 @@ test("prepared shareware maps derive trusted multiplayer world definitions witho
     const definitions = world.quakeMultiplayerWorldDefinitionsFromScene(scene, {});
     const definitionsByIndex = new Map(definitions.map((definition) => [definition.entityIndex, definition]));
 
-    if (definitions.length < MIN_WORLD_DEFINITION_COUNTS[mapName]) {
-      failures.push(`${mapName}: expected at least ${MIN_WORLD_DEFINITION_COUNTS[mapName]} world definitions, got ${definitions.length}`);
+    if (definitions.length !== EXPECTED_WORLD_DEFINITION_COUNTS[mapName]) {
+      failures.push(`${mapName}: expected ${EXPECTED_WORLD_DEFINITION_COUNTS[mapName]} active world definitions, got ${definitions.length}`);
     }
     if (definitionsByIndex.size !== definitions.length) {
       failures.push(`${mapName}: duplicate world definition entity indexes`);

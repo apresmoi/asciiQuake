@@ -1,4 +1,5 @@
-import type { PolyMeshHandle, Vec3 } from "@layoutit/polycss";
+import type { Vec3 } from "glyphcss";
+import type { QuakeMeshHandle } from "../render/engine";
 
 import type {
   QuakeMonsterProjectileFrameEvent,
@@ -52,7 +53,7 @@ export interface QuakeEnemyProjectileWorldTrace {
 }
 
 export interface QuakeEnemyProjectileRuntimeOptions {
-  addMesh(entity: QuakeEntity, model?: QuakePickupModel, frameIndex?: number): PolyMeshHandle | null;
+  addMesh(entity: QuakeEntity, model?: QuakePickupModel, frameIndex?: number): QuakeMeshHandle | null;
   /** Glyph (ASCII) entity layer — present only when the glyph backend is active. */
   glyphEntitySink?: QuakeGlyphEntitySink;
   boundsCenter(bounds: QuakeBounds): Vec3;
@@ -69,12 +70,12 @@ export interface QuakeEnemyProjectileRuntimeOptions {
     target: Vec3,
     offset: QuakeMonsterProjectileOffset | undefined,
   ): Vec3;
-  pixelate(handle: PolyMeshHandle): void;
+  pixelate(handle: QuakeMeshHandle): void;
   playerDamageBounds(origin: [number, number, number] | Vec3): QuakeBounds;
   playerDamageOrigin(origin: [number, number, number] | Vec3): Vec3;
   playSound?(soundPath: string, options?: QuakeEnemyProjectileSoundOptions): boolean;
   randomRange(enemy: QuakeEnemyState, min: number, max: number): number;
-  schedulePresentationResync(handle: PolyMeshHandle): void;
+  schedulePresentationResync(handle: QuakeMeshHandle): void;
   traceLine?(start: Vec3, end: Vec3): QuakeEnemyProjectileWorldTrace | null;
 }
 
@@ -617,7 +618,7 @@ export function createQuakeEnemyProjectileRuntime(
     glyphIdByProjectile.delete(projectile);
   }
 
-  function addMesh(projectile: QuakeEnemyProjectile): PolyMeshHandle | null {
+  function addMesh(projectile: QuakeEnemyProjectile): QuakeMeshHandle | null {
     const classname = projectile.profile.projectileClassname ?? "enemy_projectile_magic";
     const model = projectileModel(projectile);
     const entity: QuakeEntity = {

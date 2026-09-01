@@ -154,8 +154,7 @@ test("effect sprite flow preloads and animates the prepared s_explod sheet", asy
     });
 
     assert.equal(createElementCalls, 2);
-    assert.equal(layer.children.length, 2);
-    assert.deepEqual([...layer.children].map((element) => element.tagName), ["I", "I"]);
+    assert.equal(layer.children.length, 0);
 
     assert.equal(await flow.preload(), true);
     assert.deepEqual(decoded, ["/q/e/s_explod-test.png"]);
@@ -198,6 +197,7 @@ test("effect sprite flow preloads and animates the prepared s_explod sheet", asy
     [...frames.values()][0](now);
     assert.equal(sprite.style.opacity, "0");
     assert.equal(sprite.getAttribute("data-quake-effect-sprite-active"), "false");
+    assert.equal(sprite.parentElement, null);
 
     flow.spawnExplosion({ origin: [0, -4, 0], radiusUnits: 200 });
     assert.equal(sprite.getAttribute("data-quake-effect-sprite-active"), "true");

@@ -30,17 +30,6 @@ function glyphCssVersion(): string {
   }
 }
 
-function polyCssVersion(): string {
-  try {
-    const packageJson = JSON.parse(
-      readFileSync(path.join(CONFIG_DIR, "node_modules/@layoutit/polycss/package.json"), "utf8"),
-    ) as { version?: unknown };
-    return typeof packageJson.version === "string" ? packageJson.version : "0.0.0";
-  } catch {
-    return "0.0.0";
-  }
-}
-
 function localDebugSiteEnabled(): boolean {
   return process.env.CSSQUAKE_LOCAL_DEBUG_SITE === "1";
 }
@@ -49,7 +38,6 @@ export default defineConfig({
   plugins: localDebugSiteEnabled() ? [localDebugSitePlugin()] : [],
   define: {
     __ASCIIQUAKE_VERSION__: JSON.stringify(asciiQuakeVersion()),
-    __POLYCSS_VERSION__: JSON.stringify(polyCssVersion()),
     __GLYPHCSS_VERSION__: JSON.stringify(glyphCssVersion()),
   },
   publicDir: "build/generated/public",

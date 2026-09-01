@@ -1,17 +1,12 @@
-import {
-  buildPolySceneTransform,
-  polyCssDistanceToWorld,
-  type PolyFirstPersonControlsHandle,
-  type PolyMeshHandle,
-  type PolySceneHandle,
-  type Vec3,
-  worldPositionToPolyCss,
-} from "@layoutit/polycss";
+import type { Vec3 } from "glyphcss";
+import { renderDistanceToWorld } from "../quakeScale.js";
+import type {
+  QuakeAppControlsHandle as QuakeFirstPersonControlsHandle,
+  QuakeAppSceneHandle as QuakeSceneHandle,
+} from "./render/engine";
 
-import type { QuakePreparedRenderBundle } from "../prepare/scene";
 import { COLLISION_EPSILON, QUAKE_COLLISION_UNIT_SCALE } from "./constants";
 import { crossVec3, normalizeVec3 } from "./math";
-import { mountQuakeRenderBundleMesh, stripPolyMeshMetadata } from "./renderBundleMesh";
 import { quakeRuntimeViewportSize, type QuakeRuntimeViewportSize } from "./viewport";
 import type { QuakeGlyphGeometry } from "../types/quake";
 import {
@@ -94,10 +89,9 @@ export type QuakeResolvedViewmodelTuning = Required<QuakeViewmodelTuning>;
 
 export interface QuakeViewmodelModel {
   source: string;
-  renderBundle: QuakePreparedRenderBundle;
   /**
    * Per-frame ASCII (glyphcss) geometry — index 0 = idle, 1 = fire/muzzle —
-   * mirroring the render bundle's first-2-frame slice. Present when the prepare
+   * mirroring the prepared model's first two frames. Present when the prepare
    * step emits glyph geometry; consumed only in the glyphcss render mode.
    */
   glyphFrames?: QuakeGlyphGeometry[];
@@ -186,20 +180,18 @@ export interface QuakeViewmodelDebugRect {
 }
 
 export interface QuakeViewmodelControllerOptions {
-  scene: PolySceneHandle;
-  controls: Pick<PolyFirstPersonControlsHandle, "getOrigin">;
+  scene: QuakeSceneHandle;
+  controls: Pick<QuakeFirstPersonControlsHandle, "getOrigin">;
   getRenderOrigin?: () => Vec3;
   host: HTMLElement;
   layer: HTMLElement | null;
   /**
-   * Dedicated glyph weapon scene. When present AND `renderModeIsGlyph()` is
-   * true, the weapon is placed in that scene's local camera (mirroring the
-   * raster weapon stage) and the polycss carrier is hidden. Absent / polycss
-   * mode → the raster weapon is used. Must NOT be the world overlay: a shared
+   * Dedicated glyph weapon scene. When present, the weapon is placed in that
+   * scene's local camera (mirroring the raster weapon stage). Must NOT be the
+   * world overlay: a shared
    * world camera clips the near-field model (see createQuakeGlyphWeaponOverlay).
    */
   glyphWeaponOverlay?: QuakeGlyphWeaponOverlay;
-  renderModeIsGlyph?: () => boolean;
   /**
    * Model-scale multiplier on the raster weapon's per-axis scale. Tunable via
    * `?glyphWeaponScale=`. Default {@link QUAKE_GLYPH_WEAPON_SCALE} (identity
@@ -325,17 +317,17 @@ const QUAKE_WEAPON_MODEL_TUNING_OVERRIDES: Record<string, QuakeViewmodelTuning> 
 };
 export interface QuakeGlyphWeaponModelTrim {
   /** Coordinate conversion used before glyphcss sees the raw MDL vertices. */
-  basis: "legacy" | "polycss";
+  basis: "legacy" | "css";
   axisTrim: readonly [number, number];
   screenTrim: readonly [number, number];
   screenScale: readonly [number, number];
   /**
-   * Glyph weapon camera distance in CSS px. The PolyCSS basis uses the actual
+   * Glyph weapon camera distance in CSS px. The CSS basis uses the actual
    * weapon-stage eye plane (0); legacy fitted models retain their old pullback.
    */
   cameraBackoffPx: number;
   /**
-   * Sign applied to [yaw, pitch] before the glyph Euler conversion. PolyCSS-
+   * Sign applied to [yaw, pitch] before the glyph Euler conversion. CSS-
    * basis models use the conjugated world sign; legacy fitted models keep the
    * prior sign until they are migrated independently.
    */
@@ -352,10 +344,10 @@ export interface QuakeGlyphWeaponModelTrim {
  * ignore player origin/yaw/pitch, preserving the weapon's view-lock.
  */
 const QUAKE_GLYPH_WEAPON_MODEL_TRIM: Record<string, QuakeGlyphWeaponModelTrim> = {
-  // Migrated models use the exact PolyCSS→world basis. They need neither
+  // Migrated models use the exact CSS-to-world basis. They need neither
   // glyph-only mesh/screen corrections nor a camera pullback.
-  "progs/v_shot.mdl": { basis: "polycss", axisTrim: [1, 1], screenTrim: [0, 0], screenScale: [1, 1], cameraBackoffPx: 0, eulerSign: [1, 1] },
-  "progs/v_axe.mdl": { basis: "polycss", axisTrim: [1, 1], screenTrim: [0, 0], screenScale: [1, 1], cameraBackoffPx: 0, eulerSign: [1, 1] },
+  "progs/v_shot.mdl": { basis: "css", axisTrim: [1, 1], screenTrim: [0, 0], screenScale: [1, 1], cameraBackoffPx: 0, eulerSign: [1, 1] },
+  "progs/v_axe.mdl": { basis: "css", axisTrim: [1, 1], screenTrim: [0, 0], screenScale: [1, 1], cameraBackoffPx: 0, eulerSign: [1, 1] },
 };
 const QUAKE_GLYPH_WEAPON_TRIM_IDENTITY: QuakeGlyphWeaponModelTrim = {
   basis: "legacy", axisTrim: [1, 1], screenTrim: [0, 0], screenScale: [1, 1], cameraBackoffPx: 310, eulerSign: [-1, -1],
@@ -392,7 +384,6 @@ export function createQuakeViewmodelController({
   host,
   layer,
   glyphWeaponOverlay,
-  renderModeIsGlyph,
   glyphWeaponScale,
   glyphWeaponReach,
   glyphWeaponDensity,
@@ -413,12 +404,10 @@ export function createQuakeViewmodelController({
   glyphWeaponScreenScaleY,
   glyphWeaponStageOffset,
 }: QuakeViewmodelControllerOptions): QuakeViewmodelController {
-  const stage = layer ? createQuakeViewmodelStage(layer) : null;
-  let handle: PolyMeshHandle | null = null;
   // Glyph (ASCII) weapon: dedicated scene with its own camera, not the world
   // overlay. Render mode is fixed for the controller's lifetime (a mode
   // change forces a full remount).
-  const glyphMode = (renderModeIsGlyph?.() ?? false) && glyphWeaponOverlay != null;
+  const glyphMode = glyphWeaponOverlay != null;
   const glyphSink = glyphMode ? (glyphWeaponOverlay ?? null) : null;
   let glyphScaleFactor = glyphWeaponScale ?? QUAKE_GLYPH_WEAPON_SCALE;
   let glyphReach = glyphWeaponReach ?? QUAKE_GLYPH_WEAPON_REACH;
@@ -441,16 +430,13 @@ export function createQuakeViewmodelController({
     ...(glyphWeaponScreenScaleY !== undefined ? { screenScaleY: glyphWeaponScreenScaleY } : {}),
     ...(glyphWeaponStageOffset !== undefined ? { stageOffsetPx: glyphWeaponStageOffset } : {}),
   };
-  if (glyphMode && stage) stage.hidden = true;
   let glyphFrames: QuakeGlyphGeometry[] | null = null;
   let posedGlyphFrames: QuakeGlyphGeometry[] | null = null;
   let glyphFrameIndex = 0;
   let glyphRegistered = false;
   let lastGlyphWeaponTransform: QuakeGlyphEntityTransform | null = null;
-  let carrier: HTMLElement | null = null;
   let viewportSyncFrame = 0;
   let cachedLayerScale = 1;
-  let layerViewportDirty = true;
   let hostResizeObserver: ResizeObserver | null = null;
   let fireForwardKick = 0;
   let fireUpKick = 0;
@@ -458,7 +444,6 @@ export function createQuakeViewmodelController({
   let fireFrameTimers: number[] = [];
   let fireKickTimers: number[] = [];
   let tuning: QuakeResolvedViewmodelTuning = { ...QUAKE_WEAPON_DEFAULT_TUNING };
-  let appliedLocalTransform = "";
   let walkBob = 0;
   let walkBobOrigin: Vec3 | null = null;
   let walkBobAt = 0;
@@ -467,7 +452,6 @@ export function createQuakeViewmodelController({
 
   if (typeof ResizeObserver !== "undefined") {
     hostResizeObserver = new ResizeObserver(() => {
-      invalidateViewportLayer();
       queueViewportSync();
     });
     hostResizeObserver.observe(host);
@@ -475,26 +459,14 @@ export function createQuakeViewmodelController({
 
   function mount(model: QuakeViewmodelModel): void {
     const source = normalizedViewmodelSource(model.source);
-    if (carrier && mountedSource === source) {
+    if (mountedSource === source) {
       syncTransform();
       return;
     }
     clearFireAnimation();
     resetWalkBob();
-    invalidateViewportLayer();
-    handle?.remove();
-    handle = null;
-    carrier = null;
-    if (!stage) throw new Error("Quake viewmodel mount requires a viewmodel stage.");
-    handle = mountQuakeRenderBundleMesh(stage, model.renderBundle);
-    carrier = handle.element;
-    carrier.classList.add("viewmodel", "quake-viewmodel-transform");
-    stripPolyMeshMetadata(carrier);
-    appliedLocalTransform = "";
-    // Glyph mode: hide the polycss stage (the ASCII weapon renders in the
-    // dedicated overlay inside this layer) and load per-frame glyph geometry.
+    // Load per-frame glyph geometry into the dedicated weapon scene.
     if (glyphMode) {
-      if (stage) stage.hidden = true;
       if (layer) layer.hidden = !visible;
       removeGlyphWeapon();
       glyphFrames = model.glyphFrames ?? null;
@@ -503,7 +475,6 @@ export function createQuakeViewmodelController({
       lastGlyphWeaponTransform = null;
     }
     mountedSource = source;
-    prepareNozzleLeaves();
     syncTransform();
     setNozzleVisible(false);
   }
@@ -511,31 +482,25 @@ export function createQuakeViewmodelController({
   function remove(): void {
     clearFireAnimation();
     resetWalkBob();
-    handle?.remove();
-    handle = null;
-    carrier = null;
     removeGlyphWeapon();
     glyphFrames = null;
     posedGlyphFrames = null;
     lastGlyphWeaponTransform = null;
-    appliedLocalTransform = "";
     mountedSource = null;
   }
 
   function hasWeapon(): boolean {
-    return carrier !== null;
+    return mountedSource !== null;
   }
 
   function setVisible(nextVisible: boolean): void {
     visible = nextVisible;
-    // Glyph mode keeps the layer (it hosts the dedicated ASCII scene) and
-    // hides only the polycss stage. Polycss mode hides the whole layer.
+    // The layer hosts the dedicated ASCII scene.
     if (layer) layer.hidden = !visible;
     if (glyphMode) {
-      if (stage) stage.hidden = true;
       glyphSink?.setVisible(visible);
       if (!visible) removeGlyphWeapon();
-      else if (carrier) syncTransform();
+      else if (mountedSource) syncTransform();
     }
   }
 
@@ -546,10 +511,8 @@ export function createQuakeViewmodelController({
     const rotY = scene.camera.state.rotY ?? 270;
     const currentTuning = activeTuning();
     const weapon = debugWeaponTransform(weaponTransform(origin, rotX, rotY, walkBob));
-    const stageTransform = weaponStageTransform();
-    const target = roundDebugVec3(weaponStageTarget(origin, rotX, rotY));
     return {
-      mounted: carrier !== null,
+      mounted: mountedSource !== null,
       source: mountedSource,
       tuning: currentTuning,
       camera: {
@@ -577,22 +540,8 @@ export function createQuakeViewmodelController({
       },
       weapon,
       layer: layer ? elementDebugSnapshot(layer) : null,
-      stage: stage ? {
-        ...elementDebugSnapshot(stage),
-        target,
-        lookOffset: roundDebugNumber(polyCssDistanceToWorld(weaponPerspectivePx())),
-        cameraScale: roundDebugNumber(polyCssDistanceToWorld(scene.camera.state.zoom ?? 1)),
-        cameraTranslateZ: roundDebugNumber(-(scene.camera.state.distance ?? 0)),
-        inlineStyle: {
-          ...elementInlineStyleSnapshot(stage),
-          transform: stageTransform || null,
-        },
-      } : null,
-      mesh: carrier ? {
-        ...elementDebugSnapshot(carrier),
-        localTransform: appliedLocalTransform,
-        ...meshLeafDebugSnapshot(carrier),
-      } : null,
+      stage: null,
+      mesh: null,
     };
   }
 
@@ -618,7 +567,6 @@ export function createQuakeViewmodelController({
     tuning = sanitizeViewmodelTuning(next, tuning);
     posedGlyphFrames = null;
     glyphRegistered = false;
-    invalidateViewportLayer();
     syncTransform({ stable: true });
     return getTuning();
   }
@@ -627,13 +575,12 @@ export function createQuakeViewmodelController({
     tuning = { ...QUAKE_WEAPON_DEFAULT_TUNING };
     posedGlyphFrames = null;
     glyphRegistered = false;
-    invalidateViewportLayer();
     syncTransform({ stable: true });
     return getTuning();
   }
 
   function syncTransform(options: QuakeViewmodelSyncOptions = {}): void {
-    if (!carrier) return;
+    if (!mountedSource) return;
     if (options.stable) resetWalkBob();
     const movementOrigin = controls.getOrigin();
     const origin = getRenderOrigin?.() ?? movementOrigin;
@@ -641,10 +588,9 @@ export function createQuakeViewmodelController({
     const rotX = weaponViewRotX(scene.camera.state.rotX ?? 88);
     const rotY = scene.camera.state.rotY ?? 270;
     const weapon = weaponTransform(origin, rotX, rotY, bob);
-    syncCarrierTransform(weapon);
     syncLayer();
-    // Glyph mode: the polycss carrier is hidden; place the weapon in the
-    // dedicated scene's LOCAL frame (screen pitch 90, yaw 270) so looking
+    // Place the weapon in the dedicated scene's local frame (screen pitch 90,
+    // yaw 270) so looking
     // around cannot orbit it out of the frustum — the same contract as the
     // raster stage.
     if (glyphMode) {
@@ -655,7 +601,6 @@ export function createQuakeViewmodelController({
   }
 
   function queueViewportSync(): void {
-    invalidateViewportLayer();
     if (viewportSyncFrame) return;
     viewportSyncFrame = window.requestAnimationFrame(() => {
       viewportSyncFrame = 0;
@@ -724,8 +669,7 @@ export function createQuakeViewmodelController({
   }
 
   function setNozzleVisible(visible: boolean): void {
-    if (!carrier) return;
-    carrier.classList.toggle("quake-nozzle-visible", visible);
+    void visible;
   }
 
   function setWeaponFrameIndex(frameIndex: number): void {
@@ -772,7 +716,7 @@ export function createQuakeViewmodelController({
         weapon.position[1] * glyphReach,
         weapon.position[2] * glyphReach,
       ],
-      // PolyCSS and glyphcss express the same carrier orientation in different
+      // CSS transforms and glyphcss express carrier orientation in different
       // Euler conventions. Migrated models use the conjugated world sign;
       // legacy models retain their fitted sign until migrated independently.
       rotation: glyphEulerFromYawPitch(
@@ -811,23 +755,6 @@ export function createQuakeViewmodelController({
     if (!glyphSink || !glyphRegistered) return;
     glyphSink.removeEntity(QUAKE_WEAPON_GLYPH_ID);
     glyphRegistered = false;
-  }
-
-  function prepareNozzleLeaves(): void {
-    if (!carrier) return;
-    let nozzleGroup = carrier.querySelector<HTMLElement>(".quake-nozzle-group");
-    if (!nozzleGroup) {
-      nozzleGroup = carrier.ownerDocument.createElement("span");
-      nozzleGroup.className = "quake-nozzle-group";
-    }
-    for (const leaf of carrier.querySelectorAll<HTMLElement>("[data-weapon]")) {
-      leaf.removeAttribute("data-weapon");
-    }
-    for (const leaf of carrier.querySelectorAll<HTMLElement>("[data-nozzle]")) {
-      nozzleGroup.appendChild(leaf);
-      leaf.removeAttribute("data-nozzle");
-    }
-    carrier.appendChild(nozzleGroup);
   }
 
   function updateWalkBob(origin: Vec3): number {
@@ -889,16 +816,7 @@ export function createQuakeViewmodelController({
   }
 
   function syncLayer(): void {
-    if (!layer || !stage) return;
-    if (glyphMode) {
-      syncGlyphWeaponProjection();
-      return;
-    }
-    const sceneElement = scene.sceneElement;
-    syncViewportLayer();
-    setStyleValue(stage, "transform", weaponStageTransform());
-    const zoom = sceneElement.style.getPropertyValue("zoom");
-    setStyleValue(stage, "zoom", zoom);
+    syncGlyphWeaponProjection();
   }
 
   /**
@@ -994,62 +912,7 @@ export function createQuakeViewmodelController({
       posedGlyphFrames = null;
       glyphRegistered = false;
     }
-    invalidateViewportLayer();
-    if (carrier) syncTransform({ stable: true });
-  }
-
-  function syncViewportLayer(): void {
-    if (!layerViewportDirty || !layer || !stage) return;
-    const currentTuning = activeTuning();
-    const viewport = viewmodelViewportSize();
-    const layerScale = refreshWeaponLayerScale(viewport);
-    setStyleValue(
-      layer,
-      "left",
-      cssPx(
-        viewport.offsetLeft +
-          (viewport.width - QUAKE_WEAPON_REFERENCE_VIEWPORT_WIDTH_PX) / 2 +
-          currentTuning.screenXOffsetPx * layerScale,
-      ),
-    );
-    setStyleValue(
-      layer,
-      "top",
-      cssPx(
-        viewport.offsetTop +
-          viewport.height -
-          QUAKE_WEAPON_REFERENCE_VIEWPORT_HEIGHT_PX +
-          currentTuning.screenYOffsetPx * layerScale,
-      ),
-    );
-    setStyleValue(layer, "right", "auto");
-    setStyleValue(layer, "bottom", "auto");
-    setStyleValue(layer, "width", `${QUAKE_WEAPON_REFERENCE_VIEWPORT_WIDTH_PX}px`);
-    setStyleValue(layer, "height", `${QUAKE_WEAPON_REFERENCE_VIEWPORT_HEIGHT_PX}px`);
-    setStyleValue(layer, "transform-origin", "50% 100%");
-    setStyleValue(layer, "transform", weaponLayerTransform(layerScale));
-    setStyleValue(layer, "perspective", `${weaponPerspectivePx()}px`);
-    setStyleValue(
-      layer,
-      "perspective-origin",
-      `${QUAKE_WEAPON_REFERENCE_VIEWPORT_WIDTH_PX / 2 + currentTuning.perspectiveOriginXOffsetPx}px ` +
-        `${QUAKE_WEAPON_REFERENCE_VIEWPORT_HEIGHT_PX / 2 + currentTuning.perspectiveOriginYOffsetPx}px`,
-    );
-    setStyleValue(stage, "top", `calc(50% + ${currentTuning.stageOffsetPx}px)`);
-    layerViewportDirty = false;
-  }
-
-  function invalidateViewportLayer(): void {
-    layerViewportDirty = true;
-  }
-
-  function setStyleValue(element: HTMLElement, property: string, value: string): void {
-    if (element.style.getPropertyValue(property) === value) return;
-    if (value) {
-      element.style.setProperty(property, value);
-    } else {
-      element.style.removeProperty(property);
-    }
+    if (mountedSource) syncTransform({ stable: true });
   }
 
   // The tuning names (horizontal/vertical/depth) are SCREEN-axis intent, but
@@ -1116,48 +979,14 @@ export function createQuakeViewmodelController({
     return quakeRuntimeViewportSize({ width: hostRect.width, height: hostRect.height });
   }
 
-  function weaponLayerTransform(scale: number): string {
-    const currentTuning = activeTuning();
-    const transforms = [
-      Math.abs(currentTuning.screenScaleX - 1) > 0.001 ? `scaleX(${currentTuning.screenScaleX})` : "",
-      Math.abs(currentTuning.screenScaleY - 1) > 0.001 ? `scaleY(${currentTuning.screenScaleY})` : "",
-      Number.isFinite(scale) && Math.abs(scale - 1) > 0.001 ? `scale(${scale})` : "",
-    ];
-    return transforms.filter(Boolean).join(" ");
-  }
-
-  function weaponStageTransform(): string {
-    const origin = getRenderOrigin?.() ?? controls.getOrigin();
-    const rotX = weaponViewRotX(scene.camera.state.rotX ?? 88);
-    const rotY = scene.camera.state.rotY ?? 270;
-    return buildPolySceneTransform({
-      target: weaponStageTarget(origin, rotX, rotY),
-      rotX,
-      rotY,
-      zoom: scene.camera.state.zoom ?? 1,
-      distance: scene.camera.state.distance ?? 0,
-    });
-  }
-
   function weaponStageTarget(origin: Vec3, rotX: number, rotY: number): Vec3 {
     const forward = forwardDirection(rotX, rotY);
-    const lookOffset = polyCssDistanceToWorld(weaponPerspectivePx());
+    const lookOffset = renderDistanceToWorld(weaponPerspectivePx());
     return [
       origin[0] + forward[0] * lookOffset,
       origin[1] + forward[1] * lookOffset,
       origin[2] + forward[2] * lookOffset,
     ];
-  }
-
-  function syncCarrierTransform(weapon: QuakeViewmodelDebugSnapshot["weapon"]): void {
-    if (!carrier) return;
-    const baseTransform = weaponTransformCss(weapon);
-    const localTransform = weaponLocalTransform(activeTuning());
-    appliedLocalTransform = localTransform;
-    const nextTransform = baseTransform ? `${baseTransform} ${localTransform}` : localTransform;
-    if (carrier.style.transform !== nextTransform) {
-      carrier.style.transform = nextTransform;
-    }
   }
 
   return {
@@ -1209,26 +1038,13 @@ function sanitizeViewmodelTuning(
   return sanitized;
 }
 
-function weaponLocalTransform(tuning: QuakeResolvedViewmodelTuning): string {
-  const hasPivot =
-    Math.abs(tuning.localPivotXPx) > 0.001 ||
-    Math.abs(tuning.localPivotYPx) > 0.001 ||
-    Math.abs(tuning.localPivotZPx) > 0.001;
-  return [
-    `translate3d(0px, ${tuning.localYOffsetPx}px, 0px)`,
-    hasPivot ? `translate3d(${tuning.localPivotXPx}px, ${tuning.localPivotYPx}px, ${tuning.localPivotZPx}px)` : "",
-    `rotateX(${tuning.localPitchDeg}deg)`,
-    hasPivot ? `translate3d(${-tuning.localPivotXPx}px, ${-tuning.localPivotYPx}px, ${-tuning.localPivotZPx}px)` : "",
-  ].filter(Boolean).join(" ");
-}
-
 /** Legacy glyph-local pose retained for weapons not yet migrated. */
 export function quakeGlyphWeaponLocalPose(
   geometry: QuakeGlyphGeometry,
   tuning: Pick<QuakeResolvedViewmodelTuning,
     "localYOffsetPx" | "localPitchDeg" | "localPivotXPx" | "localPivotYPx" | "localPivotZPx">,
 ): QuakeGlyphGeometry {
-  const pxToWorld = (value: number) => polyCssDistanceToWorld(value);
+  const pxToWorld = (value: number) => renderDistanceToWorld(value);
   const pivot: Vec3 = [
     pxToWorld(tuning.localPivotXPx),
     pxToWorld(tuning.localPivotYPx),
@@ -1257,16 +1073,16 @@ export function quakeGlyphWeaponLocalPose(
 }
 
 /**
- * Apply CSS's `Ty · Tp · Rx · T-p` after conjugating through PolyCSS's X/Y
+ * Apply CSS's `Ty · Tp · Rx · T-p` after conjugating through the X/Y
  * basis swap. In MDL/world coordinates that is `Tx · Tp' · Ry(-pitch) · T-p'`,
  * with the CSS pivot `[x,y,z]` represented as world `[y,x,z]`.
  */
-export function quakeGlyphWeaponPolyCssLocalPose(
+export function quakeGlyphWeaponCssLocalPose(
   geometry: QuakeGlyphGeometry,
   tuning: Pick<QuakeResolvedViewmodelTuning,
     "localYOffsetPx" | "localPitchDeg" | "localPivotXPx" | "localPivotYPx" | "localPivotZPx">,
 ): QuakeGlyphGeometry {
-  const pxToWorld = (value: number) => polyCssDistanceToWorld(value);
+  const pxToWorld = (value: number) => renderDistanceToWorld(value);
   const pivot: Vec3 = [
     pxToWorld(tuning.localPivotYPx),
     pxToWorld(tuning.localPivotXPx),
@@ -1299,8 +1115,8 @@ export function quakeGlyphWeaponModelLocalPose(
   tuning: Pick<QuakeResolvedViewmodelTuning,
     "localYOffsetPx" | "localPitchDeg" | "localPivotXPx" | "localPivotYPx" | "localPivotZPx">,
 ): QuakeGlyphGeometry {
-  return quakeGlyphWeaponModelTrim(modelPath).basis === "polycss"
-    ? quakeGlyphWeaponPolyCssLocalPose(geometry, tuning)
+  return quakeGlyphWeaponModelTrim(modelPath).basis === "css"
+    ? quakeGlyphWeaponCssLocalPose(geometry, tuning)
     : quakeGlyphWeaponLocalPose(geometry, tuning);
 }
 
@@ -1310,7 +1126,7 @@ export function quakeGlyphWeaponModelScale(
   glyphScaleFactor: number,
 ): Vec3 {
   const trim = quakeGlyphWeaponModelTrim(modelPath);
-  if (trim.basis === "polycss") {
+  if (trim.basis === "css") {
     return [
       weaponScale[1] * glyphScaleFactor * trim.axisTrim[1],
       weaponScale[0] * glyphScaleFactor * trim.axisTrim[0],
@@ -1322,25 +1138,6 @@ export function quakeGlyphWeaponModelScale(
     weaponScale[0] * glyphScaleFactor * trim.axisTrim[0],
     weaponScale[1] * glyphScaleFactor * trim.axisTrim[1],
   ];
-}
-
-function weaponTransformCss(weapon: QuakeViewmodelDebugSnapshot["weapon"]): string {
-  const [x, y, z] = weapon.position;
-  const cssPosition = worldPositionToPolyCss([x, y, z]);
-  const [rotX, rotY, rotZ] = weapon.rotation;
-  const [scaleX, scaleY, scaleZ] = weapon.scale;
-  return [
-    `translate3d(${cssPosition[0]}px, ${cssPosition[1]}px, ${cssPosition[2]}px)`,
-    Math.abs(rotX) > 0.001 ? `rotateY(${-rotX}deg)` : "",
-    Math.abs(rotY) > 0.001 ? `rotateX(${rotY}deg)` : "",
-    Math.abs(rotZ) > 0.001 ? `rotateZ(${-rotZ}deg)` : "",
-    `scale3d(${scaleX}, ${scaleY}, ${scaleZ})`,
-  ].filter(Boolean).join(" ");
-}
-
-function cssPx(value: number): string {
-  const rounded = Math.round(value * 1000) / 1000;
-  return `${Object.is(rounded, -0) ? 0 : rounded}px`;
 }
 
 function elementDebugSnapshot(element: HTMLElement): QuakeViewmodelElementDebugSnapshot {
@@ -1453,13 +1250,6 @@ function roundDebugNumber(value: number, decimals = 4): number {
   if (!Number.isFinite(value)) return value;
   const scale = 10 ** decimals;
   return Math.round(value * scale) / scale;
-}
-
-function createQuakeViewmodelStage(layer: HTMLElement): HTMLElement {
-  const stage = document.createElement("div");
-  stage.className = "quake-weapon-stage polycss-scene";
-  layer.appendChild(stage);
-  return stage;
 }
 
 function forwardDirection(rotX: number, rotY: number): Vec3 {

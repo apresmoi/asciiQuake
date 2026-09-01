@@ -1,4 +1,4 @@
-import type { Vec3 } from "@layoutit/polycss";
+import type { Vec3 } from "glyphcss";
 
 import type { QuakeEntity } from "../../types/quake";
 import { QUAKE_PLAYER_MINS_Z, STEP_HEIGHT } from "../constants";
@@ -11,6 +11,7 @@ import type { QuakeCanDamageResult } from "../shootables/damage";
 import type { CssQuakeDamageableBrushProgressSnapshot } from "../saveLoad";
 import type {
   QuakeEnemyProjectileDebugCapture,
+  QuakeShootablesDebugCullingSnapshot,
   QuakeShootableEnemyAcquisitionDebugResult,
   QuakeShootablesDebugStats,
 } from "../shootables";
@@ -22,11 +23,6 @@ import type {
 } from "../weapons";
 import type { QuakeWorldDebugStats } from "../world";
 
-const QUAKE_DEBUG_PROJECTION_LEAF_BUDGET_PX = 5000;
-const QUAKE_DEBUG_PICKUP_PROJECTION_LEAF_VIEWPORT_BUDGET = 0.1;
-const QUAKE_DEBUG_PROJECTION_MESH_VIEWPORT_BUDGET = 0.55;
-const QUAKE_DEBUG_PROJECTION_TOTAL_VIEWPORT_BUDGET = 0.45;
-const QUAKE_DEBUG_PROJECTION_MESH_LIMIT = 8;
 const QUAKE_DEBUG_POSE_EPSILON = 0.0001;
 
 export interface QuakeDebugHooks {
@@ -202,7 +198,7 @@ export interface QuakeDebugRuntime {
   pickupsStats(): QuakePickupDebugStats;
   playerEyeHeight(): number;
   playerMoveDebug(): Record<string, unknown>;
-  pointToPoly(point: { x: number; y: number; z: number }): Vec3;
+  pointToWorld(point: { x: number; y: number; z: number }): Vec3;
   renderOrigin(): Vec3;
   requestMultiplayerPickup(entityIndex: number): boolean;
   projectileImpact(
@@ -219,6 +215,7 @@ export interface QuakeDebugRuntime {
   setShootableOrigin(entityIndex: number, origin: Vec3): boolean;
   setShootableYaw(entityIndex: number, yaw: number): boolean;
   shootablesStats(): QuakeShootablesDebugStats;
+  shootableCulling(origin: [number, number, number]): QuakeShootablesDebugCullingSnapshot;
   triggersStats(): Record<string, unknown>;
   syncCrosshairTarget(): void;
   syncGameplay(origin: [number, number, number]): void;
@@ -392,7 +389,7 @@ function damageQuakeDebugPlayer(
   const context = Number.isFinite(inflictorX) &&
     Number.isFinite(inflictorY) &&
     Number.isFinite(inflictorZ)
-    ? { inflictorOrigin: runtime.pointToPoly({ x: inflictorX ?? 0, y: inflictorY ?? 0, z: inflictorZ ?? 0 }) }
+    ? { inflictorOrigin: runtime.pointToWorld({ x: inflictorX ?? 0, y: inflictorY ?? 0, z: inflictorZ ?? 0 }) }
     : undefined;
   runtime.hideMainMenu();
   return runtime.damagePlayer(amount, context) ||
@@ -612,7 +609,7 @@ function projectileImpactQuakeDebugWeapon(
   return runtime.projectileImpact(
     weapon,
     Math.round(entityIndex),
-    runtime.pointToPoly({ x, y, z }),
+    runtime.pointToWorld({ x, y, z }),
     directDamage,
   );
 }
@@ -627,7 +624,7 @@ function setQuakeDebugEntityOrigin(
   if (runtime.isLoading() || !runtime.hasCurrentScene()) return false;
   if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) return false;
   runtime.hideMainMenu();
-  return runtime.setShootableOrigin(entityIndex, runtime.pointToPoly({ x, y, z }));
+  return runtime.setShootableOrigin(entityIndex, runtime.pointToWorld({ x, y, z }));
 }
 
 function setQuakeDebugEntityYaw(runtime: QuakeDebugRuntime, entityIndex: number, yaw: number): boolean {
@@ -677,7 +674,7 @@ function focusQuakeDebugEntity(
 ): boolean {
   const entity = runtime.entities().get(entityIndex);
   if (!entity?.origin) return false;
-  const entityOrigin = runtime.pointToPoly(entity.origin);
+  const entityOrigin = runtime.pointToWorld(entity.origin);
   const forward = runtime.forwardDirection(rotX, rotY);
   return setQuakeDebugPose(runtime, [
     entityOrigin[0] - forward[0] * distance,
@@ -749,7 +746,7 @@ function setQuakeDebugViewpos(
   if (!quakeDebugSupportsRoll(rollOrOptions)) return false;
 
   const currentRotation = runtime.cameraRotation();
-  const origin = runtime.pointToPoly({ x, y, z });
+  const origin = runtime.pointToWorld({ x, y, z });
   const eyeOrigin = [
     origin[0],
     origin[1],
@@ -778,7 +775,7 @@ function setQuakeDebugGroundViewpos(
   if (!quakeDebugSupportsRoll(rollOrOptions)) return false;
 
   const currentRotation = runtime.cameraRotation();
-  const playerOrigin = runtime.pointToPoly({ x, y, z });
+  const playerOrigin = runtime.pointToWorld({ x, y, z });
   const footZ = playerOrigin[2] + QUAKE_PLAYER_MINS_Z;
   const groundZ = runtime.floorAt(
     playerOrigin[0],
@@ -818,23 +815,13 @@ function buildQuakeDebugStats(runtime: QuakeDebugRuntime): Record<string, unknow
   const playerMove = runtime.playerMoveDebug();
   const cameraRotation = runtime.cameraRotation();
   const cameraForward = runtime.forwardDirection(cameraRotation.rotX, cameraRotation.rotY);
-  const enemyMeshes = Array.from(document.querySelectorAll<HTMLElement>(".polycss-mesh.shootable.enemy"));
-  const activeEnemyMeshes = enemyMeshes.filter(
-    (element) => !element.classList.contains("quake-shootable-prewarmed") &&
-      !element.classList.contains("quake-frame-hidden"),
-  );
-  const pickupMeshes = Array.from(document.querySelectorAll<HTMLElement>(".polycss-mesh.pickup"));
-  const activePickupMeshes = pickupMeshes.filter((element) => !element.hidden);
-  const hiddenEnemyFrameMeshes = enemyMeshes.filter((element) => element.classList.contains("quake-frame-hidden"));
-  const prewarmedEnemyMeshes = enemyMeshes.filter((element) => element.classList.contains("quake-shootable-prewarmed"));
-  const mountedEnemyLeaves = enemyMeshes.reduce(
-    (total, element) => total + element.querySelectorAll("b,i,s,u").length,
-    0,
-  );
+  const origin = runtime.controls.getOrigin();
+  const pickupStats = runtime.pickupsStats();
+  const shootableCulling = runtime.shootableCulling(origin);
   return {
     loading: runtime.isLoading(),
     mapName: runtime.currentMapName(),
-    origin: runtime.controls.getOrigin(),
+    origin,
     renderOrigin: runtime.renderOrigin(),
     cameraRotX: cameraRotation.rotX,
     cameraRotY: cameraRotation.rotY,
@@ -853,167 +840,20 @@ function buildQuakeDebugStats(runtime: QuakeDebugRuntime): Record<string, unknow
     playerNails: inventory.nails,
     playerRockets: inventory.rockets,
     playerCells: inventory.cells,
-    enemyMeshes: enemyMeshes.length,
-    activeEnemyMeshes: activeEnemyMeshes.length,
-    hiddenEnemyFrameMeshes: hiddenEnemyFrameMeshes.length,
-    prewarmedEnemyMeshes: prewarmedEnemyMeshes.length,
-    pickupMeshes: pickupMeshes.length,
-    activePickupMeshes: activePickupMeshes.length,
-    mountedEnemyLeaves,
-    mountedEnemyAtlasLeaves: enemyMeshes.reduce(
-      (total, element) => total + element.querySelectorAll("s").length,
-      0,
-    ),
-    projectionBudget: {
-      leafArea: QUAKE_DEBUG_PROJECTION_LEAF_BUDGET_PX,
-      meshViewportRatio: QUAKE_DEBUG_PROJECTION_MESH_VIEWPORT_BUDGET,
-      totalViewportRatio: QUAKE_DEBUG_PROJECTION_TOTAL_VIEWPORT_BUDGET,
-    },
-    enemyProjection: buildQuakeProjectionStats(activeEnemyMeshes, "enemy"),
-    pickupProjection: buildQuakeProjectionStats(activePickupMeshes, "pickup"),
+    enemyEntities: shootableStats.enemyShootables,
+    mountedEnemyEntities: shootableStats.mountedEnemyShootables,
+    visibleEnemyEntities: shootableStats.visibleEnemyShootables,
+    pickupEntities: pickupStats.total,
+    visiblePickupEntities: pickupStats.visibleEntityIndexes.length,
     movers: runtime.moversStats(),
     multiplayer: runtime.multiplayerStats(),
-    pickups: runtime.pickupsStats(),
+    pickups: pickupStats,
     triggers: runtime.triggersStats(),
     worldLeaves: worldStats.mountedLeaves,
     worldAtlasLeaves: worldStats.mountedAtlasLeaves,
     viewmodel: runtime.viewmodelDebug(),
     world: worldStats,
     shootables: shootableStats,
+    shootableCulling,
   };
-}
-
-type QuakeProjectionMeshKind = "enemy" | "pickup";
-
-interface QuakeProjectionMeshStats {
-  kind: QuakeProjectionMeshKind;
-  entityIndex: number | null;
-  classname: string | null;
-  leafCount: number;
-  atlasLeafCount: number;
-  tagCounts: Record<"b" | "i" | "s" | "u", number>;
-  clippedArea: number;
-  maxLeafArea: number;
-  p95LeafArea: number;
-  visibleLeafSamples: number;
-  leavesOverBudget: number;
-  overBudget: boolean;
-  prewarmed: boolean;
-  frameHidden: boolean;
-  animationFrame: number | null;
-  animationMode: string | null;
-  paintBackend: string | null;
-  attack: string | null;
-}
-
-function buildQuakeProjectionStats(meshes: HTMLElement[], kind: QuakeProjectionMeshKind): Record<string, unknown> {
-  const viewportWidth = Math.max(0, window.innerWidth || document.documentElement.clientWidth || 0);
-  const viewportHeight = Math.max(0, window.innerHeight || document.documentElement.clientHeight || 0);
-  const viewportArea = viewportWidth * viewportHeight;
-  const meshAreaBudget = viewportArea * QUAKE_DEBUG_PROJECTION_MESH_VIEWPORT_BUDGET;
-  const totalAreaBudget = viewportArea * QUAKE_DEBUG_PROJECTION_TOTAL_VIEWPORT_BUDGET;
-  const leafAreaBudget = quakeDebugProjectionLeafAreaBudget(kind, viewportArea);
-  const meshStats = meshes.map((element) => buildQuakeProjectionMeshStats(
-    element,
-    kind,
-    viewportWidth,
-    viewportHeight,
-    meshAreaBudget,
-    leafAreaBudget,
-  ));
-  const rankedMeshes = [...meshStats].sort((a, b) => b.clippedArea - a.clippedArea);
-  const clippedArea = meshStats.reduce((total, mesh) => total + mesh.clippedArea, 0);
-  return {
-    viewportWidth,
-    viewportHeight,
-    meshAreaBudget: Math.round(meshAreaBudget),
-    totalAreaBudget: Math.round(totalAreaBudget),
-    leafAreaBudget,
-    meshCount: meshStats.length,
-    leafCount: meshStats.reduce((total, mesh) => total + mesh.leafCount, 0),
-    atlasLeafCount: meshStats.reduce((total, mesh) => total + mesh.atlasLeafCount, 0),
-    visibleLeafSamples: meshStats.reduce((total, mesh) => total + mesh.visibleLeafSamples, 0),
-    clippedArea: Math.round(clippedArea),
-    maxMeshClippedArea: Math.round(rankedMeshes[0]?.clippedArea ?? 0),
-    maxLeafArea: Math.round(Math.max(0, ...meshStats.map((mesh) => mesh.maxLeafArea))),
-    overBudgetTotal: clippedArea > totalAreaBudget,
-    overBudgetMeshes: meshStats.filter((mesh) => mesh.overBudget).length,
-    meshes: rankedMeshes.slice(0, QUAKE_DEBUG_PROJECTION_MESH_LIMIT),
-  };
-}
-
-function buildQuakeProjectionMeshStats(
-  element: HTMLElement,
-  kind: QuakeProjectionMeshKind,
-  viewportWidth: number,
-  viewportHeight: number,
-  meshAreaBudget: number,
-  leafAreaBudget: number,
-): QuakeProjectionMeshStats {
-  const leaves = Array.from(element.querySelectorAll<HTMLElement>("b,i,s,u"));
-  const tagCounts: Record<"b" | "i" | "s" | "u", number> = { b: 0, i: 0, s: 0, u: 0 };
-  const visibleLeafAreas: number[] = [];
-  let clippedArea = 0;
-  let maxLeafArea = 0;
-  let leavesOverBudget = 0;
-
-  for (const leaf of leaves) {
-    const tag = leaf.tagName.toLowerCase();
-    if (tag === "b" || tag === "i" || tag === "s" || tag === "u") tagCounts[tag] += 1;
-    const area = clippedRectArea(leaf.getBoundingClientRect(), viewportWidth, viewportHeight);
-    if (area <= 0) continue;
-    visibleLeafAreas.push(area);
-    clippedArea += area;
-    maxLeafArea = Math.max(maxLeafArea, area);
-    if (area > leafAreaBudget) leavesOverBudget++;
-  }
-
-  visibleLeafAreas.sort((a, b) => a - b);
-  return {
-    kind,
-    entityIndex: numericDatasetValue(element.dataset.entityIndex),
-    classname: element.dataset.classname ?? null,
-    leafCount: leaves.length,
-    atlasLeafCount: tagCounts.s,
-    tagCounts,
-    clippedArea: Math.round(clippedArea),
-    maxLeafArea: Math.round(maxLeafArea),
-    p95LeafArea: Math.round(percentileSorted(visibleLeafAreas, 0.95)),
-    visibleLeafSamples: visibleLeafAreas.length,
-    leavesOverBudget,
-    overBudget: clippedArea > meshAreaBudget || leavesOverBudget > 0,
-    prewarmed: element.classList.contains("quake-shootable-prewarmed"),
-    frameHidden: element.classList.contains("quake-frame-hidden"),
-    animationFrame: numericDatasetValue(element.dataset.animationFrame),
-    animationMode: element.dataset.animationMode ?? null,
-    paintBackend: element.dataset.paintBackend ?? null,
-    attack: element.dataset.attack ?? null,
-  };
-}
-
-function quakeDebugProjectionLeafAreaBudget(kind: QuakeProjectionMeshKind, viewportArea: number): number {
-  if (kind === "pickup") {
-    return Math.round(viewportArea * QUAKE_DEBUG_PICKUP_PROJECTION_LEAF_VIEWPORT_BUDGET);
-  }
-  return QUAKE_DEBUG_PROJECTION_LEAF_BUDGET_PX;
-}
-
-function clippedRectArea(rect: DOMRect, viewportWidth: number, viewportHeight: number): number {
-  const left = Math.max(0, Math.min(viewportWidth, rect.left));
-  const right = Math.max(0, Math.min(viewportWidth, rect.right));
-  const top = Math.max(0, Math.min(viewportHeight, rect.top));
-  const bottom = Math.max(0, Math.min(viewportHeight, rect.bottom));
-  return Math.max(0, right - left) * Math.max(0, bottom - top);
-}
-
-function percentileSorted(values: number[], ratio: number): number {
-  if (!values.length) return 0;
-  const index = Math.min(values.length - 1, Math.max(0, Math.floor((values.length - 1) * ratio)));
-  return values[index] ?? 0;
-}
-
-function numericDatasetValue(value: string | undefined): number | null {
-  if (value === undefined) return null;
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : null;
 }

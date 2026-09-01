@@ -9,7 +9,7 @@ const {
   createQuakeImpactParticleFlow,
 } = await importTsModule("src/runtime/app/impactParticleFlow.ts");
 
-test("impact particles use a fixed b-quad pool and do not allocate during spawn", () => {
+test("impact particles keep a detached fixed pool and do not allocate during spawn", () => {
   const previousCancelAnimationFrame = globalThis.cancelAnimationFrame;
   const previousDocument = globalThis.document;
   const previousRandom = Math.random;
@@ -65,8 +65,7 @@ test("impact particles use a fixed b-quad pool and do not allocate during spawn"
     });
 
     assert.equal(createElementCalls, 24);
-    assert.equal(layer.children.length, 24);
-    assert.deepEqual([...layer.children].map((element) => element.tagName), new Array(24).fill("B"));
+    assert.equal(layer.children.length, 0);
 
     createElementCalls = 0;
     flow.spawnBlood({ count: 10 });
@@ -78,7 +77,7 @@ test("impact particles use a fixed b-quad pool and do not allocate during spawn"
     flow.setEnabled(false);
 
     assert.equal(frames.size, 0);
-    assert.equal([...layer.children].every((element) => element.style.opacity === "0"), true);
+    assert.equal(layer.children.length, 0);
 
     createElementCalls = 0;
     flow.spawnBlood();

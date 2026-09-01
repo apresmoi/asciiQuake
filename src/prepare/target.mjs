@@ -19,7 +19,7 @@ const env = {
   ...(mode === "map"
     ? {
         QUAKE_PREPARE_MAP_ONLY: "1",
-        QUAKE_RENDER_BUNDLE_MAPS: targets.join(","),
+        QUAKE_PREPARE_MAPS: targets.join(","),
       }
     : {
         QUAKE_PREPARE_ONLY: "models",

@@ -1,4 +1,5 @@
-import type { PolyFirstPersonControlsHandle, Vec3 } from "@layoutit/polycss";
+import type { Vec3 } from "glyphcss";
+import type { QuakeAppControlsHandle as QuakeFirstPersonControlsHandle } from "./render/engine";
 
 import type { QuakeEntity, QuakeScene } from "../types/quake";
 import type { QuakeCollisionWorld, QuakeTouchedTrigger } from "./collision";
@@ -159,7 +160,7 @@ export interface QuakePlayerControllerOptions {
   activateSolidTouch: (touch: QuakeTouchedTrigger) => void;
   canUseGameplayInput: () => boolean;
   canTakeDamage: () => boolean;
-  controls: PolyFirstPersonControlsHandle;
+  controls: QuakeFirstPersonControlsHandle;
   getYaw: () => number;
   getCollisionWorld: () => QuakeCollisionWorld | null;
   getCurrentScene: () => QuakeScene | null;
@@ -174,7 +175,7 @@ export interface QuakePlayerControllerOptions {
   onHazardState: (kind: QuakeHazardDamage["kind"] | null) => void;
   onInventoryChanged: () => void;
   onRespawn: (scene: QuakeScene, origin: [number, number, number]) => void;
-  pointToPoly: (point: { x: number; y: number; z: number }) => Vec3;
+  pointToWorld: (point: { x: number; y: number; z: number }) => Vec3;
   resolveShootablesCollision: (
     result: { origin: [number, number, number]; groundZ: number; grounded: boolean; touches?: QuakeTouchedTrigger[] },
     previous: [number, number, number],
@@ -574,7 +575,7 @@ export function createQuakePlayerController(options: QuakePlayerControllerOption
     stopDeathToss();
 
     const collisionWorld = options.getCollisionWorld();
-    const hullOrigin = options.pointToPoly(destination.origin);
+    const hullOrigin = options.pointToWorld(destination.origin);
     const eyeOrigin: Vec3 = [
       hullOrigin[0],
       hullOrigin[1],

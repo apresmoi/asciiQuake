@@ -1,4 +1,3 @@
-import { syncQuakeRenderBundleDebugLabels, syncQuakeRenderBundleDebugOutlines } from "../renderBundleMesh";
 import type { QuakeShootablesDebugStats } from "../shootables";
 import type { QuakeWorldDebugStats } from "../world";
 
@@ -210,9 +209,6 @@ export function createQuakeDebugPanelFlow(options: QuakeDebugPanelFlowOptions): 
       options.debugShowOutlinesOption.disabled = false;
     }
     if (options.debugShowLabelsOption) options.debugShowLabelsOption.checked = showLabels;
-    syncQuakeRenderBundleDebugOutlines(effectiveShowOutlines, { hideTextures });
-    syncQuakeRenderBundleDebugLabels(showLabels);
-    options.removeBodyClasses("quake-poly-debug");
     options.setBodyClass("quake-debug-no-textures", hideTextures);
     options.setBodyClass("quake-debug-outlines", effectiveShowOutlines);
     options.setBodyClass("quake-debug-labels", showLabels);

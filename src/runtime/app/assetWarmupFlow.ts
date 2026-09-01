@@ -1,18 +1,9 @@
-import type { QuakeEntity, QuakePreparedRenderBundle, QuakeScene } from "../../types/quake";
-import { shouldSpawnQuakeEntityForCurrentGame } from "../entities";
-import { markQuakeTrace } from "../debug/traceMarks";
+import type { QuakeEntity, QuakeScene } from "../../types/quake";
+import type { QuakeLoadingProgressTracker } from "../loadingConsole";
 import {
-  quakeLoadingProgressGroup,
-  type QuakeLoadingProgressTracker,
-} from "../loadingConsole";
-import {
-  quakePickupModelPath,
-  quakePickupModelRenderBundleFrameSet,
   type QuakePickupModelLibrary,
   type QuakeProgramMetadata,
 } from "../pickups";
-import { preloadQuakeRenderBundleAssets } from "../renderBundleMesh";
-import { quakeShootableModelPath } from "../shootables";
 import type { QuakeAssetManifest } from "./session";
 
 export interface QuakeAssetWarmupFlowOptions {
@@ -70,57 +61,17 @@ export function createQuakeAssetWarmupFlow(options: QuakeAssetWarmupFlowOptions)
   }
 
   async function preloadMapModelAssets(
-    mapName: string,
+    _mapName: string,
     progress?: QuakeLoadingProgressTracker,
   ): Promise<void> {
-    const library = currentModelLibrary;
-    if (!library) return;
-    const map = options.assetManifest().maps.find((item) => item.mapName === mapName);
-    const modelPaths = map?.modelPaths;
-    if (!modelPaths) return;
-    await preloadPickupModelRenderBundleAssets(
-      library,
-      modelPaths,
-      quakeLoadingProgressGroup(progress, "Map model assets"),
-    );
+    progress?.startTask("Map model geometry")();
   }
 
   async function preloadSceneModelAssets(
-    scene: QuakeScene,
+    _scene: QuakeScene,
     progress?: QuakeLoadingProgressTracker,
   ): Promise<void> {
-    const library = currentModelLibrary;
-    if (!library) return;
-    const pickupModelPaths = new Set<string>();
-    const monsterModelPaths = new Set<string>();
-    const runtime = scene.entityManifest.runtime;
-    const entitiesByIndex = new Map(scene.entities.map((entity) => [entity.index, entity]));
-    const pickupEntities = sceneEntitiesForIndexes(entitiesByIndex, runtime.pickupEntityIndexes);
-    for (const entity of pickupEntities) {
-      if (!shouldSpawnPickup(entity)) continue;
-      const modelPath = quakePickupModelPath(entity, currentProgramMetadata, scene.gameLogic);
-      if (modelPath) pickupModelPaths.add(modelPath);
-    }
-    const shootableEntities = sceneEntitiesForIndexes(entitiesByIndex, runtime.shootableEntityIndexes);
-    for (const entity of shootableEntities) {
-      if (!shouldSpawnShootable(entity)) continue;
-      const modelPath = quakeShootableModelPath(entity, currentProgramMetadata);
-      if (modelPath) monsterModelPaths.add(modelPath);
-    }
-    await Promise.all([
-      preloadOptionalModelRenderBundleAssets(
-        "pickup",
-        library,
-        pickupModelPaths,
-        quakeLoadingProgressGroup(progress, "Pickup models"),
-      ),
-      preloadOptionalModelRenderBundleAssets(
-        "monster",
-        library,
-        monsterModelPaths,
-        quakeLoadingProgressGroup(progress, "Monster models"),
-      ),
-    ]);
+    progress?.startTask("Scene model geometry")();
   }
 
   function shouldSpawnPickup(entity: QuakeEntity): boolean {
@@ -139,54 +90,4 @@ export function createQuakeAssetWarmupFlow(options: QuakeAssetWarmupFlowOptions)
     preloadSceneModelAssets,
     programMetadata,
   };
-}
-
-function sceneEntitiesForIndexes(
-  entitiesByIndex: ReadonlyMap<number, QuakeEntity>,
-  indexes: readonly number[],
-): QuakeEntity[] {
-  const out: QuakeEntity[] = [];
-  const seen = new Set<number>();
-  for (const index of indexes) {
-    if (seen.has(index)) continue;
-    seen.add(index);
-    const entity = entitiesByIndex.get(index);
-    if (entity) out.push(entity);
-  }
-  return out;
-}
-
-async function preloadPickupModelRenderBundleAssets(
-  library: QuakePickupModelLibrary,
-  modelPaths: Iterable<string>,
-  progress?: QuakeLoadingProgressTracker,
-): Promise<void> {
-  const bundles = new Set<QuakePreparedRenderBundle>();
-  for (const modelPath of modelPaths) {
-    const model = library.models[modelPath];
-    if (!model) continue;
-    if (model.renderBundle) bundles.add(model.renderBundle);
-    const frameSet = quakePickupModelRenderBundleFrameSet(model);
-    if (frameSet) {
-      bundles.add(frameSet.renderBundle);
-    }
-    for (const frame of model.animationFrames ?? []) bundles.add(frame.renderBundle);
-  }
-  await Promise.all([...bundles].map((renderBundle) => preloadQuakeRenderBundleAssets(renderBundle, progress)));
-}
-
-async function preloadOptionalModelRenderBundleAssets(
-  kind: "monster" | "pickup",
-  library: QuakePickupModelLibrary,
-  modelPaths: Iterable<string>,
-  progress?: QuakeLoadingProgressTracker,
-): Promise<void> {
-  try {
-    await preloadPickupModelRenderBundleAssets(library, modelPaths, progress);
-  } catch (error) {
-    markQuakeTrace("asset-warmup-skip", {
-      kind,
-      reason: error instanceof Error ? error.message : String(error),
-    });
-  }
 }

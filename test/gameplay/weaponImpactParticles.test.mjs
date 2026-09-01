@@ -118,7 +118,7 @@ function createExploboxShootablesHarness(entity) {
     monsterRuntimeEnabled: () => false,
     onExplosion: (event) => { explosions.push(event); },
     pixelate: () => undefined,
-    pointToPoly: (point) => [point.x, point.y, point.z],
+    pointToWorld: (point) => [point.x, point.y, point.z],
     schedulePresentationResync: () => undefined,
     shouldSpawn: () => true,
     visibleLeavesAt: () => new Set([0]),

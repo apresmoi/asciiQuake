@@ -1,4 +1,9 @@
-import type { PolyFirstPersonControlsHandle, PolyMeshHandle, PolySceneHandle, Vec3 } from "@layoutit/polycss";
+import type { Vec3 } from "glyphcss";
+import type {
+  QuakeAppControlsHandle as QuakeFirstPersonControlsHandle,
+  QuakeAppSceneHandle as QuakeSceneHandle,
+  QuakeMeshHandle,
+} from "./render/engine";
 
 import {
   QUAKE_PLAYER_WEAPON_FIRE_FACTS,
@@ -98,8 +103,8 @@ export interface QuakeWeaponExplosionImpactEvent {
 }
 
 export interface QuakeWeaponsControllerOptions {
-  scene: PolySceneHandle;
-  controls: Pick<PolyFirstPersonControlsHandle, "getOrigin">;
+  scene: QuakeSceneHandle;
+  controls: Pick<QuakeFirstPersonControlsHandle, "getOrigin">;
   addProjectileMesh?(modelPath: string, weapon: QuakeWeaponId): QuakeWeaponProjectileVisualHandle | null;
   canUseGameplayInput(): boolean;
   hasViewmodel(): boolean;
@@ -132,7 +137,7 @@ export interface QuakeWeaponsControllerOptions {
 }
 
 export interface QuakeWeaponProjectileVisualHandle {
-  handle: PolyMeshHandle;
+  handle: QuakeMeshHandle;
   scale: number;
 }
 

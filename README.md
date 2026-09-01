@@ -1,8 +1,8 @@
 # asciiQuake 👹
 
-A port of id Software's [Quake](https://github.com/id-software/quake) that renders BSP worlds as ASCII text through [GlyphCSS](https://glyphcss.com/), without a WebGL or canvas renderer. asciiQuake preprocesses original Quake data into browser-ready JSON, image assets, and render bundles, then runs the game in TypeScript.
+A port of id Software's [Quake](https://github.com/id-software/quake) that renders BSP worlds as ASCII text through [GlyphCSS](https://glyphcss.com/), without a WebGL or canvas renderer. asciiQuake preprocesses original Quake data into compact browser-ready geometry and runs the game in TypeScript.
 
-asciiQuake is a fork of [cssQuake](https://github.com/LayoutitStudio/cssQuake), created by [Layoutit](https://layoutit.com/), which renders the same world as real HTML/CSS 3D geometry through [PolyCSS](https://github.com/LayoutitStudio/polycss). This fork swaps the renderer for GlyphCSS: the world is painted as a grid of coloured characters instead of DOM polygons. PolyCSS is still the engine underneath — it owns game logic, camera, controls, and collision — while the ASCII output is composited over its render. Press `V` in-game to cycle between the two backends.
+asciiQuake is a fork of [cssQuake](https://github.com/LayoutitStudio/cssQuake), created by [Layoutit](https://layoutit.com/). It keeps the source-backed Quake preparation and browser gameplay systems while replacing the DOM-polygon renderer with GlyphCSS-native scene, camera, and first-person controls.
 
 Play the live version: [asciiquake.wtf](https://asciiquake.wtf)
 
@@ -29,13 +29,13 @@ pnpm dev
 
 ## How It Works
 
-asciiQuake keeps cssQuake's [PolyCSS](https://github.com/LayoutitStudio/polycss) foundation and adds a [GlyphCSS](https://glyphcss.com/) rendering backend on top of it.
+asciiQuake feeds prepared world and model polygons directly into [GlyphCSS](https://glyphcss.com/).
 
-PolyCSS turns Quake geometry into real HTML elements: world faces are positioned with CSS `matrix3d(...)` transforms, textured with pixelated CSS backgrounds, and grouped into meshes instead of being drawn on a `<canvas>`. It still drives the game loop, camera, controls, and collision in both render modes.
+GlyphCSS rasterizes the retained geometry to a character grid and paints each scene layer into a `<pre>` element. Its colour-font atlas keeps a frame to one text node instead of creating a DOM node per polygon or colour run.
 
-GlyphCSS is the default renderer. It takes the same world geometry, rasterizes it to a character grid, and paints it into a `<pre>` element — one text node per frame, with colour carried by a COLR/CPAL colour-font atlas rather than a `<span>` per run. `?renderMode=polycss` selects the original DOM renderer instead.
+The world, moving brush models, monsters, pickups, projectiles, and first-person weapon share this retained GlyphCSS scene. TypeScript owns gameplay and collision independently from the render DOM.
 
-`src/App.ts` loads generated map/model JSON from `/q` and mounts prebuilt PolyCSS render bundles. Gameplay systems connect rendered surfaces back to visibility, lightstyles, doors, buttons, brush-model movement, pickups, hazards, weapon feedback, HUD/menu state, and level transitions.
+`src/App.ts` loads generated map/model JSON from `/q` and registers its compact GlyphCSS geometry. Gameplay systems connect that scene to visibility, lightstyles, doors, buttons, brush-model movement, pickups, hazards, weapon feedback, HUD/menu state, and level transitions.
 
 The browser does not parse the original PAK or BSP files while the game is running. Generated game assets are intentionally ignored by Git.
 
@@ -45,9 +45,9 @@ asciiQuake splits Quake-like behavior between prepared source-backed facts and a
 
 `src/prepare/assets.mjs` downloads the Quake 1.06 shareware archive from `QUAKE_SHAREWARE_URL`, verifies the extracted `resource.1`, extracts `ID1/PAK0.PAK`, and writes browser-ready assets under the ignored `build/generated/public/q` folder.
 
-The prepare step parses original BSP, WAD, MDL, LMP, entity, visibility, collision, HUD, menu, pickup, weapon, and QuakeC-derived gameplay data. Textures are decoded through the Quake palette into PNG assets, animated texture sequences become CSS animation inputs, and episode maps get prebuilt PolyCSS render bundles so the browser can attach prepared world DOM instead of rebuilding every surface at startup.
+The prepare step parses original BSP, WAD, MDL, LMP, entity, visibility, collision, HUD, menu, pickup, weapon, and QuakeC-derived gameplay data. It emits compact world/model polygons, PVS metadata, palette-derived colours, UI assets, and gameplay facts so the browser does not rebuild source geometry at startup.
 
-The runtime is not a Quake VM. TypeScript owns the browser game loop, player movement, collision response, enemy state, pickups, weapons, UI, audio, routing, debug hooks, and PolyCSS DOM updates. When asciiQuake needs a more faithful behavior, the default is to add a prepared fact from the original source material first, then consume it through explicit TypeScript systems.
+The runtime is not a Quake VM. TypeScript owns the browser game loop, player movement, collision response, enemy state, pickups, weapons, UI, audio, routing, and debug hooks; GlyphCSS owns projection and text rendering. When asciiQuake needs a more faithful behavior, the default is to add a prepared fact from the original source material first, then consume it through explicit TypeScript systems.
 
 ## URL API
 
