@@ -8,10 +8,6 @@ export function mountQuakeStatsOverlay(root: HTMLElement): () => void {
   const output = document.createElement("pre");
   output.className = "dn-stats-overlay";
   output.setAttribute("aria-hidden", "true");
-  output.style.cssText =
-    "position:fixed;right:4px;bottom:clamp(4px,calc(602px - 50vw),88px);z-index:40;" +
-    "margin:0;padding:4px;background:#050302;color:#a98c3f;" +
-    "font:bold 9px/1.25 ui-monospace,monospace;pointer-events:none";
   root.appendChild(output);
 
   const fpsHistory: number[] = [];

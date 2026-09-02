@@ -29,6 +29,7 @@ import { distanceSq3, normalizeVec3, subtractVec3 } from "./math";
 export type QuakeMoverMode = "closed" | "opening" | "open" | "closing";
 export type QuakeMoverKind = "door" | "secret-door" | "button" | "plat" | "train";
 export type QuakeDoorTerminalState = "STATE_BOTTOM" | "STATE_TOP";
+export type QuakeAuthoritativeMoverState = "moving-up" | "top" | "moving-down" | "bottom";
 
 export interface QuakeMoverState {
   entity: QuakeEntity;
@@ -126,6 +127,7 @@ export interface QuakeMoversController {
   get: (entityIndex: number) => QuakeMoverState | undefined;
   activateEntity: (entityIndex: number, sourceEntityIndex?: number) => boolean;
   activateGroup: (state: QuakeMoverState) => boolean;
+  applyAuthoritativeState: (entityIndex: number, state: QuakeAuthoritativeMoverState, offset?: Vec3) => boolean;
   forceDoorsDownAfter: (targetName: string, holdMs: number) => number;
   restoreProgress: (snapshot: QuakeMoversProgressSnapshot) => void;
   snapshotProgress: () => QuakeMoversProgressSnapshot;
@@ -142,6 +144,7 @@ export function createQuakeMoversController(options: QuakeMoversControllerOption
   let moverFrame: number | null = null;
   let moverTime = 0;
   let moverPausedAt = 0;
+  const authoritativeMoverEntityIndexes = new Set<number>();
 
   const clear = (): void => {
     if (moverFrame !== null) {
@@ -154,6 +157,7 @@ export function createQuakeMoversController(options: QuakeMoversControllerOption
     platTriggerFields = [];
     moverTime = 0;
     moverPausedAt = 0;
+    authoritativeMoverEntityIndexes.clear();
     pivot = { x: 0, y: 0, z: 0 };
   };
 
@@ -333,6 +337,38 @@ export function createQuakeMoversController(options: QuakeMoversControllerOption
     if ([...movers.values()].some(moverLoopActive)) startLoop();
   };
 
+  const applyAuthoritativeState = (
+    entityIndex: number,
+    authoritativeState: QuakeAuthoritativeMoverState,
+    authoritativeOffset?: Vec3,
+  ): boolean => {
+    const state = movers.get(entityIndex);
+    if (!state) return false;
+    const fallbackOffset = authoritativeState === "bottom" || authoritativeState === "moving-up"
+      ? state.closedOffset
+      : state.openOffset;
+    const offset = quakeMoverProgressVec3(authoritativeOffset, fallbackOffset);
+    state.offset = [...offset] as Vec3;
+    state.lastOffset = [...offset] as Vec3;
+    state.mode = authoritativeState === "moving-up"
+      ? "opening"
+      : authoritativeState === "moving-down"
+        ? "closing"
+        : authoritativeState === "top"
+          ? "open"
+          : "closed";
+    state.waitUntil = Infinity;
+    if (authoritativeState === "bottom") state.targetFired = false;
+    if (authoritativeState === "bottom") {
+      authoritativeMoverEntityIndexes.delete(entityIndex);
+    } else {
+      authoritativeMoverEntityIndexes.add(entityIndex);
+    }
+    options.applyState(state, false);
+    if (moverLoopActive(state)) startLoop();
+    return true;
+  };
+
   const tickMovers = (_frameNow: number): void => {
     const now = performance.now();
     if (options.isGameplayPaused?.()) {
@@ -383,7 +419,7 @@ export function createQuakeMoversController(options: QuakeMoversControllerOption
       const next = moveOffsetToward(state.offset, state.openOffset, state.speed * dt);
       const delta = subtractVec3(next, state.offset);
       const changed = distanceSq3(next, state.offset) > COLLISION_EPSILON;
-      if (changed && options.playerBlocks(state, next, delta)) {
+      if (changed && !authoritativeMoverEntityIndexes.has(state.entity.index) && options.playerBlocks(state, next, delta)) {
         handleBlockedMover(state, now);
         return true;
       }
@@ -408,7 +444,7 @@ export function createQuakeMoversController(options: QuakeMoversControllerOption
       const next = moveOffsetToward(state.offset, state.closedOffset, state.speed * dt);
       const delta = subtractVec3(next, state.offset);
       const changed = distanceSq3(next, state.offset) > COLLISION_EPSILON;
-      if (changed && options.playerBlocks(state, next, delta)) {
+      if (changed && !authoritativeMoverEntityIndexes.has(state.entity.index) && options.playerBlocks(state, next, delta)) {
         handleBlockedMover(state, now);
         return true;
       }
@@ -441,7 +477,7 @@ export function createQuakeMoversController(options: QuakeMoversControllerOption
     const next = moveOffsetToward(state.offset, state.openOffset, state.speed * dt);
     const delta = subtractVec3(next, state.offset);
     const changed = distanceSq3(next, state.offset) > COLLISION_EPSILON;
-    if (changed && options.playerBlocks(state, next, delta)) {
+    if (changed && !authoritativeMoverEntityIndexes.has(state.entity.index) && options.playerBlocks(state, next, delta)) {
       handleBlockedMover(state, now);
       return true;
     }
@@ -622,6 +658,7 @@ export function createQuakeMoversController(options: QuakeMoversControllerOption
     get: (entityIndex: number) => movers.get(entityIndex),
     activateEntity,
     activateGroup,
+    applyAuthoritativeState,
     forceDoorsDownAfter,
     restoreProgress,
     snapshotProgress,
@@ -645,7 +682,7 @@ export function createQuakeMoversController(options: QuakeMoversControllerOption
   };
 }
 
-function quakeMoverProgressVec3(value: Vec3, fallback: Vec3): Vec3 {
+function quakeMoverProgressVec3(value: Vec3 | undefined, fallback: Vec3): Vec3 {
   return Array.isArray(value) && value.length === 3 && value.every(Number.isFinite)
     ? [value[0], value[1], value[2]]
     : [...fallback] as Vec3;

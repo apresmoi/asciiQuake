@@ -22,11 +22,12 @@ test("mobile move stick handles pointer input and updates the visible nub", () =
 
     harness.moveZone.dispatchEvent(pointer(harness.window, "pointerdown", harness.centerX, harness.centerY, 11, 1));
     assert.deepEqual(harness.analogSamples.at(-1), [0, 0]);
-    assert.equal(harness.stick.style.opacity, "1");
+    assert.equal(harness.stick.classList.contains("quake-mobile-stick-active"), true);
 
     harness.moveZone.dispatchEvent(pointer(harness.window, "pointermove", harness.centerX, harness.centerY - 72, 11, 1));
     assert.deepEqual(harness.analogSamples.at(-1), [0, 1]);
-    assert.equal(harness.front.style.transform, "translate(0px, -27px)");
+    assert.equal(harness.front.style.getPropertyValue("--quake-mobile-stick-travel-x"), "0px");
+    assert.equal(harness.front.style.getPropertyValue("--quake-mobile-stick-travel-y"), "-27px");
     assert.equal(harness.moveIntentCount(), 1);
 
     harness.moveZone.dispatchEvent(pointer(harness.window, "pointerup", harness.centerX, harness.centerY - 72, 11, 0));
@@ -47,27 +48,23 @@ test("mobile move stick stays centred in its zone instead of following the thumb
     const startY = harness.centerY + 20;
     harness.moveZone.dispatchEvent(pointer(harness.window, "pointerdown", startX, startY, 12, 1));
     // The stick sits at the zone centre no matter where the touch landed.
-    assert.equal(harness.stick.style.left, "72px");
-    assert.equal(harness.stick.style.top, "72px");
+    assertStickCenter(harness);
 
     // Direction is measured from the zone centre, so an off-centre touch-down is
     // already an input rather than a silent re-anchor.
     harness.moveZone.dispatchEvent(pointer(harness.window, "pointermove", harness.centerX, harness.centerY - 72, 12, 1));
     assert.deepEqual(harness.analogSamples.at(-1), [0, 1]);
-    assert.equal(harness.stick.style.left, "72px");
-    assert.equal(harness.stick.style.top, "72px");
+    assertStickCenter(harness);
 
     harness.moveZone.dispatchEvent(pointer(harness.window, "pointerup", harness.centerX, harness.centerY - 72, 12, 0));
     assertMoveReleased(harness);
-    assert.equal(harness.stick.style.left, "72px");
-    assert.equal(harness.stick.style.top, "72px");
+    assertStickCenter(harness);
 
     // A second, differently placed touch must not move the ring either.
     const secondStartX = harness.centerX + 24;
     const secondStartY = harness.centerY - 18;
     harness.moveZone.dispatchEvent(pointer(harness.window, "pointerdown", secondStartX, secondStartY, 13, 1));
-    assert.equal(harness.stick.style.left, "72px");
-    assert.equal(harness.stick.style.top, "72px");
+    assertStickCenter(harness);
     harness.moveZone.dispatchEvent(pointer(harness.window, "pointerup", secondStartX, secondStartY, 13, 0));
     assertMoveReleased(harness);
   } finally {
@@ -295,32 +292,21 @@ function assertMoveReleased(harness) {
 }
 
 function assertVisualReleased(harness) {
-  assert.equal(harness.front.style.transform, "translate(0px, 0px)");
-  assert.equal(harness.stick.style.opacity, "0.58");
+  assert.equal(harness.front.style.getPropertyValue("--quake-mobile-stick-travel-x"), "0px");
+  assert.equal(harness.front.style.getPropertyValue("--quake-mobile-stick-travel-y"), "0px");
+  assert.equal(harness.stick.classList.contains("quake-mobile-stick-active"), false);
 }
 
 function assertMoveVisualGeometry(harness) {
-  assert.equal(harness.stick.style.left, "72px");
-  assert.equal(harness.stick.style.top, "72px");
-  assert.equal(harness.stick.style.width, "108px");
-  assert.equal(harness.stick.style.height, "108px");
-  assert.equal(harness.stick.style.marginLeft, "-54px");
-  assert.equal(harness.stick.style.marginTop, "-54px");
-  assert.equal(harness.stick.style.pointerEvents, "none");
-  assert.equal(harness.back.style.left, "0px");
-  assert.equal(harness.back.style.top, "0px");
-  assert.equal(harness.back.style.width, "108px");
-  assert.equal(harness.back.style.height, "108px");
-  assert.equal(harness.back.style.marginLeft, "0px");
-  assert.equal(harness.back.style.marginTop, "0px");
-  assert.equal(harness.back.style.pointerEvents, "none");
-  assert.equal(harness.front.style.left, "50%");
-  assert.equal(harness.front.style.top, "50%");
-  assert.equal(harness.front.style.width, "54px");
-  assert.equal(harness.front.style.height, "54px");
-  assert.equal(harness.front.style.marginLeft, "-27px");
-  assert.equal(harness.front.style.marginTop, "-27px");
-  assert.equal(harness.front.style.pointerEvents, "none");
+  assertStickCenter(harness);
+  assert.equal(harness.back.style.cssText, "");
+  assert.equal(harness.stick.style.width, "");
+  assert.equal(harness.front.style.width, "");
+}
+
+function assertStickCenter(harness) {
+  assert.equal(harness.stick.style.getPropertyValue("--quake-mobile-stick-center-x"), "72px");
+  assert.equal(harness.stick.style.getPropertyValue("--quake-mobile-stick-center-y"), "72px");
 }
 
 function pointer(window, type, clientX, clientY, pointerId, buttons) {

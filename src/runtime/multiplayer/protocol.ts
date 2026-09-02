@@ -839,6 +839,12 @@ export interface QuakeMultiplayerRoomSpectatorState {
   pingMs?: number;
 }
 
+export interface QuakeMultiplayerAuthoritativeMoverState {
+  entityIndex: number;
+  state: Exclude<QuakeMultiplayerMoverState, "bottom">;
+  offset: QuakeMultiplayerVec3;
+}
+
 export interface QuakeMultiplayerRoomSnapshotPayload {
   roomId: string;
   tick: number;
@@ -848,6 +854,7 @@ export interface QuakeMultiplayerRoomSnapshotPayload {
   spectators?: QuakeMultiplayerRoomSpectatorState[];
   dynamicPickups?: QuakeMultiplayerPickupDefinition[];
   pickups?: QuakeMultiplayerAuthoritativePickupState[];
+  movers?: QuakeMultiplayerAuthoritativeMoverState[];
   projectiles?: QuakeMultiplayerProjectileState[];
   lastWorldEventSequence: number;
 }

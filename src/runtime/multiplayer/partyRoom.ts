@@ -12,6 +12,7 @@ import {
   createQuakeMultiplayerRoomCompatibilityKey,
   QUAKE_MULTIPLAYER_PROTOCOL_VERSION,
   type QuakeMultiplayerAnyEnvelope,
+  type QuakeMultiplayerAuthoritativeMoverState,
   type QuakeMultiplayerAuthoritativePickupState,
   type QuakeMultiplayerAuthoritativePlayerState,
   type QuakeMultiplayerClientEnvelope,
@@ -2602,9 +2603,31 @@ export default class CssQuakeMultiplayerRoom implements Party.Server {
       spectators: this.spectatorStates(),
       dynamicPickups: this.dynamicPickupDefinitions(),
       pickups: [...this.pickupStates.values()],
+      movers: this.snapshotMoverStates(sampledAt),
       projectiles: [...this.serverProjectiles.values()].map(quakeMultiplayerProjectileStateFromServer),
       lastWorldEventSequence: this.worldEventSequence,
     }, without);
+  }
+
+  private snapshotMoverStates(sampledAt: number): QuakeMultiplayerAuthoritativeMoverState[] {
+    const movers: QuakeMultiplayerAuthoritativeMoverState[] = [];
+    for (const [entityIndex, state] of this.moverStates) {
+      if (state === "bottom") continue;
+      const definition = this.worldDefinitions.get(entityIndex);
+      if (definition?.kind !== "mover") continue;
+      const motion = this.moverCollisionMotions.get(entityIndex);
+      const offset = motion?.state === state
+        ? quakeMultiplayerMoverOffsetAtTime(
+          definition,
+          state,
+          motion.startedAt,
+          sampledAt,
+          motion.durationMs,
+        )
+        : quakeMultiplayerMoverOffsetForState(definition, state);
+      movers.push({ entityIndex, state, offset });
+    }
+    return movers;
   }
 
   private recordSnapshotHistory(sampledAt: number): void {

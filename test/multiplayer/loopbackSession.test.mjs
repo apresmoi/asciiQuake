@@ -1504,6 +1504,17 @@ test("loopback target dispatch activates non-button movers", async () => {
     assert.equal(mover.classname, "func_door_secret");
     assert.equal(mover.activation, "target");
     assert.equal(mover.state, "moving-up");
+    harness.advanceNow(20);
+    session.send(presenceEnvelope("input-paused", {
+      messageId: "presence-world-non-button-mover",
+      sequence: 3,
+      sentAt: harness.now(),
+    }));
+    assert.deepEqual(latestMessage(messages, "room.snapshot").payload.movers, [{
+      entityIndex: moverDefinition.entityIndex,
+      state: "moving-up",
+      offset: [0.1, 0, 0],
+    }]);
     assert.equal(messages.some((message) => message.type === "room.reject"), false);
   } finally {
     harness.disconnect();

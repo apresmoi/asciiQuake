@@ -25,6 +25,7 @@ const REMOTE_FRAME_TRACE_LIMIT = 6_000;
 const LOCAL_FRAME_TRACE_LIMIT = 6_000;
 const MAX_LOCAL_FRAME_STEP = 1;
 const MAX_LOCAL_AUTHORITY_DRIFT = 0.75;
+const MAX_LOCAL_FRAME_GAP_MS = 250;
 const ROOM_TOKEN_ALPHABET = "bcdfghjkmnpqrstvwxyz23456789";
 
 const args = process.argv.slice(2);
@@ -40,8 +41,10 @@ const common = parseCommonBrowserArgs(args, {
   jsonOut: DEFAULT_JSON_OUT,
 });
 const clientsCount = Math.max(2, Math.min(4, Math.round(numberOption(args, "clients", 2))));
+const deviceScaleFactor = Math.max(1, Math.min(3, numberOption(args, "device-scale-factor", 1)));
 const durationMs = Math.max(1_000, Math.round(numberOption(args, "duration-ms", DEFAULT_DURATION_MS)));
 const fireEnabled = hasFlag(args, "fire");
+const convergeEnabled = hasFlag(args, "converge");
 const maxRemoteHiddenGapMs = Math.max(0, Math.round(numberOption(args, "max-remote-hidden-gap-ms", DEFAULT_MAX_REMOTE_HIDDEN_GAP_MS)));
 const mapName = optionValue(args, "map", "e1m1").trim().toLowerCase();
 const preferredPartyPort = Math.max(1, Math.round(numberOption(args, "party-port", DEFAULT_PARTY_PORT)));
@@ -97,6 +100,8 @@ try {
       appUrl,
       clientIndex: index,
       clientsCount,
+      convergeEnabled,
+      deviceScaleFactor,
       invite,
       mapName,
       partyHost,
@@ -105,9 +110,15 @@ try {
     })
   ));
 
-  await Promise.all(clients.map((client) => prepareClientForPlay(client, clientsCount, common.timeoutMs)));
+  await Promise.all(clients.map((client) => prepareClientForPlay(
+    client,
+    clientsCount,
+    common.timeoutMs,
+    { allowInputPaused: convergeEnabled },
+  )));
+  if (convergeEnabled) await positionClientsForConvergence(clients, common.timeoutMs);
   const before = await Promise.all(clients.map(readClientSnapshot));
-  await driveClients(clients, { durationMs, fireEnabled });
+  await driveClients(clients, { durationMs, fireEnabled, convergeEnabled });
   const after = await Promise.all(clients.map(readClientSnapshot));
 
   const report = buildReport({
@@ -118,6 +129,8 @@ try {
     clientsCount,
     durationMs,
     fireEnabled,
+    convergeEnabled,
+    deviceScaleFactor,
     invite,
     mapName,
     maxRemoteHiddenGapMs,
@@ -139,7 +152,10 @@ Options:
   --map <name>          Map route. Default: e1m1
   --clients <n>         Active browser players, 2-4. Default: 2
   --duration-ms <ms>    Input-driving duration. Default: ${DEFAULT_DURATION_MS}
+  --device-scale-factor <n>
+                        Browser DPR. Default: 1
   --fire                Also trigger debug weapon fire while moving.
+  --converge            Place two clients face-to-face and walk them through each other's view.
   --max-remote-hidden-gap-ms <ms>
                         Fail if an expected remote player is hidden/missing for longer than this. Default: ${DEFAULT_MAX_REMOTE_HIDDEN_GAP_MS}
   --url <url>           Use an already deployed app instead of starting local Vite.
@@ -155,7 +171,7 @@ Options:
 async function openClient(browser, options) {
   const context = await browser.newContext({
     viewport: options.viewport,
-    deviceScaleFactor: 1,
+    deviceScaleFactor: options.deviceScaleFactor,
   });
   await context.addInitScript(installWebSocketTrace);
   const page = await context.newPage();
@@ -197,10 +213,11 @@ function clientUrl(options) {
   url.searchParams.set("color", colorForClient(options.clientIndex));
   url.searchParams.set("maxPlayers", String(options.clientsCount));
   url.searchParams.set("disableEnemies", "1");
+  if (options.convergeEnabled) url.searchParams.set("debugMultiplayerInputPaused", "1");
   return url.toString();
 }
 
-async function prepareClientForPlay(client, clientsCount, timeoutMs) {
+async function prepareClientForPlay(client, clientsCount, timeoutMs, options = {}) {
   await client.page.waitForFunction(() => {
     const stats = window.__cssQuakeDebug?.stats?.();
     return Boolean(stats && !stats.loading && stats.multiplayer?.sessionState === "connected");
@@ -213,24 +230,35 @@ async function prepareClientForPlay(client, clientsCount, timeoutMs) {
     if (host instanceof HTMLElement) host.focus({ preventScroll: true });
   });
 
-  await client.page.waitForFunction(({ minPlayers }) => {
+  await client.page.waitForFunction(({ minPlayers, allowInputPaused }) => {
     const stats = window.__cssQuakeDebug?.stats?.();
     return Boolean(
       stats &&
       !stats.loading &&
       stats.multiplayer?.helloAccepted === true &&
-      stats.multiplayer?.inputPaused === false &&
+      (allowInputPaused || stats.multiplayer?.inputPaused === false) &&
       !document.body.classList.contains("quake-menu-open") &&
       !document.body.classList.contains("quake-menu-unlocked") &&
       stats.multiplayer?.scoreboardRows >= minPlayers
     );
-  }, { minPlayers: clientsCount }, { timeout: timeoutMs });
+  }, { minPlayers: clientsCount, allowInputPaused: Boolean(options.allowInputPaused) }, { timeout: timeoutMs });
 }
 
-async function driveClients(clients, { durationMs, fireEnabled }) {
+async function driveClients(clients, { durationMs, fireEnabled, convergeEnabled }) {
   const keys = ["w", "s", "a", "d"];
   await Promise.all(clients.map(startLocalMotionSampling));
   const startedAt = Date.now();
+  if (convergeEnabled) {
+    await Promise.all(clients.map((client) => client.page.keyboard.down("w")));
+    while (Date.now() - startedAt < durationMs) {
+      await Promise.all(clients.map(sampleRemotePlayerAnimation));
+      await sleep(Math.min(100, Math.max(0, durationMs - (Date.now() - startedAt))));
+    }
+    await Promise.all(clients.map((client) => client.page.keyboard.up("w").catch(() => undefined)));
+    await sleep(800);
+    await Promise.all(clients.map(stopLocalMotionSampling));
+    return;
+  }
   let tick = 0;
   while (Date.now() - startedAt < durationMs) {
     const activeKeys = clients.map((client) => keys[(tick + client.index * 2) % keys.length]);
@@ -249,6 +277,63 @@ async function driveClients(clients, { durationMs, fireEnabled }) {
   }));
   await sleep(800);
   await Promise.all(clients.map(stopLocalMotionSampling));
+}
+
+async function positionClientsForConvergence(clients, timeoutMs) {
+  if (clients.length !== 2) throw new Error("--converge requires exactly two clients.");
+  const baseOrigin = [3.84, 0, 4.6];
+  const first = await clients[0].page.evaluate((origin) => {
+    const debug = window.__cssQuakeDebug;
+    debug?.setPose?.(origin, 90, 270, { gameplay: true, stableViewmodel: true });
+    const stats = debug?.stats?.();
+    const forward = stats?.cameraForward ?? [1, 0, 0];
+    const horizontalLength = Math.hypot(forward[0], forward[1]) || 1;
+    return {
+      clientId: stats?.multiplayer?.clientId ?? null,
+      origin: stats?.origin ?? origin,
+      rotX: stats?.cameraRotX ?? 90,
+      rotY: stats?.cameraRotY ?? 270,
+      forward: [forward[0] / horizontalLength, forward[1] / horizontalLength, 0],
+    };
+  }, baseOrigin);
+  const secondOrigin = [
+    first.origin[0] + first.forward[0] * 4,
+    first.origin[1] + first.forward[1] * 4,
+    first.origin[2],
+  ];
+  const second = await clients[1].page.evaluate(({ origin, rotX, rotY }) => {
+    const debug = window.__cssQuakeDebug;
+    debug?.setPose?.(origin, rotX, (rotY + 180) % 360, { gameplay: true, stableViewmodel: true });
+    const stats = debug?.stats?.();
+    return {
+      clientId: stats?.multiplayer?.clientId ?? null,
+      origin: stats?.origin ?? origin,
+    };
+  }, { origin: secondOrigin, rotX: first.rotX, rotY: first.rotY });
+  const synced = await Promise.all(clients.map((client) =>
+    client.page.evaluate(() => window.__cssQuakeDebug?.syncMultiplayerPose?.() ?? false)
+  ));
+  if (!synced.every(Boolean)) throw new Error(`Convergence pose sync failed: ${JSON.stringify(synced)}`);
+  await Promise.all(clients.map((client) => client.page.waitForFunction((expected) => {
+    const players = window.__cssQuakeMpTrace?.lastSnapshotPlayers ?? [];
+    const close = (actual, wanted) =>
+      Array.isArray(actual) && actual.length === 3 &&
+      actual.every((value, index) => Math.abs(Number(value) - Number(wanted[index])) <= 0.2);
+    return expected.every((entry) => {
+      const player = players.find((candidate) => candidate.clientId === entry.clientId);
+      return player && close(player.origin, entry.origin);
+    });
+  }, [
+    { clientId: first.clientId, origin: first.origin },
+    { clientId: second.clientId, origin: second.origin },
+  ], { timeout: timeoutMs })));
+  const resumed = await Promise.all(clients.map((client) =>
+    client.page.evaluate(() => window.__cssQuakeDebug?.setMultiplayerInputPaused?.(false) ?? false)
+  ));
+  if (!resumed.every(Boolean)) throw new Error(`Convergence input resume failed: ${JSON.stringify(resumed)}`);
+  await Promise.all(clients.map((client) => client.page.waitForFunction(() =>
+    window.__cssQuakeDebug?.stats?.()?.multiplayer?.inputPaused === false,
+  undefined, { timeout: timeoutMs })));
 }
 
 async function startLocalMotionSampling(client) {
@@ -520,7 +605,7 @@ function installWebSocketTrace() {
   }
 }
 
-function buildReport({ after, appUrl, before, clients, clientsCount, durationMs, fireEnabled, invite, mapName, maxRemoteHiddenGapMs, partyHost }) {
+function buildReport({ after, appUrl, before, clients, clientsCount, deviceScaleFactor, durationMs, fireEnabled, convergeEnabled, invite, mapName, maxRemoteHiddenGapMs, partyHost }) {
   const clientReports = clients.map((client, index) => ({
     index,
     url: client.url,
@@ -579,6 +664,7 @@ function buildReport({ after, appUrl, before, clients, clientsCount, durationMs,
     localMotion: {
       maxFrameStep: Math.max(0, ...localMotionByClient.map((client) => client.maxFrameStep)),
       maxAuthorityDrift: Math.max(0, ...localMotionByClient.map((client) => client.authorityDrift ?? 0)),
+      maxFrameGapMs: Math.max(0, ...localMotionByClient.map((client) => client.maxFrameGapMs)),
       byClient: localMotionByClient,
     },
     websocket: {
@@ -605,8 +691,10 @@ function buildReport({ after, appUrl, before, clients, clientsCount, durationMs,
     },
     options: {
       clients: clientsCount,
+      deviceScaleFactor,
       durationMs,
       fireEnabled,
+      convergeEnabled,
       maxRemoteHiddenGapMs,
     },
     aggregate,
@@ -632,6 +720,9 @@ function validateReport(report) {
   }
   if (report.aggregate.localMotion.maxAuthorityDrift > MAX_LOCAL_AUTHORITY_DRIFT) {
     failures.push(`Local/server movement drift reached ${report.aggregate.localMotion.maxAuthorityDrift.toFixed(3)} units (limit ${MAX_LOCAL_AUTHORITY_DRIFT}).`);
+  }
+  if (report.aggregate.localMotion.maxFrameGapMs > MAX_LOCAL_FRAME_GAP_MS) {
+    failures.push(`Local rendering stalled for ${report.aggregate.localMotion.maxFrameGapMs.toFixed(1)}ms (limit ${MAX_LOCAL_FRAME_GAP_MS}ms).`);
   }
   for (const client of report.aggregate.localMotion.byClient) {
     if (client.authorityDrift === null) {
@@ -672,7 +763,7 @@ function printSummary(report, artifact) {
   console.log(`target: app=${report.target.appUrl}, party=${report.target.partyHost}, room=${report.target.room}, invite=${report.target.invite}`);
   console.log(`clients: loaded ${report.aggregate.loaded}/${report.options.clients}, scoreboard ${report.aggregate.scoreboardReady}/${report.options.clients} visible ${report.aggregate.scoreboardVisible}/${report.options.clients}, remote players ${report.aggregate.remotePlayersReady}/${report.options.clients}, visible ${report.aggregate.remotePlayersVisible}/${report.options.clients}`);
   console.log(`play: moved ${report.aggregate.moved}/${report.options.clients}, remote movement ${report.aggregate.remotePlayersMoved}/${report.options.clients}, remote animation ${report.aggregate.remotePlayersAnimated}/${report.options.clients}, snapshots ${report.aggregate.websocket.snapshots}, rejects ${report.aggregate.websocket.rejects.length}`);
-  console.log(`local continuity: max frame step ${report.aggregate.localMotion.maxFrameStep.toFixed(3)}, max authority drift ${report.aggregate.localMotion.maxAuthorityDrift.toFixed(3)}`);
+  console.log(`local continuity: max frame step ${report.aggregate.localMotion.maxFrameStep.toFixed(3)}, max authority drift ${report.aggregate.localMotion.maxAuthorityDrift.toFixed(3)}, max frame gap ${report.aggregate.localMotion.maxFrameGapMs.toFixed(1)}ms`);
   console.log(`messages sent: ${compactCounts(report.aggregate.websocket.sentByType)}`);
   console.log(`messages received: ${compactCounts(report.aggregate.websocket.receivedByType)}`);
   console.log(`events: ${compactCounts(report.aggregate.websocket.events)}`);
@@ -685,8 +776,10 @@ function printSummary(report, artifact) {
 function localMotionSummary(snapshot) {
   const frames = snapshot.mpTrace.localFrames ?? [];
   let maxFrameStep = 0;
+  let maxFrameGapMs = 0;
   for (let index = 1; index < frames.length; index += 1) {
     maxFrameStep = Math.max(maxFrameStep, distance3(frames[index - 1]?.origin, frames[index]?.origin));
+    maxFrameGapMs = Math.max(maxFrameGapMs, Number(frames[index]?.at ?? 0) - Number(frames[index - 1]?.at ?? 0));
   }
   const clientId = snapshot.stats?.multiplayer?.clientId;
   const authoritative = (snapshot.mpTrace.lastSnapshotPlayers ?? [])
@@ -697,6 +790,7 @@ function localMotionSummary(snapshot) {
   return {
     authorityDrift,
     frameSamples: frames.length,
+    maxFrameGapMs,
     maxFrameStep,
   };
 }

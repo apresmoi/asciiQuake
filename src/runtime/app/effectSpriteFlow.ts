@@ -108,7 +108,6 @@ export function createQuakeEffectSpriteFlow(options: QuakeEffectSpriteFlowOption
       element.className = `${QUAKE_EFFECT_SPRITE_CLASS} quake-effect-sprite-explosion`;
       element.setAttribute("aria-hidden", "true");
       element.dataset.quakeEffectSpriteActive = "false";
-      initializeEffectSpriteElement(element);
     }
     handles.push({
       active: false,
@@ -562,20 +561,6 @@ function roundCssNumber(value: number): string {
 
 function cssUrl(url: string): string {
   return `url("${url.replace(/["\\\n\r\f]/g, "\\$&")}")`;
-}
-
-function initializeEffectSpriteElement(element: HTMLElement): void {
-  element.style.position = "absolute";
-  element.style.left = "50%";
-  element.style.top = "50%";
-  element.style.display = "block";
-  element.style.imageRendering = "pixelated";
-  element.style.opacity = "0";
-  element.style.pointerEvents = "none";
-  element.style.backgroundRepeat = "no-repeat";
-  element.style.transform = "translate3d(-50%, -50%, 0) scale(1)";
-  element.style.transformOrigin = "center";
-  element.style.willChange = "transform, opacity";
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

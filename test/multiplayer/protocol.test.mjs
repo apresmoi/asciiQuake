@@ -359,6 +359,7 @@ test("room projectile lifecycle events validate authoritative projectile state",
       players: [],
       spectators: [],
       pickups: [],
+      movers: [{ entityIndex: 14, state: "moving-up", offset: [0.5, 0, 0] }],
       projectiles: [spawned.payload.event.projectile],
       lastWorldEventSequence: 0,
     },
@@ -367,6 +368,18 @@ test("room projectile lifecycle events validate authoritative projectile state",
     roomKey: NORMALIZED_ROOM_KEY,
     now: 150,
   }).ok, true);
+
+  const invalidMoverSnapshot = validation.validateQuakeMultiplayerRoomEnvelope({
+    ...snapshot,
+    payload: {
+      ...snapshot.payload,
+      movers: [{ entityIndex: 14, state: "bottom", offset: [0, 0, 0] }],
+    },
+  }, {
+    roomKey: NORMALIZED_ROOM_KEY,
+    now: 150,
+  });
+  assert.equal(invalidMoverSnapshot.ok, false);
 
   const invalidSnapshot = validation.validateQuakeMultiplayerRoomEnvelope({
     ...snapshot,

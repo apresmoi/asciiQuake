@@ -28,7 +28,6 @@ import {
 import { getQuakeMenuSceneState, subscribeQuakeMenuSceneState } from "../menuSceneState";
 import { QUAKE_HUD_SLOT_DEFINITIONS, QUAKE_HUD_STATUS_ROW_Y } from "../hud";
 import {
-  QUAKE_HUD_BACKGROUND,
   QUAKE_HUD_BASE_URL,
   QUAKE_HUD_CROSSHAIR_GRID,
   QUAKE_HUD_CROSSHAIR_SHEET,
@@ -694,8 +693,8 @@ export function createQuakeGlyphUiOverlay(
       isImg, url, natural: null, regions: null,
     });
     if (el.dataset.glyphTexture) { /* data anchor: nothing of its own to hide */ }
-    else if (isImg) el.style.visibility = "hidden";
-    else el.style.backgroundImage = "none";
+    else if (isImg) el.classList.add("quake-glyph-source-image-hidden");
+    else el.classList.add("quake-glyph-source-background-hidden");
     adoptedSinceDraw = true;
     resolveNatural(states.get(el)!);
   }
@@ -778,7 +777,6 @@ export function createQuakeGlyphUiOverlay(
         stand.dataset.glyphTexture = url;
         stand.dataset.glyphBgSize = cs.backgroundSize;
         stand.dataset.glyphBgPos = cs.backgroundPosition;
-        stand.style.cssText = "position:absolute;pointer-events:none;background:none";
         node.appendChild(stand);
         applyPseudoGeometry(node, stand);
       }
@@ -803,10 +801,6 @@ export function createQuakeGlyphUiOverlay(
   const surface = document.createElement("div");
   surface.className = "quake-glyph-ui";
   surface.setAttribute("aria-hidden", "true");
-  surface.style.position = "absolute";
-  surface.style.inset = "0";
-  surface.style.pointerEvents = "none";
-  surface.style.overflow = "hidden";
   // Coverage, not colour — see the `strokePx` option doc.
   const strokePx = Math.max(0, Math.min(2, options.strokePx ?? 0.6));
   if (strokePx > 0) surface.style.setProperty("-webkit-text-stroke", `${strokePx}px currentColor`);
@@ -822,8 +816,7 @@ export function createQuakeGlyphUiOverlay(
    */
   const hudBacking = document.createElement("div");
   hudBacking.className = "quake-glyph-ui-hud-backing";
-  hudBacking.style.cssText =
-    `position:absolute;display:none;pointer-events:none;background:${QUAKE_HUD_BACKGROUND}`;
+  hudBacking.hidden = true;
   hostEl.insertBefore(hudBacking, surface);
 
   /**
@@ -2455,16 +2448,16 @@ export function createQuakeGlyphUiOverlay(
     // transparent during play so the world's ASCII shows through. The status
     // bar carries its own opaque backing, matching the HTML bar's background.
     const sceneState = getQuakeMenuSceneState();
-    surface.style.background = sceneState.chrome ? "#000000" : "";
+    surface.classList.toggle("quake-glyph-ui-chrome", sceneState.chrome);
     if (!sceneState.chrome && hudBodyClassesAllow()) {
       const hudFrame = quakeHudSceneFrame(hostBox.width, hostBox.height);
-      hudBacking.style.display = "block";
+      hudBacking.hidden = false;
       hudBacking.style.left = `${hudFrame.x}px`;
       hudBacking.style.top = `${hudFrame.y}px`;
       hudBacking.style.width = `${hudFrame.w}px`;
       hudBacking.style.height = `${hudFrame.h}px`;
     } else {
-      hudBacking.style.display = "none";
+      hudBacking.hidden = true;
     }
     const now = performance.now();
     if (!force && !adoptedSinceDraw && now - lastBuildAt < REBUILD_INTERVAL_MS) {
@@ -2770,8 +2763,8 @@ export function createQuakeGlyphUiOverlay(
       surface.remove();
       hudBacking.remove();
       for (const s of states.values()) {
-        if (s.isImg) s.sprite.element.style.visibility = "";
-        else s.sprite.element.style.backgroundImage = "";
+        if (s.isImg) s.sprite.element.classList.remove("quake-glyph-source-image-hidden");
+        else s.sprite.element.classList.remove("quake-glyph-source-background-hidden");
       }
     },
   };

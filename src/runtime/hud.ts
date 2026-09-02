@@ -527,10 +527,10 @@ function setHudValue(readout: QuakeHudReadout | null, value: string): void {
     const digit = value[i] ?? " ";
     if (digit >= "0" && digit <= "9") {
       digits[i]?.style.setProperty("--quake-hud-digit-index", digit);
-      if (digits[i]) digits[i].style.opacity = "1";
+      digits[i]?.classList.remove("quake-hud-digit-empty");
     } else {
       digits[i]?.style.removeProperty("--quake-hud-digit-index");
-      if (digits[i]) digits[i].style.opacity = "0";
+      digits[i]?.classList.add("quake-hud-digit-empty");
     }
   }
 }

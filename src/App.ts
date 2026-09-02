@@ -218,6 +218,7 @@ import {
   type QuakeMultiplayerRoomEnvelope,
   type QuakeMultiplayerRoomMatchState,
   type QuakeMultiplayerRoomRejectPayload,
+  type QuakeMultiplayerRoomSnapshotPayload,
   type QuakeMultiplayerSharedWorldEvent,
   type QuakeMultiplayerWorldDefinition,
   type QuakeMultiplayerWorldIntent,
@@ -1420,8 +1421,7 @@ const quakeGlyphOverlay: QuakeGlyphWorldOverlay = createQuakeGlyphWorldOverlay({
 const quakeGlyphWeaponCellPinned = quakeUrlNumberParam(quakeStartupUrlParams, "glyphWeaponCell", 6, 40);
 const quakeGlyphWeaponOverlay: QuakeGlyphWeaponOverlay = (() => {
         const hostEl = document.createElement("div");
-        hostEl.style.cssText =
-          "position:absolute;inset:0;pointer-events:none;overflow:hidden;background:transparent";
+        hostEl.className = "quake-glyph-weapon-host";
         weapon.appendChild(hostEl);
         return createQuakeGlyphWeaponOverlay({
           host: hostEl,
@@ -1492,7 +1492,6 @@ const quakeMenuManifest = createQuakeMenuSceneManifest({
 const quakeGlyphUiHost = document.createElement("div");
 quakeGlyphUiHost.id = "quake-glyph-ui-host";
 quakeGlyphUiHost.setAttribute("aria-hidden", "true");
-quakeGlyphUiHost.style.cssText = "position:absolute;inset:0;z-index:2;pointer-events:none;overflow:hidden";
 quakeInterface.appendChild(quakeGlyphUiHost);
 
 let quakeGlyphUiOverlayHandle: QuakeGlyphUiOverlay | null = null;
@@ -2819,6 +2818,7 @@ let currentResult: QuakeScene | null = null;
 let quakeMultiplayerPickupDefinitionsScene: QuakeScene | null = null;
 let quakeMultiplayerPickupDefinitions: readonly QuakeMultiplayerPickupDefinition[] = [];
 let quakeMultiplayerDynamicPickupDefinitions = new Map<number, QuakeMultiplayerPickupDefinition>();
+let quakeMultiplayerAuthoritativeMoverStates = new Map<number, "moving-up" | "top" | "moving-down">();
 let quakeMultiplayerWorldIntentDefinitionsScene: QuakeScene | null = null;
 let quakeMultiplayerWorldIntentDefinitions: readonly QuakeMultiplayerWorldDefinition[] = [];
 let quakeGameplayStarted = false;
@@ -4384,6 +4384,7 @@ function stopQuakeMultiplayerScene(
   quakeMultiplayerLastReconciledInputSequence = 0;
   quakeMultiplayerLastInventoryFingerprint = null;
   quakeMultiplayerDynamicPickupDefinitions.clear();
+  clearQuakeMultiplayerAuthoritativeMovers();
   pickups?.clearRuntimePickups();
   quakeMultiplayerPickupRequestAt.clear();
   quakeMultiplayerWorldRequestAt.clear();
@@ -4442,6 +4443,7 @@ function handleQuakeMultiplayerRoomMessage(message: QuakeMultiplayerRoomEnvelope
     syncQuakeMultiplayerScoreboard(message.payload.players, quakeMultiplayerSpectatorCount);
     if (message.payload.dynamicPickups) syncQuakeMultiplayerDynamicPickups(message.payload.dynamicPickups);
     if (message.payload.pickups) syncQuakeMultiplayerPickupStates(message.payload.pickups);
+    if (message.payload.movers) syncQuakeMultiplayerAuthoritativeMovers(message.payload.movers);
     if (message.payload.projectiles) syncQuakeMultiplayerRemoteProjectileStates(message.payload.projectiles);
     const localPlayer = message.payload.players.find((candidate) =>
       candidate.clientId === QUAKE_MULTIPLAYER_LOCAL_CLIENT_ID
@@ -5236,6 +5238,28 @@ function handleQuakeMultiplayerWorldMover(
   } finally {
     quakeMultiplayerApplyingWorldEvent = false;
   }
+}
+
+function syncQuakeMultiplayerAuthoritativeMovers(
+  authoritativeMovers: NonNullable<QuakeMultiplayerRoomSnapshotPayload["movers"]>,
+): void {
+  const nextStates = new Map(authoritativeMovers.map((mover) => [mover.entityIndex, mover.state]));
+  for (const entityIndex of quakeMultiplayerAuthoritativeMoverStates.keys()) {
+    if (!nextStates.has(entityIndex)) movers.applyAuthoritativeState(entityIndex, "bottom");
+  }
+  for (const mover of authoritativeMovers) {
+    if (quakeMultiplayerAuthoritativeMoverStates.get(mover.entityIndex) !== mover.state) {
+      movers.applyAuthoritativeState(mover.entityIndex, mover.state, mover.offset);
+    }
+  }
+  quakeMultiplayerAuthoritativeMoverStates = nextStates;
+}
+
+function clearQuakeMultiplayerAuthoritativeMovers(): void {
+  for (const entityIndex of quakeMultiplayerAuthoritativeMoverStates.keys()) {
+    movers.applyAuthoritativeState(entityIndex, "bottom");
+  }
+  quakeMultiplayerAuthoritativeMoverStates.clear();
 }
 
 function handleQuakeMultiplayerWorldTargets(

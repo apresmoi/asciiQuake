@@ -49,11 +49,6 @@ export function installQuakeGlyphTuningPanel(sections: readonly QuakeGlyphTuning
 
   const panel = document.createElement("div");
   panel.id = PANEL_ID;
-  panel.style.cssText =
-    "position:fixed;top:8px;right:8px;z-index:2147483646;width:320px;max-height:calc(100vh - 16px);" +
-    "overflow:auto;background:#1c1c1f;color:#ddd;font:11px/1.5 Menlo,Consolas,monospace;" +
-    "border:1px solid #555;border-radius:6px;padding:8px 10px 10px;box-shadow:0 4px 24px rgba(0,0,0,.6);" +
-    "pointer-events:auto;user-select:none";
   // Keep panel interaction out of the game's window-level listeners: a slider
   // arrow-key nudge must not move the menu selection, a click must not fire
   // the weapon. (stopPropagation on the bubble path is enough for the game's
@@ -63,19 +58,17 @@ export function installQuakeGlyphTuningPanel(sections: readonly QuakeGlyphTuning
   }
 
   const header = document.createElement("div");
-  header.style.cssText = "display:flex;gap:6px;align-items:center;margin-bottom:6px";
+  header.className = "quake-glyph-tuning-header";
   const title = document.createElement("span");
   title.textContent = "glyph tuning";
-  title.style.cssText = "font-weight:bold;color:#8f8;flex:1";
+  title.className = "quake-glyph-tuning-title";
   header.appendChild(title);
 
   const mkButton = (label: string, onClick: () => void): HTMLButtonElement => {
     const b = document.createElement("button");
     b.type = "button";
     b.textContent = label;
-    b.style.cssText =
-      "background:#333;color:#ddd;border:1px solid #666;border-radius:3px;" +
-      "font:10px Menlo,Consolas,monospace;padding:2px 6px;cursor:pointer";
+    b.className = "quake-glyph-tuning-button";
     b.addEventListener("click", onClick);
     return b;
   };
@@ -117,13 +110,12 @@ export function installQuakeGlyphTuningPanel(sections: readonly QuakeGlyphTuning
   const copyOut = document.createElement("input");
   copyOut.type = "text";
   copyOut.readOnly = true;
-  copyOut.style.cssText =
-    "width:100%;box-sizing:border-box;background:#111;color:#9c9;border:1px solid #444;" +
-    "border-radius:3px;font:9px Menlo,monospace;padding:2px 4px;margin:4px 0 6px;display:none";
+  copyOut.className = "quake-glyph-tuning-copy";
+  copyOut.hidden = true;
   copyOut.addEventListener("focus", () => copyOut.select());
   function showCopyUrl(): void {
     const url = currentUrl();
-    copyOut.style.display = "block";
+    copyOut.hidden = false;
     copyOut.value = url;
     copyOut.focus();
     copyOut.select();
@@ -180,20 +172,18 @@ export function installQuakeGlyphTuningPanel(sections: readonly QuakeGlyphTuning
   for (const section of sections) {
     const sectionTitle = document.createElement("div");
     sectionTitle.textContent = `-- ${section.title} --`;
-    sectionTitle.style.cssText = "color:#7af;margin:8px 0 2px;font-weight:bold";
+    sectionTitle.className = "quake-glyph-tuning-section-title";
     panel.appendChild(sectionTitle);
 
     for (const sel of section.selects ?? []) {
       const row = document.createElement("div");
-      row.style.cssText = "display:flex;gap:4px;align-items:center;margin:2px 0 4px";
+      row.className = "quake-glyph-tuning-select-row";
       const name = document.createElement("span");
       name.textContent = sel.label;
       name.title = `?${sel.param}=  (default ${sel.def})`;
-      name.style.cssText = "flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap";
+      name.className = "quake-glyph-tuning-name";
       const select = document.createElement("select");
-      select.style.cssText =
-        "background:#111;color:#ddd;border:1px solid #555;border-radius:3px;" +
-        "font:10px Menlo,Consolas,monospace;padding:1px 2px;max-width:140px";
+      select.className = "quake-glyph-tuning-select";
       for (const option of sel.options) {
         const o = document.createElement("option");
         o.value = option;
@@ -216,27 +206,27 @@ export function installQuakeGlyphTuningPanel(sections: readonly QuakeGlyphTuning
         lastGroup = knob.group;
         const g = document.createElement("div");
         g.textContent = knob.group;
-        g.style.cssText = "color:#999;margin:6px 0 1px;border-bottom:1px solid #333";
+        g.className = "quake-glyph-tuning-group";
         panel.appendChild(g);
       }
 
       const row = document.createElement("div");
-      row.style.cssText = "margin:2px 0 4px";
+      row.className = "quake-glyph-tuning-knob-row";
       const label = document.createElement("div");
-      label.style.cssText = "display:flex;gap:4px;align-items:center";
+      label.className = "quake-glyph-tuning-knob-label";
       const name = document.createElement("span");
       name.textContent = knob.label;
       name.title = `?${knob.param}=  (default ${trim(section.defaults?.[knob.key] ?? knob.def)})`;
-      name.style.cssText = "flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap";
+      name.className = "quake-glyph-tuning-name";
       const readout = document.createElement("span");
-      readout.style.cssText = "color:#ff8;min-width:44px;text-align:right";
+      readout.className = "quake-glyph-tuning-readout";
       readout.textContent = trim(section.values[knob.key] ?? knob.def);
       const reset = mkButton("<", () => {
         setValue(section, knob, section.defaults?.[knob.key] ?? knob.def);
         scheduleApply(section);
       });
       reset.title = "reset to default";
-      reset.style.padding = "0 4px";
+      reset.classList.add("quake-glyph-tuning-reset-button");
       label.append(name, readout, reset);
 
       const range = document.createElement("input");
@@ -245,7 +235,7 @@ export function installQuakeGlyphTuningPanel(sections: readonly QuakeGlyphTuning
       range.max = String(knob.max);
       range.step = String(knob.step);
       range.value = String(section.values[knob.key] ?? knob.def);
-      range.style.cssText = "width:100%;margin:0;accent-color:#7af";
+      range.className = "quake-glyph-tuning-range";
       range.addEventListener("input", () => {
         const value = Number(range.value);
         section.values[knob.key] = value;
@@ -260,7 +250,7 @@ export function installQuakeGlyphTuningPanel(sections: readonly QuakeGlyphTuning
   }
 
   const note = document.createElement("div");
-  note.style.cssText = "color:#777;margin-top:6px";
+  note.className = "quake-glyph-tuning-note";
   note.textContent = "disposable panel - copy URL pins the current values as query params";
   panel.appendChild(note);
 

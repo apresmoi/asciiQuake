@@ -8,6 +8,7 @@ import {
   connectDuelRoom,
   facts,
   helloEnvelope,
+  latestConnectionMessage,
   partyRoomModule,
 } from "./partyRoomHarness.mjs";
 import bundledWorldFacts from "../../src/generated/quakeMultiplayerWorldFacts.json" with { type: "json" };
@@ -207,6 +208,14 @@ test("party room target dispatch activates relay chains and target teleporters",
   assert.equal(mover.classname, "func_plat");
   assert.equal(mover.activation, "target");
   assert.equal(mover.state, "moving-up");
+  partyRoom.broadcastSnapshot();
+  const snapshotMovers = latestConnectionMessage(alice, "room.snapshot").payload.movers;
+  assert.equal(snapshotMovers.length, 1);
+  assert.equal(snapshotMovers[0].entityIndex, moverDefinition.entityIndex);
+  assert.equal(snapshotMovers[0].state, "moving-up");
+  assert.equal(snapshotMovers[0].offset[0], 0);
+  assert.equal(snapshotMovers[0].offset[1], 0);
+  assert.ok(snapshotMovers[0].offset[2] >= 0 && snapshotMovers[0].offset[2] <= 1);
   assert.equal(alice.messages.some((message) => message.type === "room.reject"), false);
 });
 
