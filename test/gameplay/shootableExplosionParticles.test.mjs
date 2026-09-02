@@ -107,6 +107,60 @@ test("destroying explobox emits one explosion presentation event", () => {
   assert.equal(explosions[0].radiusUnits, 200);
 });
 
+test("mounting a static explobox registers its prepared glyph mesh", () => {
+  const handles = [];
+  const glyphCalls = [];
+  const geometry = {
+    version: 2,
+    polygonCount: 1,
+    polygons: [{ v: [[0, 0, 0], [1, 0, 0], [0, 1, 0]], c: "#8b4a20" }],
+  };
+  const shootables = createQuakeShootablesController({
+    addMesh: (entity, model) => createFakeMeshHandle(entity, model, handles),
+    damagePlayer: () => false,
+    fireTarget: () => undefined,
+    floorAt: (_x, _y, maxZ = 0) => maxZ,
+    getPlayerEyeHeight: () => 1,
+    getPlayerForward: () => [1, 0, 0],
+    getPlayerOrigin: () => [0, 0, 0],
+    glyphEntitySink: {
+      removeEntity: () => undefined,
+      setEntity: (id, value, transform) => { glyphCalls.push({ id, value, transform }); },
+      setEntityTransform: () => true,
+    },
+    hasLineOfSight: () => true,
+    isInPlayerView: () => true,
+    leafIndexAt: () => 0,
+    monsterRuntimeEnabled: () => false,
+    pixelate: () => undefined,
+    pointToWorld: (point) => [point.x, point.y, point.z],
+    schedulePresentationResync: () => undefined,
+    shouldSpawn: () => true,
+    visibleLeavesAt: () => new Set([0]),
+  });
+  shootables.spawn([createEntity(4, "misc_explobox")], {
+    models: {
+      "maps/b_explob.bsp": {
+        animationFrames: [],
+        bounds: { min: [-0.42, -0.42, 0], max: [0.42, 0.42, 0.72] },
+        glyphGeometry: geometry,
+      },
+    },
+  });
+
+  try {
+    shootables.syncVisibility([0, 0, 0], true);
+    assert.equal(handles.length, 1);
+    assert.deepEqual(glyphCalls, [{
+      id: "enemy:4",
+      value: geometry,
+      transform: { position: [0, 0, 0], rotation: [0, 0, 180], scale: 1 },
+    }]);
+  } finally {
+    shootables.clear();
+  }
+});
+
 test("destroying non-exploding shootable does not emit explosion presentation event", () => {
   const { explosions, shootables } = createShootablesHarness();
   shootables.spawn([createEntity(2, "monster_dog")], {

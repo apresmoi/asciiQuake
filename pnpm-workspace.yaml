@@ -1,0 +1,2 @@
+patchedDependencies:
+  glyphcss@0.1.6: patches/glyphcss@0.1.6.patch

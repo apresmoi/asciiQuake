@@ -16,6 +16,7 @@ import {
   buildQuakeGlyphGeometry,
   buildQuakeGlyphMovers,
   buildQuakeGlyphFaceLeaves,
+  buildQuakeGlyphWorldTextureAtlas,
   buildQuakeTexturedStandaloneGlyphGeometry,
 } from "./glyphGeometry.mjs";
 import { prepareQuakeEffectSprites } from "./effectSprites.mjs";
@@ -649,8 +650,17 @@ try {
           const scene = await runPrepareDetailStep(`map ${mapName} scene hydrate`, () =>
             createQuakeSceneFromPreparedScene(prepared));
           const glyphFaceLeaves = buildQuakeGlyphFaceLeaves(prepared.visibility);
-          prepared.glyphGeometry = await runPrepareDetailStep(`map ${mapName} glyph geometry`, () =>
-            buildQuakeGlyphGeometry(scene.polygons, glyphFaceLeaves));
+          prepared.glyphGeometry = await runPrepareDetailStep(`map ${mapName} glyph geometry`, async () => {
+            const result = buildQuakeGlyphWorldTextureAtlas(
+              scene.polygons,
+              await quakeGlyphTextureSamplers(scene.polygons.filter(quakeGlyphWorldTextureCandidate)),
+              glyphFaceLeaves,
+            );
+            if (result.atlas) {
+              result.geometry.t = await encodeTextureFileUrl(result.atlas);
+            }
+            return result.geometry;
+          });
           prepared.glyphMovers = await runPrepareDetailStep(`map ${mapName} glyph movers`, () =>
             buildQuakeGlyphMovers(scene.polygons));
           return { mapName, mapPath, outputPath, prepared, menuPanelTextureMap };
@@ -3947,7 +3957,7 @@ async function quakeGlyphTextureSamplers(polygons) {
   const urls = [...new Set((polygons ?? [])
     .map((polygon) => polygon?.texture)
     .filter((url) => typeof url === "string" && url.length > 0))];
-  const entries = await Promise.all(urls.map(async (url) => {
+  const entries = await mapConcurrently(urls, 16, async (url) => {
     const publicPath = url.split("?", 1)[0];
     let encoded = texturePngByPublicPath.get(url) ?? texturePngByPublicPath.get(publicPath);
     if (!encoded && publicPath.startsWith("/")) {
@@ -3964,8 +3974,20 @@ async function quakeGlyphTextureSamplers(polygons) {
       height: decoded.info.height,
       data: decoded.data,
     }];
-  }));
+  });
   return new Map(entries.filter(Boolean));
+}
+
+function quakeGlyphWorldTextureCandidate(polygon) {
+  const textureName = String(polygon?.data?.tex ?? "").toLowerCase();
+  return !polygon?.modelIndex &&
+    polygon?.textureAlphaMode !== "blend" &&
+    polygon?.vertices?.length >= 3 &&
+    Array.isArray(polygon?.uvs) &&
+    polygon.uvs.length === polygon.vertices.length &&
+    !textureName.startsWith("sky") &&
+    !textureName.startsWith("*") &&
+    !textureName.startsWith("+");
 }
 
 async function writeTextureFileIfMissing(outputPath, png) {

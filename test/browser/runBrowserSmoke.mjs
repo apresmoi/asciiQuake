@@ -29,10 +29,10 @@ const common = parseCommonBrowserArgs(args, {
 });
 
 console.log("Browser URL/API smoke gate");
-console.log("validates: public URL map/view links, shell ownership, lazy multiplayer form, weapon output, debug roll rejection");
-console.log("requires prepared assets: yes, maps e1m1 and e1m5");
+console.log("validates: public URL map/view links, every world texture atlas, shell ownership, lazy multiplayer form, weapon output, debug roll rejection");
+console.log("requires prepared assets: yes, all shareware maps");
 console.log("classification: acceptance");
-assertAssetState({ requiredMaps: ["e1m1", "e1m5"], requireGlyphGeometry: true });
+assertAssetState({ requiredMaps: ["start", "e1m1", "e1m2", "e1m3", "e1m4", "e1m5", "e1m6", "e1m7", "e1m8"], requireGlyphGeometry: true });
 
 const server = await resolveBrowserTarget({ ...common, forceDeps: hasFlag(args, "force-deps") });
 let browser = null;
@@ -40,6 +40,11 @@ try {
   const chromium = await loadChromium();
   browser = await chromium.launch({ headless: !common.headed });
   const page = await browser.newPage({ viewport: common.viewport });
+  const textureResponses = [];
+  page.on("response", (response) => {
+    const pathname = new URL(response.url()).pathname;
+    if (pathname.startsWith("/q/t/")) textureResponses.push({ pathname, status: response.status() });
+  });
   const pageErrors = collectPageErrors(page, {
     ignoreConsoleError: (text) => text.includes("the server responded with a status of 409 (Conflict)"),
   });
@@ -61,6 +66,7 @@ try {
   ];
 
   for (const testCase of cases) await runRouteCase(page, server.url, testCase, common.timeoutMs);
+  await assertWorldTextureAtlases(page, server.url, textureResponses);
   await assertDomShell(page, common.timeoutMs);
   await assertIntermissionBackdrop(page);
   await assertGlyphWeaponsRender(page, common.timeoutMs);
@@ -76,6 +82,34 @@ try {
 } finally {
   await browser?.close();
   await server.close();
+}
+
+async function assertWorldTextureAtlases(page, baseUrl, textureResponses) {
+  const manifestUrl = new URL("/q/manifest.json", baseUrl).toString();
+  const maps = await page.evaluate(async (url) => (await (await fetch(url)).json()).maps, manifestUrl);
+  const atlasesLoadedByTheApp = new Set(textureResponses
+    .filter((response) => response.status >= 200 && response.status < 300)
+    .map((response) => response.pathname));
+  let texturedFaceCount = 0;
+  for (const map of maps) {
+    const sceneUrl = new URL(map.sceneUrl, baseUrl).toString();
+    const geometry = await page.evaluate(async (url) => (await (await fetch(url)).json()).glyphGeometry, sceneUrl);
+    assert(geometry?.version >= 3, `${map.mapName} glyph geometry must use the textured schema: ${JSON.stringify(geometry?.version)}`);
+    assert(typeof geometry.t === "string" && geometry.t.startsWith("/q/t/"), `${map.mapName} must carry one top-level world atlas URL`);
+    const textured = geometry.polygons.filter((polygon) => Array.isArray(polygon.u));
+    assert(textured.length > 0, `${map.mapName} must carry UV-mapped world polygons`);
+    assert(
+      textured.every((polygon) => polygon.u.length === polygon.v.length && polygon.t === undefined),
+      `${map.mapName} textured polygons must use matching UVs and the shared top-level atlas`,
+    );
+    if (map.mapName === "e1m1") {
+      assert(atlasesLoadedByTheApp.has(geometry.t), `the active map did not load its atlas ${geometry.t}`);
+    }
+    const atlasStatus = await page.evaluate(async (url) => (await fetch(url)).status, new URL(geometry.t, baseUrl).toString());
+    assert(atlasStatus >= 200 && atlasStatus < 300, `${map.mapName} atlas ${geometry.t} returned ${atlasStatus}`);
+    texturedFaceCount += textured.length;
+  }
+  console.log(`ok worldTextureAtlases (${maps.length} maps, ${texturedFaceCount} UV-mapped faces)`);
 }
 
 async function assertGlyphWeaponsRender(page, timeoutMs) {

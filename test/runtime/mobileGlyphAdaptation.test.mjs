@@ -4,6 +4,7 @@ import test from "node:test";
 import { importTsModule } from "../importTsModule.mjs";
 
 const {
+  QUAKE_GLYPH_WORLD_TUNING_KNOBS,
   QUAKE_GLYPH_UI_TUNING_KNOBS,
   adaptQuakeUiDensitiesToDisplay,
   readQuakeGlyphTuningValues,
@@ -22,6 +23,16 @@ const PHONE = { hostW: 390, hostH: 844, dpr: 3 };
 function resolved(params = new URLSearchParams()) {
   return readQuakeGlyphTuningValues(QUAKE_GLYPH_UI_TUNING_KNOBS, params);
 }
+
+test("world tone uses the renderer's calibrated brightness unless the URL overrides it", () => {
+  const defaults = readQuakeGlyphTuningValues(QUAKE_GLYPH_WORLD_TUNING_KNOBS, new URLSearchParams());
+  const overridden = readQuakeGlyphTuningValues(
+    QUAKE_GLYPH_WORLD_TUNING_KNOBS,
+    new URLSearchParams("glyphBright=4.2"),
+  );
+  assert.equal(defaults.brighten, 2.9);
+  assert.equal(overridden.brighten, 4.2);
+});
 
 test("density adaptation leaves the 1600x900 DPR-2 tuning display untouched", () => {
   const values = resolved();

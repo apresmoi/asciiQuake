@@ -1,0 +1,194 @@
+diff --git a/packages/glyphcss/src/render/rasterize.ts b/packages/glyphcss/src/render/rasterize.ts
+index ff618b0..811722f 100644
+--- a/packages/glyphcss/src/render/rasterize.ts
++++ b/packages/glyphcss/src/render/rasterize.ts
+@@ -1649,6 +1649,7 @@ function rasterizeSolid(
+   const ambIntensity = ambientLight.intensity ?? 0.4;
+   const keyRgb = hexToRgb(directionalLight.color ?? "#ffffff");
+   const ambRgb = hexToRgb(ambientLight.color ?? "#ffffff");
++  const unlitRgb: [number, number, number] = [255, 255, 255];
+
+   // Per-vertex normals for Gouraud shading. `null` when flat-shading.
+   // Index: [polyIdx][vertIdx] → normalized Vec3.
+@@ -1720,6 +1721,9 @@ function rasterizeSolid(
+   };
+   for (let polyIdx = 0; polyIdx < polygons.length; polyIdx++) {
+     const poly = polygons[polyIdx]!;
++    // Internal material bit used by integrations whose texture already
++    // contains baked lighting (for example, a lightmapped BSP atlas).
++    const unlit = (poly as Polygon & { unlit?: boolean }).unlit === true;
+     const verts = poly.vertices;
+     if (verts.length < 3) continue;
+     // Pre-transform vertices, parallel to `verts` — see `objectPosBuf`.
+@@ -1844,6 +1848,15 @@ function rasterizeSolid(
+         iB = shadeCache.iB[triT]!;
+         iC = shadeCache.iC[triT]!;
+         litColor = shadeCache.lit[triT]!;
++      } else if (unlit) {
++        iA = iB = iC = 1;
++        litColor = useColors ? (poly.color ?? "#ffffff") : null;
++        if (shadeCache !== null) {
++          shadeCache.iA[triT] = iA;
++          shadeCache.iB[triT] = iB;
++          shadeCache.iC[triT] = iC;
++          shadeCache.lit[triT] = litColor;
++        }
+       } else {
+         // Pick per-vertex normals. Smooth-shaded → look up from precomputed
+         // table. Flat-shaded → all three vertices use the face normal.
+@@ -1938,9 +1951,9 @@ function rasterizeSolid(
+         texCtx = {
+           sampler: polySampler,
+           ua: uvA[0], va: uvA[1], ub: uvB[0], vb: uvB[1], uc: uvC[0], vc: uvC[1],
+-          tintR: ambIntensity * ambRgb[0] / 255 + avgKey * keyRgb[0] / 255,
+-          tintG: ambIntensity * ambRgb[1] / 255 + avgKey * keyRgb[1] / 255,
+-          tintB: ambIntensity * ambRgb[2] / 255 + avgKey * keyRgb[2] / 255,
++          tintR: unlit ? 1 : ambIntensity * ambRgb[0] / 255 + avgKey * keyRgb[0] / 255,
++          tintG: unlit ? 1 : ambIntensity * ambRgb[1] / 255 + avgKey * keyRgb[1] / 255,
++          tintB: unlit ? 1 : ambIntensity * ambRgb[2] / 255 + avgKey * keyRgb[2] / 255,
+         };
+       }
+
+@@ -1958,7 +1971,7 @@ function rasterizeSolid(
+           ramp, rampMax, litColor,
+           glyphBuf, colorBuf, depthBuf, shadeBuf,
+           cols, rows,
+-          makeShadowCtx(v0, v1, v2, receiveShadow),
++          makeShadowCtx(v0, v1, v2, receiveShadow && !unlit),
+           doubleSided,
+           v0, v1, v2, worldPosBuf,
+           ov0, ov1, ov2, objectPosBuf,
+@@ -1971,7 +1984,7 @@ function rasterizeSolid(
+           winnerPolygonBuf,
+           albedoRgbBuf,
+           targetRgbBuf,
+-          ambIntensity, ambRgb, keyRgb,
++          unlit ? 1 : ambIntensity, unlit ? unlitRgb : ambRgb, keyRgb,
+           poly.color ?? "#ffffff",
+           weightRamp, weightBuf,
+           meshId, winnerMeshBuf,
+@@ -2047,6 +2060,14 @@ function rasterizeSolid(
+                   uc: cuv[f + 1]![0], vc: cuv[f + 1]![1],
+                 }
+               : null;
++            const clippedTexCtx: ScanFillTexCtx | null = texCtx !== null && cuv
++              ? {
++                  ...texCtx,
++                  ua: cuv[0]![0], va: cuv[0]![1],
++                  ub: cuv[f]![0], vb: cuv[f]![1],
++                  uc: cuv[f + 1]![0], vc: cuv[f + 1]![1],
++                }
++              : null;
+             scanFillTriangle(
+               qa[0], qa[1], (qa[3] ?? qa[2]) * biasScale, qa[3] ?? 1, ci[0]!,
+               qb[0], qb[1], (qb[3] ?? qb[2]) * biasScale, qb[3] ?? 1, ci[f]!,
+@@ -2054,7 +2075,7 @@ function rasterizeSolid(
+               ramp, rampMax, litColor,
+               glyphBuf, colorBuf, depthBuf, shadeBuf,
+               cols, rows,
+-              makeShadowCtx(cw[0]!, cw[f]!, cw[f + 1]!, receiveShadow),
++              makeShadowCtx(cw[0]!, cw[f]!, cw[f + 1]!, receiveShadow && !unlit),
+               doubleSided,
+               cw[0]!, cw[f]!, cw[f + 1]!, worldPosBuf,
+               cow ? cow[0]! : ov0, cow ? cow[f]! : ov1, cow ? cow[f + 1]! : ov2, objectPosBuf,
+@@ -2062,15 +2083,12 @@ function rasterizeSolid(
+               onxN, onyN, onzN, objectNormalBuf,
+               clippedUvCtx, surfaceUvBuf,
+               depthEpsilon,
+-              // Near-plane-clipped sub-triangles do not yet rebuild the bitmap
+-              // texture sampling context; fall back to flat color for that rare
+-              // eye-straddling case. Surface-effect UVs remain available above.
+-              null,
++              clippedTexCtx,
+               polyIdx,
+               winnerPolygonBuf,
+               albedoRgbBuf,
+               targetRgbBuf,
+-              ambIntensity, ambRgb, keyRgb,
++              unlit ? 1 : ambIntensity, unlit ? unlitRgb : ambRgb, keyRgb,
+               poly.color ?? "#ffffff",
+               weightRamp, weightBuf,
+               meshId, winnerMeshBuf,
+diff --git a/packages/glyphcss/src/render/textureSampling.test.ts b/packages/glyphcss/src/render/textureSampling.test.ts
+index ca5a4e0..ca26c4c 100644
+--- a/packages/glyphcss/src/render/textureSampling.test.ts
++++ b/packages/glyphcss/src/render/textureSampling.test.ts
+@@ -1,7 +1,7 @@
+ import { describe, it, expect } from "vitest";
+ import { buildRasterizeContext } from "../api/rasterizeContext";
+ import { rasterize } from "./rasterize";
+-import { createGlyphOrthographicCamera } from "../api/createGlyphCamera";
++import { createGlyphOrthographicCamera, createGlyphPerspectiveCamera } from "../api/createGlyphCamera";
+ import type { TextureSampler } from "@glyphcss/core";
+
+ // A 2×2 texture: red / green / blue / white quadrants.
+@@ -51,4 +51,69 @@ describe("per-cell texture sampling", () => {
+     const colors = renderColors(false);
+     expect(colors).not.toEqual(expect.arrayContaining(["#ff0000", "#00ff00", "#0000ff"]));
+   });
++
++  it("preserves baked texture light when a polygon is unlit", () => {
++    const camera = createGlyphOrthographicCamera({ rotX: 0, rotY: 0, zoom: 400 });
++    const render = (unlit: boolean): string[] => {
++      const ctx = buildRasterizeContext({
++        camera,
++        grid: { cols: 40, rows: 40, cellAspect: 2 },
++        polygons: [{ ...quad, unlit }],
++        mode: "solid",
++        useColors: true,
++        doubleSided: true,
++        directionalLight: { direction: [0, 0, 1], intensity: 0 },
++        ambientLight: { intensity: .25 },
++      });
++      ctx.textureSamplers = new Map([["tex", {
++        width: 1,
++        height: 1,
++        lowDetail: false,
++        data: new Uint8ClampedArray([240, 180, 120, 255]),
++      }]]);
++      return [...new Set([...rasterize(ctx).matchAll(/color:(#[0-9a-f]{6})/g)].map((match) => match[1]!))];
++    };
++
++    expect(render(true)).toContain("#f0b478");
++    expect(render(false)).toContain("#3c2d1e");
++  });
++
++  it("keeps sampling the texture when a triangle crosses the perspective near plane", () => {
++    const camera = createGlyphPerspectiveCamera({
++      rotX: 0,
++      rotY: 0,
++      zoom: 50,
++      perspective: 1000,
++      distance: 0,
++    });
++    const polygon = {
++      color: "#ffffff",
++      texture: "red",
++      vertices: [[-5, -5, 0], [5, -5, 0], [0, 5, 25]] as [number, number, number][],
++      uvs: [[0, 0], [1, 0], [.5, 1]] as [number, number][],
++    };
++    const projections = polygon.vertices.map((vertex) => camera.project(vertex, 40, 24, 2));
++    expect(projections.filter((projection) => Number.isFinite(projection[0]))).toHaveLength(2);
++
++    const ctx = buildRasterizeContext({
++      camera,
++      grid: { cols: 40, rows: 24, cellAspect: 2 },
++      polygons: [polygon],
++      mode: "solid",
++      useColors: true,
++      doubleSided: true,
++      directionalLight: { direction: [0, 0, 1], intensity: 0 },
++      ambientLight: { intensity: 1 },
++    });
++    ctx.textureSamplers = new Map([["red", {
++      width: 1,
++      height: 1,
++      lowDetail: false,
++      data: new Uint8ClampedArray([255, 0, 0, 255]),
++    }]]);
++
++    const colors = [...new Set([...rasterize(ctx).matchAll(/color:(#[0-9a-f]{6})/g)].map((match) => match[1]!))];
++    expect(colors).toContain("#ff0000");
++    expect(colors).not.toContain("#ffffff");
++  });
+ });
