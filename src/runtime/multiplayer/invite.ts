@@ -19,6 +19,13 @@ export interface QuakeMultiplayerCompactInviteParts {
   region: QuakeMultiplayerRegionId;
 }
 
+export interface QuakeMultiplayerInviteUrlOptions {
+  fragLimit: number;
+  inviteId: string;
+  maxPlayers: number;
+  preserveQuery?: boolean;
+}
+
 export function parseQuakeMultiplayerCompactInviteParts(
   value: string | null | undefined,
 ): QuakeMultiplayerCompactInviteParts | null {
@@ -43,6 +50,30 @@ export function createQuakeMultiplayerCompactInviteValue(
   if (!QUAKE_MULTIPLAYER_COMPACT_MAP_CODE_PATTERN.test(safeMapCode)) return null;
   if (!QUAKE_MULTIPLAYER_ROOM_TOKEN_PATTERN.test(safeToken)) return null;
   return `${safeMapCode}${safeToken}au`;
+}
+
+export function retargetQuakeMultiplayerCompactInvite(
+  inviteId: string,
+  targetMapCode: string,
+): string | null {
+  const current = parseQuakeMultiplayerCompactInviteParts(inviteId);
+  if (!current) return null;
+  return createQuakeMultiplayerCompactInviteValue(targetMapCode, current.token);
+}
+
+export function createQuakeMultiplayerInviteUrl(
+  baseUrl: string | URL,
+  options: QuakeMultiplayerInviteUrlOptions,
+): URL {
+  const url = new URL(baseUrl);
+  if (!options.preserveQuery) url.search = "";
+  url.hash = "";
+  url.searchParams.delete("map");
+  url.searchParams.delete("view");
+  url.searchParams.set("room", options.inviteId);
+  url.searchParams.set("fraglimit", String(options.fragLimit));
+  url.searchParams.set("maxPlayers", String(options.maxPlayers));
+  return url;
 }
 
 export function createQuakeMultiplayerRoomIdFromToken(

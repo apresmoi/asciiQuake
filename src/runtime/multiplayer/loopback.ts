@@ -948,6 +948,9 @@ export function createQuakeLoopbackMultiplayerSession(
     for (const definition of definitions) {
       if (worldDefinitions.has(definition.entityIndex)) continue;
       worldDefinitions.set(definition.entityIndex, definition);
+      if (definition.kind === "mover") {
+        moverStates.set(definition.entityIndex, definition.initialState ?? "bottom");
+      }
     }
   }
 
@@ -2239,7 +2242,7 @@ export function createQuakeLoopbackMultiplayerSession(
     cascadeDepth: number,
     activation: "touch" | "target" | "shoot",
   ): void {
-    const state = moverStates.get(definition.entityIndex) ?? "bottom";
+    const state = moverStates.get(definition.entityIndex) ?? definition.initialState ?? "bottom";
     if (state === "moving-up" || state === "top") return;
     moverStates.set(definition.entityIndex, "moving-up");
     clearMoverStateTimers(definition.entityIndex);
@@ -2312,7 +2315,7 @@ export function createQuakeLoopbackMultiplayerSession(
     damage: number,
   ): boolean {
     if (!definition.shootActivates) return false;
-    const state = moverStates.get(definition.entityIndex) ?? "bottom";
+    const state = moverStates.get(definition.entityIndex) ?? definition.initialState ?? "bottom";
     if (state === "moving-up" || state === "top") return true;
     const maxHealth = Math.max(1, Math.round(definition.shootHealth ?? 1));
     const previousHealth = moverShootHealth.get(definition.entityIndex) ?? maxHealth;

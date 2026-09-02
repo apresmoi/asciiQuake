@@ -224,14 +224,16 @@ export function quakeMultiplayerMoverOffsetForState(
   definition: Extract<QuakeMultiplayerWorldDefinition, { kind: "mover" }>,
   state: QuakeMultiplayerMoverState,
 ): QuakeMultiplayerVec3 {
+  const bottomOffset = definition.bottomOffset ?? [0, 0, 0];
+  const topOffset = definition.topOffset ?? [
+    definition.toOrigin[0] - definition.fromOrigin[0],
+    definition.toOrigin[1] - definition.fromOrigin[1],
+    definition.toOrigin[2] - definition.fromOrigin[2],
+  ];
   if (state === "top" || state === "moving-down") {
-    return [
-      definition.toOrigin[0] - definition.fromOrigin[0],
-      definition.toOrigin[1] - definition.fromOrigin[1],
-      definition.toOrigin[2] - definition.fromOrigin[2],
-    ];
+    return [...topOffset] as QuakeMultiplayerVec3;
   }
-  return [0, 0, 0];
+  return [...bottomOffset] as QuakeMultiplayerVec3;
 }
 
 export function quakeMultiplayerMoverOffsetAtTime(
@@ -246,18 +248,19 @@ export function quakeMultiplayerMoverOffsetAtTime(
     return quakeMultiplayerMoverOffsetForState(definition, state);
   }
   const progress = Math.max(0, Math.min(1, (now - startedAt) / durationMs));
+  const bottomOffset = quakeMultiplayerMoverOffsetForState(definition, "bottom");
   const topOffset = quakeMultiplayerMoverOffsetForState(definition, "top");
   if (state === "moving-down") {
     return [
-      topOffset[0] * (1 - progress),
-      topOffset[1] * (1 - progress),
-      topOffset[2] * (1 - progress),
+      topOffset[0] + (bottomOffset[0] - topOffset[0]) * progress,
+      topOffset[1] + (bottomOffset[1] - topOffset[1]) * progress,
+      topOffset[2] + (bottomOffset[2] - topOffset[2]) * progress,
     ];
   }
   return [
-    topOffset[0] * progress,
-    topOffset[1] * progress,
-    topOffset[2] * progress,
+    bottomOffset[0] + (topOffset[0] - bottomOffset[0]) * progress,
+    bottomOffset[1] + (topOffset[1] - bottomOffset[1]) * progress,
+    bottomOffset[2] + (topOffset[2] - bottomOffset[2]) * progress,
   ];
 }
 
@@ -548,6 +551,7 @@ function quakeMultiplayerWorldDefinitionFromEntity(
     const killtarget = entity.properties.killtarget;
     const fromOrigin = quakeMultiplayerPointToRoom(endpointOrigins.from, options);
     const toOrigin = quakeMultiplayerPointToRoom(endpointOrigins.to, options);
+    const moverOffsets = quakeMultiplayerMoverCollisionEndpoints(mover);
     const delay = Math.max(0, quakeMultiplayerFiniteNumber(entity.properties.delay, 0));
     const wait = mover.wait ?? mover.waitAtTop;
     const waitMs = quakeMultiplayerSecondsToMs(wait);
@@ -571,6 +575,11 @@ function quakeMultiplayerWorldDefinitionFromEntity(
       delayMs: quakeMultiplayerSecondsToMs(delay),
       fromOrigin,
       toOrigin,
+      ...(moverOffsets ? {
+        bottomOffset: moverOffsets.bottom,
+        topOffset: moverOffsets.top,
+        ...(moverOffsets.initialState === "top" ? { initialState: "top" as const } : {}),
+      } : {}),
       targetEntityIndexes: target ? [...(scene.entityManifest?.runtime?.targetEntities?.[target] ?? [])] : [],
       ...(killtarget ? {
         killtargetEntityIndexes: [...(scene.entityManifest?.runtime?.targetEntities?.[killtarget] ?? [])],
@@ -611,6 +620,40 @@ function quakeMultiplayerWorldDefinitionFromEntity(
     };
   }
   return null;
+}
+
+function quakeMultiplayerMoverCollisionEndpoints(
+  mover: NonNullable<QuakeMultiplayerWorldLogicEntity["resolvedMover"]>,
+): {
+  bottom: QuakeMultiplayerVec3;
+  top: QuakeMultiplayerVec3;
+  initialState: "bottom" | "top";
+} | null {
+  if (!mover.travelOffset) return null;
+  const travelOffset: QuakeMultiplayerVec3 = [
+    mover.travelOffset.x * QUAKE_COLLISION_UNIT_SCALE,
+    mover.travelOffset.y * QUAKE_COLLISION_UNIT_SCALE,
+    mover.travelOffset.z * QUAKE_COLLISION_UNIT_SCALE,
+  ];
+  if (mover.kind === "func_plat") {
+    return {
+      bottom: travelOffset,
+      top: [0, 0, 0],
+      initialState: mover.initialState === "top" ? "top" : "bottom",
+    };
+  }
+  if (mover.kind === "func_door" && mover.startsOpen) {
+    return {
+      bottom: travelOffset,
+      top: [0, 0, 0],
+      initialState: "bottom",
+    };
+  }
+  return {
+    bottom: [0, 0, 0],
+    top: travelOffset,
+    initialState: "bottom",
+  };
 }
 
 function quakeMultiplayerMoverEndpointOrigins(
@@ -1102,6 +1145,9 @@ type QuakeMultiplayerWorldLogicEntity = {
     initialOrigin?: QuakeVertex;
     oldOrigin?: QuakeVertex;
     travelDistance?: number;
+    travelOffset?: QuakeVertex;
+    startsOpen?: boolean;
+    initialState?: "bottom" | "top";
     activationSound?: string;
     health?: number;
     callbacks: {

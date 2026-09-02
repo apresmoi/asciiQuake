@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { setTimeout as delay } from "node:timers/promises";
 
 import {
   authority,
@@ -90,6 +92,92 @@ test("party room accepts a fifth capped player as a spectator", () => {
   assert.equal(reject.payload.code, "room-full");
   assert.equal(reject.payload.recoverable, false);
   assert.deepEqual(overflow.closed.at(-1), { code: 1008, reason: "reject:room-full" });
+});
+
+test("party room promotes the oldest spectator when a disconnected player slot expires", () => {
+  const { room, createConnection } = createFakePartyRoom("spectator-promotion");
+  const RoomClass = partyRoomModule.default;
+  const partyRoom = new RoomClass(room);
+  const alice = createConnection("alice");
+  const bob = createConnection("bob");
+  const cara = createConnection("cara");
+  try {
+    for (const [index, connection] of [alice, bob, cara].entries()) {
+      partyRoom.onConnect(connection);
+      partyRoom.onMessage(JSON.stringify(helloEnvelope({
+        clientId: `client-${index + 1}`,
+        color: index === 2 ? "#123456" : undefined,
+        displayName: ["Alice", "Bob", "Cara"][index],
+        messageId: `promotion-hello-${index + 1}`,
+        sequence: 1,
+        sentAt: Date.now(),
+        matchSettings: { maxPlayers: 2 },
+      })), connection);
+    }
+    assert.equal(cara.state.role, "spectator");
+
+    partyRoom.onClose(bob);
+    partyRoom.finalizeDisconnectedPlayer("party:client-2", "test-expired");
+
+    assert.equal(cara.state.role, "player");
+    assert.equal(cara.state.playerId, "party:client-3");
+    const promoted = latestConnectionMessage(cara, "room.snapshot").payload;
+    assert.equal(promoted.players.length, 2);
+    assert.equal(promoted.spectators.length, 0);
+    assert.equal(promoted.players.find((player) => player.clientId === "client-3")?.color, "#123456");
+    assert.ok(roomEvents(cara, "player.joined").some((event) =>
+      event.player.clientId === "client-3"
+    ));
+
+    partyRoom.onMessage(JSON.stringify(inputEnvelope({
+      clientId: "client-3",
+      inputSequence: 1,
+      messageId: "promoted-input",
+      sequence: 2,
+      sentAt: Date.now(),
+    })), cara);
+    assert.deepEqual(
+      partyRoom.playerSimulationStates.get("party:client-3")?.pendingInputs.map((input) => input.inputSequence),
+      [1],
+    );
+  } finally {
+    cleanupPartyRoomConnections(partyRoom, alice, bob, cara);
+  }
+});
+
+test("party room automatically restarts a frag-limit intermission", async () => {
+  const { alice, bob, partyRoom } = connectDuelRoom({
+    id: "automatic-match-restart",
+    matchSettings: { fragLimit: 1, restartDelayMs: 20 },
+  });
+  try {
+    partyRoom.applyPlayerDamage({
+      attackerPlayerId: "party:client-a",
+      victimPlayerId: "party:client-b",
+      damage: 150,
+      source: "shotgun",
+      eventId: "automatic-match-restart-kill",
+      now: Date.now(),
+    });
+    assert.equal(latestConnectionMessage(alice, "room.snapshot").payload.match.status, "intermission");
+
+    await delay(50);
+
+    const snapshot = latestConnectionMessage(alice, "room.snapshot");
+    assert.equal(snapshot.payload.match.status, "active");
+    assert.deepEqual(snapshot.payload.players.map((player) => ({
+      alive: player.alive,
+      deaths: player.deaths,
+      frags: player.frags,
+      health: player.health,
+    })), [
+      { alive: true, deaths: 0, frags: 0, health: 100 },
+      { alive: true, deaths: 0, frags: 0, health: 100 },
+    ]);
+    assert.ok(roomEvents(alice, "match.notice").some((event) => event.code === "restart"));
+  } finally {
+    cleanupDuelRoom(partyRoom, alice, bob);
+  }
 });
 
 test("party room queues ordered input batches into the player simulation state", () => {
@@ -309,11 +397,49 @@ test("party room falls back to hello gameplay facts when implicit trusted asset 
   })), connection);
   await Promise.resolve(result);
 
-  assert.deepEqual(assetRequests, ["/q/e1m1.json"]);
+  assert.deepEqual(assetRequests, ["/q/e1m1.deathmatch.json"]);
   assert.equal(connection.messages.some((message) => message.type === "room.reject"), false);
   assert.equal(connection.state.playerId, "party:client-a");
   const snapshot = latestConnectionMessage(connection, "room.snapshot");
   assert.equal(snapshot.payload.players.length, 1);
+});
+
+test("party room loads compact trusted gameplay and collision from its served asset", async () => {
+  const assetText = await readFile(
+    new URL("../../src/generated/partykit/q/e1m1.deathmatch.json", import.meta.url),
+    "utf8",
+  );
+  const asset = JSON.parse(assetText);
+  const { room, createConnection } = createFakePartyRoom("trusted-compact-asset");
+  const assetRequests = [];
+  room.context.assets = {
+    fetch: async (assetPath) => {
+      assetRequests.push(assetPath);
+      return new Response(assetText, { status: 200 });
+    },
+  };
+  const partyRoom = new partyRoomModule.default(room);
+  const connection = createConnection("compact-asset-connection");
+  try {
+    partyRoom.onConnect(connection);
+    const result = partyRoom.onMessage(JSON.stringify(helloEnvelope({
+      deathmatchSpawns: asset.gameplayDefinitions.deathmatchSpawns,
+      gameplayFacts: asset.gameplayDefinitions.gameplayFacts,
+      messageId: "compact-asset-hello",
+      pickupDefinitions: asset.gameplayDefinitions.pickupDefinitions,
+      sequence: 1,
+      sentAt: Date.now(),
+    })), connection);
+    await Promise.resolve(result);
+
+    assert.deepEqual(assetRequests, ["/q/e1m1.deathmatch.json"]);
+    assert.ok(partyRoom.trustedSceneMovement?.collisionWorld);
+    assert.equal(partyRoom.trustedSceneMovement?.playerEyeHeight, asset.playerEyeHeight);
+    assert.equal(connection.state.playerId, "party:client-a");
+    assert.equal(connection.messages.some((message) => message.type === "room.reject"), false);
+  } finally {
+    cleanupPartyRoomConnections(partyRoom, connection);
+  }
 });
 
 test("party room rejects hello when explicit trusted gameplay fetcher misses", async () => {

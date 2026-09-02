@@ -71,65 +71,6 @@ body {
 body.quake-menu-open #quake-hud {
   pointer-events: auto;
 }
-.quake-multiplayer-scoreboard {
-  position: absolute;
-  top: 72px;
-  right: 16px;
-  z-index: 9;
-  min-width: 220px;
-  max-width: min(360px, calc(100vw - 32px));
-  padding: 8px;
-  border: 1px solid rgba(214, 181, 92, 0.8);
-  background: rgba(9, 7, 5, 0.78);
-  color: #f4df9a;
-  letter-spacing: 0;
-  pointer-events: none;
-}
-.quake-multiplayer-scoreboard[hidden] {
-  display: none;
-}
-.quake-multiplayer-scoreboard-table {
-  width: 100%;
-  border-collapse: collapse;
-}
-.quake-multiplayer-scoreboard-spectators {
-  display: flex;
-  justify-content: flex-end;
-  margin-top: 5px;
-  opacity: 0.82;
-}
-.quake-multiplayer-scoreboard td {
-  max-width: 180px;
-  padding: 2px 5px;
-  overflow: hidden;
-  white-space: nowrap;
-}
-.quake-multiplayer-scoreboard .quake-bitmap-text {
-  --quake-bitmap-glyph-size: 12px;
-  --quake-bitmap-sheet-size: 192px;
-  --quake-bitmap-space-size: 8px;
-  flex-wrap: nowrap;
-  max-width: 100%;
-  overflow: hidden;
-  gap: 0 var(--quake-bitmap-space-size);
-  filter: drop-shadow(1px 1px 0 #000000);
-}
-.quake-multiplayer-scoreboard-spectators .quake-bitmap-text {
-  justify-content: flex-end;
-}
-.quake-multiplayer-scoreboard td:first-child {
-  border-left: 3px solid var(--quake-multiplayer-player-color, transparent);
-}
-.quake-multiplayer-scoreboard-number {
-  width: 40px;
-}
-.quake-multiplayer-scoreboard-number .quake-bitmap-text {
-  width: 100%;
-  justify-content: flex-end;
-}
-.quake-multiplayer-scoreboard-local td:first-child .quake-bitmap-text {
-  filter: brightness(1.18) saturate(1.2) drop-shadow(1px 1px 0 #000000);
-}
 #quake-damage-overlay {
   position: absolute;
   inset: 0;

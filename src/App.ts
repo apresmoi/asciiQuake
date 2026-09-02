@@ -180,6 +180,7 @@ import {
   createQuakeLoopbackMultiplayerSession,
   createQuakeMultiplayerCompactInviteValue,
   createQuakeMultiplayerEnvelope,
+  createQuakeMultiplayerInviteUrl,
   createQuakePartySocketMultiplayerSession,
   createQuakeMultiplayerRoomIdFromToken,
   createQuakeMultiplayerRemotePlayerPresenter,
@@ -187,6 +188,8 @@ import {
   decideQuakeMultiplayerLocalCorrection,
   normalizeQuakePartySocketHost,
   parseQuakeMultiplayerCompactInviteParts,
+  retargetQuakeMultiplayerCompactInvite,
+  QUAKE_MULTIPLAYER_LOCAL_CORRECTION_OPTIONS,
   QUAKE_MULTIPLAYER_COMPACT_MAP_CODE_CAPACITY,
   QUAKE_MULTIPLAYER_COMPACT_MAP_CODE_LENGTH,
   QUAKE_MULTIPLAYER_DEFAULT_CLIENT_MESSAGE_INTERVAL_MS,
@@ -827,6 +830,7 @@ const QUAKE_MULTIPLAYER_DEBUG_INPUT_PAUSED = QUAKE_MULTIPLAYER_DEBUG_HOOKS_ENABL
   quakeUrlBoolean("debugMultiplayerInputPaused");
 const QUAKE_MULTIPLAYER_DEFAULT_FRAG_LIMIT = 20;
 const QUAKE_MULTIPLAYER_DEFAULT_MAX_PLAYERS = QUAKE_MULTIPLAYER_MAX_PLAYERS_CAP;
+const QUAKE_MULTIPLAYER_MATCH_RESTART_DELAY_MS = 5_000;
 const QUAKE_MULTIPLAYER_TRANSPORT =
   quakeMultiplayerMode === "loopback" ||
     (quakeMultiplayerMode === null && QUAKE_MULTIPLAYER_DEBUG_REQUESTED && quakeDebugMultiplayerMode !== "party")
@@ -868,9 +872,6 @@ const QUAKE_MULTIPLAYER_INPUT_MIN_SEND_MS = Math.max(
   QUAKE_MULTIPLAYER_DEFAULT_CLIENT_MESSAGE_INTERVAL_MS["client.input"] ?? 0,
 );
 const QUAKE_MULTIPLAYER_POSE_SAMPLE_MS = 50;
-const QUAKE_MULTIPLAYER_HARD_CORRECTION_DISTANCE = 4096 * QUAKE_COLLISION_UNIT_SCALE;
-const QUAKE_MULTIPLAYER_SOFT_CORRECTION_DISTANCE = 2048 * QUAKE_COLLISION_UNIT_SCALE;
-const QUAKE_MULTIPLAYER_MAX_BLEND_CORRECTION_DISTANCE = 64 * QUAKE_COLLISION_UNIT_SCALE;
 const QUAKE_MULTIPLAYER_REMOTE_MODEL_PATHS = ["progs/player.mdl"] as const;
 const QUAKE_MULTIPLAYER_DEFAULT_CREATE_MAP = "e1m7";
 const QUAKE_MULTIPLAYER_REMOTE_DEFAULT_FRAME = "stand1";
@@ -895,9 +896,6 @@ const QUAKE_MULTIPLAYER_REMOTE_ATTACK_FRAME_NAMES_BY_WEAPON: Record<string, read
   rocketlauncher: ["rockatt1", "rockatt2", "rockatt3", "rockatt4", "rockatt5", "rockatt6"],
   lightning: ["light1", "light2"],
 };
-const quakeMultiplayerScoreboard = QUAKE_MULTIPLAYER_ENABLED && quakeHud
-  ? mountQuakeMultiplayerScoreboard(quakeHud)
-  : null;
 let quakeInvertMouse = false;
 let quakeAlwaysRun = true;
 let quakeShowGun = true;
@@ -1161,7 +1159,9 @@ function quakeMultiplayerCompactMapNames(): string[] {
     seen.add(mapName);
     names.push(mapName);
   }
-  return names.sort((a, b) => a.localeCompare(b));
+  names.sort((a, b) => a.localeCompare(b));
+  if (quakeAssetCatalog.mapExists("start") && !seen.has("start")) names.push("start");
+  return names;
 }
 
 function quakeMultiplayerMapCodeForMapName(mapName: string): string | null {
@@ -1196,11 +1196,11 @@ function quakeMultiplayerCompactInviteForMenuState(state: QuakeMultiplayerMenuSt
 }
 
 function quakeMultiplayerUrlForMenuState(state: QuakeMultiplayerMenuState): URL {
-  const url = new URL(window.location.href);
-  url.search = "";
-  url.hash = "";
-  url.searchParams.set("room", quakeMultiplayerCompactInviteForMenuState(state));
-  return url;
+  return createQuakeMultiplayerInviteUrl(window.location.href, {
+    inviteId: quakeMultiplayerCompactInviteForMenuState(state),
+    fragLimit: state.fragLimit,
+    maxPlayers: state.maxPlayers,
+  });
 }
 
 function persistQuakeMultiplayerMenuState(state: QuakeMultiplayerMenuState): void {
@@ -2830,13 +2830,20 @@ let quakeMultiplayerSceneSerial = 0;
 let quakeMultiplayerClientSequence = 0;
 let quakeMultiplayerFireSequence = 0;
 let quakeMultiplayerPickupSequence = 0;
+let quakeMultiplayerMatchSequence = 0;
 let quakeMultiplayerWorldSequence = 0;
 let quakeMultiplayerInputSequence = 0;
 let quakeMultiplayerPoseSequence = 0;
 let quakeMultiplayerPoseFrame = 0;
 let quakeMultiplayerLastInputAt = 0;
 let quakeMultiplayerLastInputSentAt = 0;
+let quakeMultiplayerLastMotionInputSequence = 0;
+let quakeMultiplayerMotionInputActive = false;
 let quakeMultiplayerPendingInputs: QuakeMultiplayerLocalInputIntent[] = [];
+let quakeMultiplayerCorrectionFrame = 0;
+let quakeMultiplayerCorrectionDelta: [number, number, number] | null = null;
+let quakeMultiplayerCorrectionProgress = 0;
+let quakeMultiplayerCorrectionStartedAt = 0;
 let quakeMultiplayerLastPoseAt = 0;
 let quakeMultiplayerHelloAccepted = false;
 let quakeMultiplayerLocalSpawnId: string | null = null;
@@ -2895,6 +2902,8 @@ let quakeMultiplayerRecentPlayerEvents: Record<string, unknown>[] = [];
 let quakeMultiplayerLastPickupEvent: Record<string, unknown> | null = null;
 let quakeMultiplayerLastMatchState: QuakeMultiplayerRoomMatchState | null = null;
 let quakeMultiplayerLastMatchEvent: Record<string, unknown> | null = null;
+let quakeMultiplayerMatchRestartRequested = false;
+let quakeMultiplayerLevelTransitionPending = false;
 let quakeMultiplayerLastReject: QuakeMultiplayerRoomRejectRecord | null = null;
 let quakeMultiplayerLastError: QuakeMultiplayerRoomErrorRecord | null = null;
 let currentMapName = quakeAssetCatalog.startMap();
@@ -3109,6 +3118,7 @@ quakePlayerLifecycle = createQuakePlayerLifecycleFlow({
   hasBodyClass: hasQuakeBodyClass,
   hasDeathOverlay: () => quakeLoading.hasDeathOverlay(),
   hideMainMenu: () => menu.hideMainMenu(),
+  isAuthoritativeMultiplayer: () => QUAKE_MULTIPLAYER_ENABLED,
   isMainMenuOpen: () => menu.isMainMenuOpen(),
   isMenuPanelOpen: () => menu.isMenuPanelOpen(),
   jumpVelocity: QUAKE_JUMP_VELOCITY,
@@ -3634,7 +3644,38 @@ function clearQuakeLevelComplete(): void {
 }
 
 function requestQuakeIntermissionAdvance(): boolean {
+  if (requestQuakeMultiplayerMatchRestart()) return true;
   return quakeEntityActivation.requestIntermissionAdvance();
+}
+
+function requestQuakeMultiplayerMatchRestart(): boolean {
+  if (!QUAKE_MULTIPLAYER_ENABLED || quakeMultiplayerLastMatchState?.status !== "intermission") return false;
+  if (
+    !quakeMultiplayerMatchRestartRequested &&
+    quakeMultiplayerSession.status().state === "connected"
+  ) {
+    const roomKey = currentQuakeMultiplayerRoomKey();
+    if (roomKey) {
+      const sentAt = Date.now();
+      quakeMultiplayerMatchRestartRequested = true;
+      quakeMultiplayerSession.send(createQuakeMultiplayerEnvelope({
+        direction: "client",
+        type: "client.match",
+        roomKey,
+        sequence: ++quakeMultiplayerClientSequence,
+        sentAt,
+        payload: {
+          clientId: QUAKE_MULTIPLAYER_LOCAL_CLIENT_ID,
+          match: {
+            matchSequence: ++quakeMultiplayerMatchSequence,
+            requestedAt: sentAt,
+            action: "restart",
+          },
+        },
+      }));
+    }
+  }
+  return true;
 }
 
 function requestQuakeIntermissionAdvanceFromKey(event: KeyboardEvent): boolean {
@@ -4200,75 +4241,37 @@ function quakeMultiplayerRoomId(roomKey: QuakeMultiplayerRoomCompatibilityKey): 
   return quakeMultiplayerStaticRoomIdForMap(roomKey.mapName) ?? quakeMultiplayerFallbackRoomId(roomKey.mapName);
 }
 
-function quakeMultiplayerMatchSettings(): { fragLimit: number; maxPlayers: number } {
+function quakeMultiplayerMatchSettings(): { fragLimit: number; maxPlayers: number; restartDelayMs: number } {
   return {
     fragLimit: QUAKE_MULTIPLAYER_FRAG_LIMIT,
     maxPlayers: QUAKE_MULTIPLAYER_MAX_PLAYERS,
+    restartDelayMs: QUAKE_MULTIPLAYER_MATCH_RESTART_DELAY_MS,
   };
-}
-
-function mountQuakeMultiplayerScoreboard(root: HTMLElement): HTMLElement {
-  const scoreboard = document.createElement("section");
-  scoreboard.id = "quake-multiplayer-scoreboard";
-  scoreboard.className = "quake-multiplayer-scoreboard";
-  scoreboard.setAttribute("aria-label", "Deathmatch scoreboard");
-  scoreboard.hidden = true;
-  root.append(scoreboard);
-  return scoreboard;
 }
 
 function syncQuakeMultiplayerScoreboard(
   players: readonly QuakeMultiplayerAuthoritativePlayerState[],
   spectatorCount = 0,
 ): void {
-  if (!quakeMultiplayerScoreboard) return;
-  if (!players.length) {
-    quakeMultiplayerScoreboard.hidden = true;
-    quakeMultiplayerScoreboard.replaceChildren();
-    return;
-  }
-  quakeMultiplayerScoreboard.hidden = false;
   const rows = [...players].sort((a, b) =>
     b.frags - a.frags ||
     a.deaths - b.deaths ||
     a.displayName.localeCompare(b.displayName)
   );
-  const table = document.createElement("table");
-  table.className = "quake-multiplayer-scoreboard-table";
-  const body = document.createElement("tbody");
-  for (const playerState of rows) {
-    const row = document.createElement("tr");
-    row.className = playerState.clientId === QUAKE_MULTIPLAYER_LOCAL_CLIENT_ID
-      ? "quake-multiplayer-scoreboard-local"
-      : "";
-    if (playerState.color) row.style.setProperty("--quake-multiplayer-player-color", playerState.color);
-    row.append(
-      quakeScoreboardCell(playerState.displayName),
-      quakeScoreboardCell(String(playerState.frags), "number"),
-      quakeScoreboardCell(String(playerState.deaths), "number"),
-      quakeScoreboardCell(playerState.pingMs === undefined ? "-" : String(Math.round(playerState.pingMs)), "number"),
-    );
-    body.append(row);
-  }
-  table.append(body);
-  const children: HTMLElement[] = [table];
-  if (spectatorCount > 0) {
-    const spectators = document.createElement("div");
-    spectators.className = "quake-multiplayer-scoreboard-spectators quake-bm-label";
-    spectators.textContent = quakeMultiplayerSpectatorCountLabel(spectatorCount);
-    mountQuakeBitmapText(spectators);
-    children.push(spectators);
-  }
-  quakeMultiplayerScoreboard.replaceChildren(...children);
-}
-
-function quakeScoreboardCell(text: string, kind?: "number"): HTMLTableCellElement {
-  const cell = document.createElement("td");
-  if (kind) cell.className = `quake-multiplayer-scoreboard-${kind}`;
-  cell.textContent = text;
-  cell.classList.add("quake-bm-label");
-  mountQuakeBitmapText(cell);
-  return cell;
+  updateQuakeMenuSceneState({
+    scoreboard: {
+      visible: rows.length > 0,
+      spectatorCount,
+      rows: rows.map((playerState) => ({
+        clientId: playerState.clientId,
+        deaths: playerState.deaths,
+        displayName: playerState.displayName,
+        frags: playerState.frags,
+        local: playerState.clientId === QUAKE_MULTIPLAYER_LOCAL_CLIENT_ID,
+        pingMs: playerState.pingMs === undefined ? null : Math.round(playerState.pingMs),
+      })),
+    },
+  });
 }
 
 function quakeMultiplayerSpectatorCountLabel(count: number): string {
@@ -4277,6 +4280,15 @@ function quakeMultiplayerSpectatorCountLabel(count: number): string {
 
 function quakeMultiplayerDebugSnapshot(): Record<string, unknown> {
   const status = quakeMultiplayerSession.status();
+  const scoreboard = getQuakeMenuSceneState().scoreboard;
+  const remotePlayers = quakeRemotePlayers.snapshot();
+  const remoteProjectiles = [...quakeRemoteMultiplayerProjectiles.entries()].map(([projectileId, visual]) => ({
+    className: visual.handle.handle.element.className,
+    hidden: visual.handle.handle.element.hidden,
+    ownerPlayerId: visual.ownerPlayerId,
+    projectileId,
+    origin: visual.handle.handle.element.dataset.remoteProjectileOrigin ?? null,
+  }));
   return {
     enabled: QUAKE_MULTIPLAYER_ENABLED,
     transport: QUAKE_MULTIPLAYER_TRANSPORT,
@@ -4307,15 +4319,16 @@ function quakeMultiplayerDebugSnapshot(): Record<string, unknown> {
     lastMatchEvent: quakeMultiplayerLastMatchEvent,
     lastReject: quakeMultiplayerLastReject,
     lastError: quakeMultiplayerLastError,
-    remotePresenterCount: quakeRemotePlayers.count(),
-    remoteProjectileCount: quakeRemoteMultiplayerProjectiles.size,
-    remoteDomCount: document.querySelectorAll(".remote-player").length,
-    remoteVisibleDomCount: Array.from(document.querySelectorAll<HTMLElement>(".remote-player"))
-      .filter((element) => !element.hidden).length,
-    remoteProjectileDomCount: document.querySelectorAll(".remote-projectile").length,
-    remoteVisibleProjectileDomCount: Array.from(document.querySelectorAll<HTMLElement>(".remote-projectile"))
-      .filter((element) => !element.hidden).length,
-    scoreboardRows: quakeMultiplayerScoreboard?.querySelectorAll("tbody tr").length ?? 0,
+    remotePlayerCount: remotePlayers.length,
+    remoteVisiblePlayerCount: remotePlayers.filter((player) => !player.hidden).length,
+    remotePlayers,
+    remoteProjectileCount: remoteProjectiles.length,
+    remoteVisibleProjectileCount: remoteProjectiles.filter((projectile) => !projectile.hidden).length,
+    remoteProjectiles,
+    scoreboardRenderer: "glyph",
+    scoreboardEntries: scoreboard.rows,
+    scoreboardRows: scoreboard.rows.length,
+    scoreboardVisible: scoreboard.visible,
   };
 }
 
@@ -4357,7 +4370,10 @@ function stopQuakeMultiplayerScene(
   }
   quakeMultiplayerLastInputAt = 0;
   quakeMultiplayerLastInputSentAt = 0;
+  quakeMultiplayerLastMotionInputSequence = 0;
+  quakeMultiplayerMotionInputActive = false;
   quakeMultiplayerPendingInputs = [];
+  cancelQuakeMultiplayerLocalCorrection();
   quakeMultiplayerLastPoseAt = 0;
   quakeMultiplayerLastPresenceStatusSent = null;
   quakeMultiplayerHelloAccepted = false;
@@ -4380,6 +4396,7 @@ function stopQuakeMultiplayerScene(
   quakeMultiplayerLastPickupEvent = null;
   quakeMultiplayerLastMatchState = null;
   quakeMultiplayerLastMatchEvent = null;
+  quakeMultiplayerMatchRestartRequested = false;
   if (!options.preserveLastReject) quakeMultiplayerLastReject = null;
   quakeMultiplayerLastError = null;
   quakeMultiplayerSession.disconnect(reason);
@@ -4420,6 +4437,7 @@ function handleQuakeMultiplayerRoomMessage(message: QuakeMultiplayerRoomEnvelope
   if (!QUAKE_MULTIPLAYER_ENABLED) return;
   if (message.type === "room.snapshot") {
     quakeMultiplayerLastMatchState = message.payload.match;
+    if (message.payload.match.status === "active") quakeMultiplayerMatchRestartRequested = false;
     quakeMultiplayerSpectatorCount = message.payload.spectators?.length ?? 0;
     syncQuakeMultiplayerScoreboard(message.payload.players, quakeMultiplayerSpectatorCount);
     if (message.payload.dynamicPickups) syncQuakeMultiplayerDynamicPickups(message.payload.dynamicPickups);
@@ -4487,6 +4505,8 @@ function handleQuakeMultiplayerRoomMessage(message: QuakeMultiplayerRoomEnvelope
       handleQuakeMultiplayerWorldMover(event);
     } else if (event.eventType === "world.targets") {
       handleQuakeMultiplayerWorldTargets(event);
+    } else if (event.eventType === "level.transition") {
+      handleQuakeMultiplayerLevelTransition(event);
     }
   } else if (message.type === "room.ping") {
     sendQuakeMultiplayerPong(message.payload);
@@ -4563,6 +4583,7 @@ function quakeMultiplayerFatalRejectTitle(code: QuakeMultiplayerRoomRejectPayloa
 
 function noteQuakeMultiplayerMatchEvent(event: QuakeMultiplayerSharedWorldEvent): void {
   if (event.eventType !== "match.notice") return;
+  if (event.code === "restart") quakeMultiplayerMatchRestartRequested = false;
   quakeMultiplayerLastMatchEvent = {
     eventType: event.eventType,
     eventId: event.eventId,
@@ -4570,6 +4591,31 @@ function noteQuakeMultiplayerMatchEvent(event: QuakeMultiplayerSharedWorldEvent)
     code: event.code,
     ...(event.message ? { message: event.message } : {}),
   };
+}
+
+function handleQuakeMultiplayerLevelTransition(
+  event: Extract<QuakeMultiplayerSharedWorldEvent, { eventType: "level.transition" }>,
+): void {
+  if (quakeMultiplayerLevelTransitionPending) return;
+  const targetMap = event.targetMap?.trim().toLowerCase();
+  const currentInviteId = quakeStartupUrlParams.get("room") ?? "";
+  const targetMapCode = targetMap ? quakeMultiplayerMapCodeForMapName(targetMap) : null;
+  const nextInviteId = targetMapCode
+    ? retargetQuakeMultiplayerCompactInvite(currentInviteId, targetMapCode)
+    : null;
+  if (!targetMap || !quakeAssetCatalog.mapExists(targetMap) || !nextInviteId) {
+    quakeTextPresentation.notify(`Cannot change to ${targetMap?.toUpperCase() || "UNKNOWN MAP"}.`);
+    return;
+  }
+  quakeMultiplayerLevelTransitionPending = true;
+  quakeTextPresentation.setCenterPrint(`ENTERING ${targetMap.toUpperCase()}`);
+  const url = createQuakeMultiplayerInviteUrl(window.location.href, {
+    inviteId: nextInviteId,
+    fragLimit: QUAKE_MULTIPLAYER_FRAG_LIMIT,
+    maxPlayers: QUAKE_MULTIPLAYER_MAX_PLAYERS,
+    preserveQuery: true,
+  });
+  window.location.replace(url.toString());
 }
 
 function noteQuakeMultiplayerRoomEvent(event: QuakeMultiplayerSharedWorldEvent): void {
@@ -4622,6 +4668,7 @@ function noteQuakeMultiplayerWorldEvent(event: QuakeMultiplayerSharedWorldEvent)
     ...("oneShot" in event ? { oneShot: event.oneShot } : {}),
     ...("soundPath" in event && event.soundPath ? { soundPath: event.soundPath } : {}),
     ...("playerId" in event && event.playerId !== undefined ? { playerId: event.playerId } : {}),
+    ...("targetMap" in event && event.targetMap !== undefined ? { targetMap: event.targetMap } : {}),
   };
   quakeMultiplayerLastWorldEvent = snapshot;
   quakeMultiplayerRecentWorldEvents = [...quakeMultiplayerRecentWorldEvents.slice(-15), snapshot];
@@ -4713,6 +4760,8 @@ function applyQuakeMultiplayerAuthoritativePlayerState(
     applyQuakeMultiplayerAuthoritativeView(playerState);
   }
   if (!playerState.alive && !quakePlayerDead) {
+    quakeMultiplayerMotionInputActive = false;
+    cancelQuakeMultiplayerLocalCorrection();
     quakeMultiplayerLastReconciledInputSequence = playerState.lastInputSequence;
     showQuakePlayerDeath();
   } else if (playerState.alive && quakePlayerDead) {
@@ -4732,10 +4781,9 @@ function applyQuakeMultiplayerLocalCorrection(
     playerState,
     quakeMultiplayerLastReconciledInputSequence,
     {
-      hardSnapDistance: QUAKE_MULTIPLAYER_HARD_CORRECTION_DISTANCE,
-      softCorrectionDistance: QUAKE_MULTIPLAYER_SOFT_CORRECTION_DISTANCE,
-      maxBlendDistance: QUAKE_MULTIPLAYER_MAX_BLEND_CORRECTION_DISTANCE,
-      blendFraction: 0.35,
+      ...QUAKE_MULTIPLAYER_LOCAL_CORRECTION_OPTIONS,
+      minimumAcknowledgedInputSequence: quakeMultiplayerLastMotionInputSequence,
+      predictionActive: quakeMultiplayerMotionInputActive,
     },
   );
   if (decision.reason === "within-threshold" || decision.action === "snap") {
@@ -4750,11 +4798,12 @@ function applyQuakeMultiplayerLocalCorrection(
     decision.origin[1],
     decision.origin[2],
   ];
-  getPlayer().setAuthoritativeOrigin(origin);
-  shootables.syncVisibility(origin, true);
-  viewmodel.syncTransform();
-  world.syncVisibility(true);
-  syncQuakeCrosshairTarget();
+  if (decision.action === "blend") {
+    scheduleQuakeMultiplayerLocalCorrection(origin);
+  } else {
+    cancelQuakeMultiplayerLocalCorrection();
+    applyQuakeMultiplayerCorrectionOrigin(origin);
+  }
   markQuakeTrace("multiplayer-correction", {
     action: decision.action,
     drift: decision.drift,
@@ -4763,6 +4812,66 @@ function applyQuakeMultiplayerLocalCorrection(
     y: origin[1],
     z: origin[2],
   });
+}
+
+const QUAKE_MULTIPLAYER_CORRECTION_DURATION_MS = 120;
+
+function scheduleQuakeMultiplayerLocalCorrection(origin: [number, number, number]): void {
+  const current = getPlayer().currentOrigin();
+  quakeMultiplayerCorrectionDelta = [
+    origin[0] - current[0],
+    origin[1] - current[1],
+    origin[2] - current[2],
+  ];
+  quakeMultiplayerCorrectionProgress = 0;
+  quakeMultiplayerCorrectionStartedAt = performance.now();
+  if (!quakeMultiplayerCorrectionFrame) {
+    quakeMultiplayerCorrectionFrame = window.requestAnimationFrame(tickQuakeMultiplayerLocalCorrection);
+  }
+}
+
+function tickQuakeMultiplayerLocalCorrection(now: number): void {
+  quakeMultiplayerCorrectionFrame = 0;
+  const delta = quakeMultiplayerCorrectionDelta;
+  if (!delta || !player || quakeMultiplayerMotionInputActive) {
+    cancelQuakeMultiplayerLocalCorrection();
+    return;
+  }
+  const progress = Math.min(1, Math.max(
+    0,
+    (now - quakeMultiplayerCorrectionStartedAt) / QUAKE_MULTIPLAYER_CORRECTION_DURATION_MS,
+  ));
+  const step = progress - quakeMultiplayerCorrectionProgress;
+  const current = getPlayer().currentOrigin();
+  applyQuakeMultiplayerCorrectionOrigin([
+    current[0] + delta[0] * step,
+    current[1] + delta[1] * step,
+    current[2] + delta[2] * step,
+  ]);
+  quakeMultiplayerCorrectionProgress = progress;
+  if (progress >= 1) {
+    quakeMultiplayerCorrectionDelta = null;
+    quakeMultiplayerCorrectionProgress = 0;
+    return;
+  }
+  quakeMultiplayerCorrectionFrame = window.requestAnimationFrame(tickQuakeMultiplayerLocalCorrection);
+}
+
+function cancelQuakeMultiplayerLocalCorrection(): void {
+  if (quakeMultiplayerCorrectionFrame) {
+    window.cancelAnimationFrame(quakeMultiplayerCorrectionFrame);
+    quakeMultiplayerCorrectionFrame = 0;
+  }
+  quakeMultiplayerCorrectionDelta = null;
+  quakeMultiplayerCorrectionProgress = 0;
+}
+
+function applyQuakeMultiplayerCorrectionOrigin(origin: [number, number, number]): void {
+  getPlayer().setAuthoritativeOrigin(origin);
+  shootables.syncVisibility(origin, true);
+  viewmodel.syncTransform();
+  world.syncVisibility(true);
+  syncQuakeCrosshairTarget();
 }
 
 function syncQuakeMultiplayerPickupStates(pickups: readonly QuakeMultiplayerAuthoritativePickupState[]): void {
@@ -5373,6 +5482,7 @@ function sendQuakeMultiplayerPong(payload: Extract<QuakeMultiplayerRoomEnvelope,
 }
 
 function applyQuakeMultiplayerAuthoritativeView(playerState: QuakeMultiplayerAuthoritativePlayerState): void {
+  cancelQuakeMultiplayerLocalCorrection();
   applyQuakeMultiplayerView(playerState.origin, playerState.rotX, playerState.rotY);
 }
 
@@ -5588,8 +5698,9 @@ function quakeMultiplayerLocalInputIntent(sampleNow: number, sampledAt: number):
   const dt = quakeMultiplayerLastInputAt > 0
     ? Math.min(QUAKE_PMOVE_DT_CLAMP, Math.max(0, (sampleNow - quakeMultiplayerLastInputAt) / 1000))
     : QUAKE_MULTIPLAYER_INPUT_SAMPLE_MS / 1000;
-  return {
-    inputSequence: ++quakeMultiplayerInputSequence,
+  const inputSequence = ++quakeMultiplayerInputSequence;
+  const input: QuakeMultiplayerLocalInputIntent = {
+    inputSequence,
     sampledAt,
     dt,
     move: { forward, side, up: 0 },
@@ -5602,6 +5713,11 @@ function quakeMultiplayerLocalInputIntent(sampleNow: number, sampledAt: number):
     rotY: normalizeQuakeUrlAngle(scene.camera.state.rotY ?? 270),
     activeWeapon: getPlayer().inventory().activeWeapon,
   };
+  quakeMultiplayerMotionInputActive = forward !== 0 || side !== 0 || input.buttons.jump;
+  if (quakeMultiplayerMotionInputActive) {
+    quakeMultiplayerLastMotionInputSequence = inputSequence;
+  }
+  return input;
 }
 
 function clampQuakeMultiplayerAnalogInput(value: number): number {

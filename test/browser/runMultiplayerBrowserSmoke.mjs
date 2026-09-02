@@ -22,6 +22,9 @@ const DEFAULT_DURATION_MS = 6_000;
 const DEFAULT_JSON_OUT = "bench/results/quake/multiplayer-browser-smoke.json";
 const DEFAULT_MAX_REMOTE_HIDDEN_GAP_MS = 500;
 const REMOTE_FRAME_TRACE_LIMIT = 6_000;
+const LOCAL_FRAME_TRACE_LIMIT = 6_000;
+const MAX_LOCAL_FRAME_STEP = 1;
+const MAX_LOCAL_AUTHORITY_DRIFT = 0.75;
 const ROOM_TOKEN_ALPHABET = "bcdfghjkmnpqrstvwxyz23456789";
 
 const args = process.argv.slice(2);
@@ -79,7 +82,7 @@ try {
     servers.push(await startManagedServer({
       name: "partykit",
       command: "pnpm",
-      args: ["exec", "partykit", "dev", "--port", String(partyPort), "--serve", "build/generated/public"],
+      args: ["exec", "partykit", "dev", "--port", String(partyPort)],
       ready: /Ready on|Updated and ready/i,
       timeoutMs: common.timeoutMs,
     }));
@@ -212,7 +215,6 @@ async function prepareClientForPlay(client, clientsCount, timeoutMs) {
 
   await client.page.waitForFunction(({ minPlayers }) => {
     const stats = window.__cssQuakeDebug?.stats?.();
-    const rows = document.querySelectorAll("#quake-multiplayer-scoreboard tbody tr");
     return Boolean(
       stats &&
       !stats.loading &&
@@ -220,30 +222,68 @@ async function prepareClientForPlay(client, clientsCount, timeoutMs) {
       stats.multiplayer?.inputPaused === false &&
       !document.body.classList.contains("quake-menu-open") &&
       !document.body.classList.contains("quake-menu-unlocked") &&
-      rows.length >= minPlayers
+      stats.multiplayer?.scoreboardRows >= minPlayers
     );
   }, { minPlayers: clientsCount }, { timeout: timeoutMs });
 }
 
 async function driveClients(clients, { durationMs, fireEnabled }) {
-  const keys = ["w", "a", "d", "s"];
+  const keys = ["w", "s", "a", "d"];
+  await Promise.all(clients.map(startLocalMotionSampling));
   const startedAt = Date.now();
   let tick = 0;
   while (Date.now() - startedAt < durationMs) {
+    const activeKeys = clients.map((client) => keys[(tick + client.index * 2) % keys.length]);
+    await Promise.all(clients.map((client, index) => client.page.keyboard.down(activeKeys[index])));
+    await sleep(Math.min(700, Math.max(0, durationMs - (Date.now() - startedAt))));
     await Promise.all(clients.map(async (client) => {
-      const key = keys[(tick + client.index) % keys.length];
-      await client.page.keyboard.down(key);
-      await client.page.waitForTimeout(120);
       if (fireEnabled && tick % 4 === 0) await client.page.evaluate(() => window.__cssQuakeDebug?.fire?.());
       await sampleRemotePlayerAnimation(client);
-      await client.page.keyboard.up(key);
     }));
+    await Promise.all(clients.map((client, index) => client.page.keyboard.up(activeKeys[index]).catch(() => undefined)));
     tick += 1;
-    await sleep(120);
+    await sleep(80);
   }
   await Promise.all(clients.map(async (client) => {
     for (const key of keys) await client.page.keyboard.up(key).catch(() => undefined);
   }));
+  await sleep(800);
+  await Promise.all(clients.map(stopLocalMotionSampling));
+}
+
+async function startLocalMotionSampling(client) {
+  await client.page.evaluate((limit) => {
+    const trace = window.__cssQuakeMpTrace;
+    if (!trace) return;
+    trace.localFrames = [];
+    trace.localSampling = true;
+    const sample = () => {
+      if (!trace.localSampling) return;
+      const stats = window.__cssQuakeDebug?.stats?.();
+      if (Array.isArray(stats?.origin)) {
+        const authoritative = (trace.lastSnapshotPlayers ?? [])
+          .find((player) => player.clientId === stats.multiplayer?.clientId) ?? null;
+        trace.localFrames.push({
+          at: performance.now(),
+          authoritativeAlive: authoritative?.alive ?? null,
+          authoritativeInputSequence: authoritative?.lastInputSequence ?? null,
+          authoritativeOrigin: authoritative?.origin ?? null,
+          inputSequence: stats.multiplayer?.inputSequence ?? null,
+          origin: stats.origin,
+        });
+        if (trace.localFrames.length > limit) trace.localFrames.shift();
+      }
+      requestAnimationFrame(sample);
+    };
+    requestAnimationFrame(sample);
+  }, LOCAL_FRAME_TRACE_LIMIT);
+}
+
+async function stopLocalMotionSampling(client) {
+  await client.page.evaluate(() => {
+    const trace = window.__cssQuakeMpTrace;
+    if (trace) trace.localSampling = false;
+  });
 }
 
 async function sampleRemotePlayerAnimation(client) {
@@ -257,30 +297,29 @@ async function sampleRemotePlayerAnimation(client) {
       if (!player?.clientId || player.clientId === localClientId) continue;
       expectedRemotes.set(player.clientId, player);
     }
-    const elementsByClient = new Map();
-    for (const element of document.querySelectorAll("[data-player-id][data-client-id]")) {
-      const clientId = element.dataset.clientId ?? null;
+    const presentationsByClient = new Map();
+    for (const presentation of stats?.multiplayer?.remotePlayers ?? []) {
+      const clientId = presentation.clientId ?? null;
       if (!clientId || clientId === localClientId) continue;
-      elementsByClient.set(clientId, element);
+      presentationsByClient.set(clientId, presentation);
       if (!expectedRemotes.has(clientId)) {
         expectedRemotes.set(clientId, {
           clientId,
-          playerId: element.dataset.playerId ?? null,
+          playerId: presentation.playerId ?? null,
         });
       }
     }
     for (const [clientId, expected] of expectedRemotes) {
-      const element = elementsByClient.get(clientId) ?? null;
+      const presentation = presentationsByClient.get(clientId) ?? null;
       trace.remoteFrames.push({
         sampledAt: performance.now(),
-        playerId: element?.dataset.playerId ?? expected.playerId ?? null,
+        playerId: presentation?.playerId ?? expected.playerId ?? null,
         clientId,
-        missing: !element,
-        hidden: element instanceof HTMLElement ? element.hidden : true,
-        frameIndex: element?.dataset.remoteFrameIndex ?? null,
-        frameName: element?.dataset.remoteFrameName ?? null,
-        transform: element instanceof HTMLElement ? element.style.transform : "",
-        computedTransform: element instanceof HTMLElement ? getComputedStyle(element).transform : "",
+        missing: !presentation,
+        hidden: presentation?.hidden ?? true,
+        frameIndex: presentation?.frameIndex ?? null,
+        frameName: presentation?.frameName ?? null,
+        origin: presentation?.origin ?? null,
       });
     }
     if (trace.remoteFrames.length > remoteFrameTraceLimit) {
@@ -293,18 +332,11 @@ async function readClientSnapshot(client) {
   return await client.page.evaluate(() => {
     const stats = window.__cssQuakeDebug?.stats?.() ?? null;
     const trace = window.__cssQuakeMpTrace ??
-      { connections: [], sent: [], sentDetails: [], received: [], events: [], lastSnapshotPlayers: [], rejects: [], snapshots: 0, remoteFrames: [] };
-    const remotePlayers = Array.from(document.querySelectorAll("[data-player-id][data-client-id]"))
-      .map((element) => ({
-        playerId: element.dataset.playerId ?? null,
-        clientId: element.dataset.clientId ?? null,
-        color: element.dataset.playerColor ?? null,
-        frameIndex: element.dataset.remoteFrameIndex ?? null,
-        frameName: element.dataset.remoteFrameName ?? null,
-        hidden: element instanceof HTMLElement ? element.hidden : false,
-        transform: element instanceof HTMLElement ? element.style.transform : "",
-        computedTransform: element instanceof HTMLElement ? getComputedStyle(element).transform : "",
-      }));
+      { connections: [], sent: [], sentDetails: [], received: [], events: [], lastSnapshotPlayers: [], rejects: [], snapshots: 0, remoteFrames: [], localFrames: [] };
+    const remotePlayers = stats?.multiplayer?.remotePlayers ?? [];
+    const scoreboardRows = stats?.multiplayer?.scoreboardEntries ?? [];
+    const glyphSurface = document.querySelector(".quake-glyph-ui");
+    const glyphSurfaceStyle = glyphSurface instanceof HTMLElement ? getComputedStyle(glyphSurface) : null;
     return {
       stats,
       presentation: {
@@ -313,8 +345,23 @@ async function readClientSnapshot(client) {
         multiplayerInputPaused: document.body.classList.contains("quake-multiplayer-input-paused"),
       },
       remotePlayers,
-      scoreboardRows: Array.from(document.querySelectorAll("#quake-multiplayer-scoreboard tbody tr"))
-        .map((row) => Array.from(row.querySelectorAll("td")).map((cell) => cell.textContent?.trim() ?? "")),
+      scoreboardRows: scoreboardRows.map((row) => [
+        row.displayName,
+        String(row.frags),
+        String(row.deaths),
+        row.pingMs === null ? "-" : String(row.pingMs),
+      ]),
+      scoreboardVisible: Boolean(
+        stats?.multiplayer?.scoreboardRenderer === "glyph" &&
+        stats?.multiplayer?.scoreboardVisible === true &&
+        !document.querySelector("#quake-multiplayer-scoreboard") &&
+        glyphSurface instanceof HTMLElement &&
+        glyphSurfaceStyle?.display !== "none" &&
+        glyphSurfaceStyle?.visibility !== "hidden" &&
+        glyphSurface.dataset.multiplayerScoreboard === "ascii-grid" &&
+        Number(glyphSurface.dataset.multiplayerScoreboardLines) >= scoreboardRows.length + 3 &&
+        scoreboardRows.length > 0
+      ),
       mpTrace: {
         connections: trace.connections,
         sent: trace.sent,
@@ -322,6 +369,7 @@ async function readClientSnapshot(client) {
         received: trace.received,
         events: trace.events,
         lastSnapshotPlayers: trace.lastSnapshotPlayers,
+        localFrames: trace.localFrames ?? [],
         rejects: trace.rejects,
         snapshots: trace.snapshots,
         remoteFrames: trace.remoteFrames,
@@ -337,6 +385,8 @@ function installWebSocketTrace() {
     received: [],
     rejects: [],
     remoteFrames: [],
+    localFrames: [],
+    localSampling: false,
     sent: [],
     sentDetails: [],
     lastSnapshotPlayers: [],
@@ -463,6 +513,8 @@ function installWebSocketTrace() {
         name: player.name ?? null,
         alive: player.alive ?? null,
         health: player.health ?? null,
+        lastInputSequence: player.lastInputSequence ?? null,
+        origin: player.origin ?? null,
       }))
       .filter((player) => player.clientId || player.playerId);
   }
@@ -481,10 +533,15 @@ function buildReport({ after, appUrl, before, clients, clientsCount, durationMs,
     index: client.index,
     ...remoteVisibilitySummary(client.after.mpTrace.remoteFrames),
   }));
+  const localMotionByClient = clientReports.map((client) => ({
+    index: client.index,
+    ...localMotionSummary(client.after),
+  }));
   const aggregate = {
     clients: clientsCount,
     loaded: clientReports.filter((client) => client.after.stats?.loading === false).length,
     scoreboardReady: clientReports.filter((client) => client.after.scoreboardRows.length >= clientsCount).length,
+    scoreboardVisible: clientReports.filter((client) => client.after.scoreboardVisible).length,
     remotePlayersReady: clientReports.filter((client) => client.after.remotePlayers.length >= clientsCount - 1).length,
     remotePlayersVisible: clientReports.filter((client) =>
       client.after.remotePlayers.filter((player) => !player.hidden).length >= clientsCount - 1
@@ -519,6 +576,11 @@ function buildReport({ after, appUrl, before, clients, clientsCount, durationMs,
     moved: clientReports.filter((client) =>
       distance3(client.before.stats?.origin, client.after.stats?.origin) > 0.01
     ).length,
+    localMotion: {
+      maxFrameStep: Math.max(0, ...localMotionByClient.map((client) => client.maxFrameStep)),
+      maxAuthorityDrift: Math.max(0, ...localMotionByClient.map((client) => client.authorityDrift ?? 0)),
+      byClient: localMotionByClient,
+    },
     websocket: {
       sentByType: countAll(clientReports.flatMap((client) => client.after.mpTrace.sent)),
       receivedByType: countAll(clientReports.flatMap((client) => client.after.mpTrace.received)),
@@ -560,10 +622,25 @@ function validateReport(report) {
   const clients = report.options.clients;
   if (report.aggregate.loaded !== clients) failures.push(`Only ${report.aggregate.loaded}/${clients} clients loaded.`);
   if (report.aggregate.scoreboardReady !== clients) failures.push(`Only ${report.aggregate.scoreboardReady}/${clients} clients saw the full scoreboard.`);
-  if (report.aggregate.remotePlayersReady !== clients) failures.push(`Only ${report.aggregate.remotePlayersReady}/${clients} clients saw remote player DOM.`);
+  if (report.aggregate.scoreboardVisible !== clients) failures.push(`Only ${report.aggregate.scoreboardVisible}/${clients} clients rendered the scoreboard in the ASCII glyph scene.`);
+  if (report.aggregate.remotePlayersReady !== clients) failures.push(`Only ${report.aggregate.remotePlayersReady}/${clients} clients saw remote players.`);
   if (report.aggregate.remotePlayersVisible !== clients) failures.push(`Only ${report.aggregate.remotePlayersVisible}/${clients} clients saw visible remote players.`);
   if (report.aggregate.presentationReady !== clients) failures.push(`Only ${report.aggregate.presentationReady}/${clients} clients entered active play presentation.`);
   if (report.aggregate.moved !== clients) failures.push(`Only ${report.aggregate.moved}/${clients} clients moved locally.`);
+  if (report.aggregate.localMotion.maxFrameStep > MAX_LOCAL_FRAME_STEP) {
+    failures.push(`Local movement jumped ${report.aggregate.localMotion.maxFrameStep.toFixed(3)} units in one frame (limit ${MAX_LOCAL_FRAME_STEP}).`);
+  }
+  if (report.aggregate.localMotion.maxAuthorityDrift > MAX_LOCAL_AUTHORITY_DRIFT) {
+    failures.push(`Local/server movement drift reached ${report.aggregate.localMotion.maxAuthorityDrift.toFixed(3)} units (limit ${MAX_LOCAL_AUTHORITY_DRIFT}).`);
+  }
+  for (const client of report.aggregate.localMotion.byClient) {
+    if (client.authorityDrift === null) {
+      failures.push(`Client ${client.index} had no authoritative movement sample to compare.`);
+    }
+    if (client.frameSamples < 2) {
+      failures.push(`Client ${client.index} captured only ${client.frameSamples} local movement frame(s).`);
+    }
+  }
   if (report.aggregate.remotePlayersMoved !== clients) failures.push(`Only ${report.aggregate.remotePlayersMoved}/${clients} clients saw remote player movement.`);
   if (report.aggregate.remotePlayersAnimated !== clients) failures.push(`Only ${report.aggregate.remotePlayersAnimated}/${clients} clients saw remote player frame animation.`);
   if (report.aggregate.remoteVisibility.maxHiddenGapMs > report.options.maxRemoteHiddenGapMs) {
@@ -593,8 +670,9 @@ function validateReport(report) {
 
 function printSummary(report, artifact) {
   console.log(`target: app=${report.target.appUrl}, party=${report.target.partyHost}, room=${report.target.room}, invite=${report.target.invite}`);
-  console.log(`clients: loaded ${report.aggregate.loaded}/${report.options.clients}, scoreboard ${report.aggregate.scoreboardReady}/${report.options.clients}, remote DOM ${report.aggregate.remotePlayersReady}/${report.options.clients}, visible ${report.aggregate.remotePlayersVisible}/${report.options.clients}`);
+  console.log(`clients: loaded ${report.aggregate.loaded}/${report.options.clients}, scoreboard ${report.aggregate.scoreboardReady}/${report.options.clients} visible ${report.aggregate.scoreboardVisible}/${report.options.clients}, remote players ${report.aggregate.remotePlayersReady}/${report.options.clients}, visible ${report.aggregate.remotePlayersVisible}/${report.options.clients}`);
   console.log(`play: moved ${report.aggregate.moved}/${report.options.clients}, remote movement ${report.aggregate.remotePlayersMoved}/${report.options.clients}, remote animation ${report.aggregate.remotePlayersAnimated}/${report.options.clients}, snapshots ${report.aggregate.websocket.snapshots}, rejects ${report.aggregate.websocket.rejects.length}`);
+  console.log(`local continuity: max frame step ${report.aggregate.localMotion.maxFrameStep.toFixed(3)}, max authority drift ${report.aggregate.localMotion.maxAuthorityDrift.toFixed(3)}`);
   console.log(`messages sent: ${compactCounts(report.aggregate.websocket.sentByType)}`);
   console.log(`messages received: ${compactCounts(report.aggregate.websocket.receivedByType)}`);
   console.log(`events: ${compactCounts(report.aggregate.websocket.events)}`);
@@ -604,14 +682,32 @@ function printSummary(report, artifact) {
   if (artifact) console.log(`artifact: ${artifact}`);
 }
 
+function localMotionSummary(snapshot) {
+  const frames = snapshot.mpTrace.localFrames ?? [];
+  let maxFrameStep = 0;
+  for (let index = 1; index < frames.length; index += 1) {
+    maxFrameStep = Math.max(maxFrameStep, distance3(frames[index - 1]?.origin, frames[index]?.origin));
+  }
+  const clientId = snapshot.stats?.multiplayer?.clientId;
+  const authoritative = (snapshot.mpTrace.lastSnapshotPlayers ?? [])
+    .find((player) => player.clientId === clientId);
+  const authorityDrift = authoritative?.origin && snapshot.stats?.origin
+    ? distance3(authoritative.origin, snapshot.stats.origin)
+    : null;
+  return {
+    authorityDrift,
+    frameSamples: frames.length,
+    maxFrameStep,
+  };
+}
+
 function remotePlayersMoved(before, after) {
   const beforeByClient = new Map((before ?? []).map((player) => [player.clientId, player]));
   for (const player of after ?? []) {
     if (!player.clientId || player.hidden) continue;
     const previous = beforeByClient.get(player.clientId);
     if (!previous || previous.hidden) continue;
-    if (player.transform !== previous.transform) return true;
-    if (player.computedTransform !== previous.computedTransform) return true;
+    if (player.origin !== previous.origin) return true;
   }
   return false;
 }

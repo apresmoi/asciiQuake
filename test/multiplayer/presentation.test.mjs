@@ -79,6 +79,16 @@ test("remote presenter marks remote player pain and reports damage to visual lay
   harness.presenter.handleRoomMessage(roomSnapshot([remotePlayer]));
   harness.flushFrame();
 
+  assert.deepEqual(harness.presenter.snapshot().map((entry) => ({
+    alive: entry.alive,
+    clientId: entry.clientId,
+    playerId: entry.playerId,
+  })), [{
+    alive: "true",
+    clientId: "remote-client",
+    playerId: "remote-player",
+  }]);
+
   harness.setNow(1_100);
   harness.presenter.handleRoomMessage(roomEvent({
     eventType: "player.damaged",

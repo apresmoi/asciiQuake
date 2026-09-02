@@ -1,5 +1,7 @@
 import type * as Party from "partykit/server";
 
+import bundledQuakeMultiplayerWorldFacts from "../../generated/quakeMultiplayerWorldFacts.json";
+
 import {
   buildQuakeClipCollisionWorld,
   type QuakeCollisionWorld,
@@ -144,6 +146,7 @@ type CssQuakeConnectionRole = "player" | "spectator";
 interface CssQuakeConnectionState {
   authority: QuakeMultiplayerClientAuthorityState;
   clientId: string;
+  color?: string;
   displayName: string;
   lastRoomPingAt?: number;
   lastRoomPingId?: string;
@@ -184,6 +187,13 @@ interface CssQuakeTrustedGameplayDefinitionsLoad {
   required: boolean;
 }
 
+interface CssQuakeTrustedServerAsset {
+  version: 1;
+  collision: QuakePreparedCollision;
+  gameplayDefinitions: QuakeMultiplayerGameplayDefinitions;
+  playerEyeHeight: number;
+}
+
 type CssQuakeMoverState = "bottom" | "moving-up" | "top" | "moving-down";
 type CssQuakeMoverMotionState = Extract<QuakeMultiplayerMoverState, "moving-up" | "moving-down">;
 
@@ -199,6 +209,8 @@ export const CSSQUAKE_PARTY_MAX_REJECTS_PER_CONNECTION = 8;
 export const CSSQUAKE_PARTY_MAX_SPECTATORS_PER_ROOM = 8;
 const CSSQUAKE_PARTY_REJECT_CLOSE_CODE = 1008;
 const CSSQUAKE_PARTY_RECONNECT_GRACE_MS = 15_000;
+const BUNDLED_QUAKE_MULTIPLAYER_WORLD_FACTS = bundledQuakeMultiplayerWorldFacts as unknown as
+  Readonly<Record<string, readonly QuakeMultiplayerWorldDefinition[]>>;
 
 export default class CssQuakeMultiplayerRoom implements Party.Server {
   private roomKey: QuakeMultiplayerRoomCompatibilityKey | null = null;
@@ -458,36 +470,18 @@ export default class CssQuakeMultiplayerRoom implements Party.Server {
       this.registerSpectator(sender, message, authority, receivedAt);
       return true;
     }
-    const spawn = existingPlayer ? null : this.nextSpawnPoint();
-    const inventory = createQuakeMultiplayerInitialInventory();
-    const player: QuakeMultiplayerAuthoritativePlayerState = existingPlayer ?? {
-      playerId,
-      clientId: message.payload.clientId,
-      displayName: message.payload.displayName,
-      ...(message.payload.color ? { color: message.payload.color } : {}),
-      mapName: this.roomKey.mapName,
-      ...(spawn ? { spawnId: spawn.spawnId } : {}),
-      origin: spawn?.origin ?? [0, 0, 0],
-      velocity: [0, 0, 0],
-      rotX: spawn?.rotX ?? 90,
-      rotY: spawn?.rotY ?? 270,
-      health: inventory.health,
-      armor: inventory.armor,
-      activeWeapon: inventory.activeWeapon,
-      inventory,
-      alive: true,
-      frags: 0,
-      deaths: 0,
-      lastInputSequence: 0,
-      updatedAt: Date.now(),
-    };
+    const player = existingPlayer ?? this.createFreshPlayer(
+      message.payload.clientId,
+      message.payload.displayName,
+      message.payload.color,
+      receivedAt,
+    );
     const nextPlayer = {
       ...player,
       clientId: message.payload.clientId,
       displayName: message.payload.displayName,
       ...(message.payload.color ?? player.color ? { color: message.payload.color ?? player.color } : {}),
       mapName: this.roomKey.mapName,
-      ...(spawn && !player.spawnId ? { spawnId: spawn.spawnId, origin: spawn.origin, rotX: spawn.rotX, rotY: spawn.rotY } : {}),
       updatedAt: Date.now(),
     };
     this.players.set(playerId, nextPlayer);
@@ -502,6 +496,7 @@ export default class CssQuakeMultiplayerRoom implements Party.Server {
     const state = {
       authority: latestAuthority,
       clientId: message.payload.clientId,
+      ...(message.payload.color ? { color: message.payload.color } : {}),
       displayName: message.payload.displayName,
       lastSeenAt: receivedAt,
       playerId,
@@ -543,6 +538,7 @@ export default class CssQuakeMultiplayerRoom implements Party.Server {
     const state = {
       authority: latestAuthority,
       clientId: message.payload.clientId,
+      ...(message.payload.color ? { color: message.payload.color } : {}),
       displayName: message.payload.displayName,
       lastSeenAt: receivedAt,
       presenceStatus: "active" as const,
@@ -1386,7 +1382,10 @@ export default class CssQuakeMultiplayerRoom implements Party.Server {
     for (const definition of definitions) {
       if (this.worldDefinitions.has(definition.entityIndex)) continue;
       this.worldDefinitions.set(definition.entityIndex, definition);
-      if (definition.kind === "mover") this.resetMoverCollisionOffset(definition.entityIndex);
+      if (definition.kind === "mover") {
+        this.moverStates.set(definition.entityIndex, definition.initialState ?? "bottom");
+        this.resetMoverCollisionOffset(definition.entityIndex);
+      }
     }
   }
 
@@ -1651,7 +1650,6 @@ export default class CssQuakeMultiplayerRoom implements Party.Server {
       code: "level-transition",
       message: `Level transition requested: ${resolution.definition.targetMap}.`,
     });
-    this.scheduleMatchRestart(message.messageId);
     this.broadcastSnapshot();
   }
 
@@ -1925,7 +1923,7 @@ export default class CssQuakeMultiplayerRoom implements Party.Server {
     cascadeDepth: number,
     activation: "touch" | "target" | "shoot",
   ): void {
-    const state = this.moverStates.get(definition.entityIndex) ?? "bottom";
+    const state = this.moverStates.get(definition.entityIndex) ?? definition.initialState ?? "bottom";
     if (state === "moving-up" || state === "top") return;
     this.moverStates.set(definition.entityIndex, "moving-up");
     this.clearMoverStateTimers(definition.entityIndex);
@@ -1989,7 +1987,7 @@ export default class CssQuakeMultiplayerRoom implements Party.Server {
     damage: number,
   ): boolean {
     if (!definition.shootActivates) return false;
-    const state = this.moverStates.get(definition.entityIndex) ?? "bottom";
+    const state = this.moverStates.get(definition.entityIndex) ?? definition.initialState ?? "bottom";
     if (state === "moving-up" || state === "top") return true;
     const maxHealth = Math.max(1, Math.round(definition.shootHealth ?? 1));
     const previousHealth = this.moverShootHealth.get(definition.entityIndex) ?? maxHealth;
@@ -2105,7 +2103,12 @@ export default class CssQuakeMultiplayerRoom implements Party.Server {
 
   private resetMoverCollisionOffset(entityIndex: number): void {
     this.moverCollisionMotions.delete(entityIndex);
-    this.writeMoverCollisionOffset(entityIndex, [0, 0, 0]);
+    const definition = this.worldDefinitions.get(entityIndex);
+    const initialState = definition?.kind === "mover" ? definition.initialState ?? "bottom" : "bottom";
+    const offset = definition?.kind === "mover"
+      ? quakeMultiplayerMoverOffsetForState(definition, initialState)
+      : [0, 0, 0] as QuakeMultiplayerVec3;
+    this.writeMoverCollisionOffset(entityIndex, offset);
     this.moverCollisionOffsets.delete(entityIndex);
   }
 
@@ -2166,7 +2169,7 @@ export default class CssQuakeMultiplayerRoom implements Party.Server {
     if (!this.roomKey) return null;
     const source = this.options.trustedWorldDefinitions;
     if (source) return typeof source === "function" ? source(this.roomKey) ?? null : source;
-    return this.fetchedTrustedWorldDefinitions;
+    return this.fetchedTrustedWorldDefinitions ?? bundledQuakeMultiplayerWorldDefinitions(this.roomKey);
   }
 
   private ensureTrustedGameplayDefinitions(
@@ -2215,13 +2218,17 @@ export default class CssQuakeMultiplayerRoom implements Party.Server {
     }
     const assetFetcher = this.room.context?.assets?.fetch;
     if (typeof assetFetcher !== "function") return null;
-    const sceneAssetPath = trustedQuakeMultiplayerSceneAssetPath(roomKey.sceneUrl);
-    if (!sceneAssetPath) return null;
+    const serverAssetPath = trustedQuakeMultiplayerServerAssetPath(roomKey);
+    if (!serverAssetPath) return null;
     this.trustedGameplayDefinitionsRequired = false;
-    this.trustedGameplayDefinitionsPromise = assetFetcher.call(this.room.context.assets, sceneAssetPath)
+    this.trustedGameplayDefinitionsPromise = assetFetcher.call(this.room.context.assets, serverAssetPath)
       .then(async (response) => {
         if (!response?.ok) return null;
         const scene = await response.json() as unknown;
+        if (isQuakeMultiplayerTrustedServerAsset(scene)) {
+          this.trustedSceneMovement = trustedQuakeMultiplayerSceneMovement(scene);
+          return scene.gameplayDefinitions;
+        }
         if (!isQuakeMultiplayerSceneGameplaySource(scene)) return null;
         this.trustedSceneMovement = trustedQuakeMultiplayerSceneMovement(scene);
         this.fetchedTrustedWorldDefinitions = quakeMultiplayerWorldDefinitionsFromScene(scene, {});
@@ -2239,7 +2246,13 @@ export default class CssQuakeMultiplayerRoom implements Party.Server {
     this.connectionPlayers.delete(connection.id);
     this.clearConnectionRejects(connection);
     connection.setState(null);
-    if (!state?.playerId) return;
+    if (!state?.playerId) {
+      if (state?.role === "spectator") {
+        this.reportPresence();
+        this.broadcastSnapshot();
+      }
+      return;
+    }
     if (this.playerHasActiveConnection(state.playerId)) return;
     this.pausePlayerSimulation(state.playerId);
     this.reportPresence();
@@ -2314,6 +2327,7 @@ export default class CssQuakeMultiplayerRoom implements Party.Server {
       playerId,
       reason,
     });
+    this.promoteAvailableSpectators();
     this.broadcastSnapshot();
     if (!this.players.size) {
       this.stopSimulationTicker();
@@ -2321,6 +2335,83 @@ export default class CssQuakeMultiplayerRoom implements Party.Server {
       this.stopHeartbeatTicker();
       this.resetIdleRoomState();
     }
+  }
+
+  private promoteAvailableSpectators(): number {
+    if (!this.roomKey) return 0;
+    const maxPlayers = this.matchSettings.maxPlayers;
+    if (maxPlayers === undefined) return 0;
+    let promotedCount = 0;
+    for (const connection of this.room.getConnections<CssQuakeConnectionState>()) {
+      if (this.players.size >= maxPlayers) break;
+      const state = this.connectionState(connection);
+      if (!state || state.role !== "spectator") continue;
+      const now = Date.now();
+      const player = this.createFreshPlayer(state.clientId, state.displayName, state.color, now);
+      const nextState: CssQuakeConnectionState = {
+        ...state,
+        lastSeenAt: now,
+        playerId: player.playerId,
+        presenceStatus: "active",
+        role: "player",
+      };
+      this.connectionPlayers.set(connection.id, nextState);
+      connection.setState(nextState);
+      promotedCount += 1;
+      this.broadcastRoomEvent({
+        eventType: "player.joined",
+        eventId: `promoted-${connection.id}-${now}`,
+        roomTime: this.roomTime(),
+        player,
+      });
+    }
+    if (promotedCount > 0) {
+      this.startSimulationTicker();
+      this.startSnapshotTicker();
+      this.startHeartbeatTicker();
+      this.reportPresence();
+    }
+    return promotedCount;
+  }
+
+  private createFreshPlayer(
+    clientId: string,
+    displayName: string,
+    color: string | undefined,
+    now: number,
+  ): QuakeMultiplayerAuthoritativePlayerState {
+    if (!this.roomKey) throw new Error("Cannot create a multiplayer player before the room is initialized.");
+    const playerId = this.playerIdForClient(clientId);
+    const spawn = this.nextSpawnPoint();
+    const inventory = createQuakeMultiplayerInitialInventory();
+    const player: QuakeMultiplayerAuthoritativePlayerState = {
+      playerId,
+      clientId,
+      displayName,
+      ...(color ? { color } : {}),
+      mapName: this.roomKey.mapName,
+      ...(spawn ? { spawnId: spawn.spawnId } : {}),
+      origin: spawn?.origin ?? [0, 0, 0],
+      velocity: [0, 0, 0],
+      rotX: spawn?.rotX ?? 90,
+      rotY: spawn?.rotY ?? 270,
+      health: inventory.health,
+      armor: inventory.armor,
+      activeWeapon: inventory.activeWeapon,
+      inventory,
+      alive: true,
+      frags: 0,
+      deaths: 0,
+      lastInputSequence: 0,
+      updatedAt: now,
+    };
+    this.players.set(playerId, player);
+    this.playerSimulationStates.set(playerId, createQuakeMultiplayerRoomPlayerSimulationState({
+      playerId,
+      now,
+      lastAcceptedInputSequence: 0,
+    }));
+    return player;
   }
 
   private resetIdleRoomState(): void {
@@ -2390,6 +2481,7 @@ export default class CssQuakeMultiplayerRoom implements Party.Server {
     const next = {
       authority,
       clientId: message.payload.clientId,
+      ...(message.payload.color ? { color: message.payload.color } : {}),
       displayName: message.payload.displayName,
       lastSeenAt,
       presenceStatus: "active" as const,
@@ -2945,6 +3037,29 @@ function trustedQuakeMultiplayerSceneAssetPath(sceneUrl: string): string | null 
   }
 }
 
+function trustedQuakeMultiplayerServerAssetPath(
+  roomKey: QuakeMultiplayerRoomCompatibilityKey,
+): string | null {
+  const scenePath = trustedQuakeMultiplayerSceneAssetPath(roomKey.sceneUrl);
+  if (!scenePath) return null;
+  const mapName = roomKey.mapName.trim().toLowerCase();
+  if (!/^[a-z0-9]+$/.test(mapName)) return null;
+  const filename = scenePath.split("/").pop()?.toLowerCase();
+  if (filename !== `${mapName}.json` && filename !== `${mapName}.deathmatch.json`) return null;
+  return `/q/${mapName}.deathmatch.json`;
+}
+
+function bundledQuakeMultiplayerWorldDefinitions(
+  roomKey: QuakeMultiplayerRoomCompatibilityKey,
+): readonly QuakeMultiplayerWorldDefinition[] | null {
+  const scenePath = trustedQuakeMultiplayerSceneAssetPath(roomKey.sceneUrl);
+  if (!scenePath) return null;
+  const mapName = roomKey.mapName.trim().toLowerCase();
+  const filename = scenePath.split("/").pop()?.toLowerCase();
+  if (filename !== `${mapName}.deathmatch.json`) return null;
+  return BUNDLED_QUAKE_MULTIPLAYER_WORLD_FACTS[mapName] ?? null;
+}
+
 function isQuakeMultiplayerSceneGameplaySource(value: unknown): value is QuakeMultiplayerSceneGameplaySource {
   if (!isRecord(value)) return false;
   const entityManifest = value.entityManifest;
@@ -2967,7 +3082,7 @@ function isQuakeMultiplayerSceneGameplaySource(value: unknown): value is QuakeMu
 }
 
 function trustedQuakeMultiplayerSceneMovement(
-  scene: QuakeMultiplayerSceneGameplaySource,
+  scene: QuakeMultiplayerSceneGameplaySource | CssQuakeTrustedServerAsset,
 ): { collisionWorld: QuakeCollisionWorld; playerEyeHeight: number } | null {
   if (!isQuakePreparedCollisionLike(scene.collision)) return null;
   try {
@@ -2975,11 +3090,26 @@ function trustedQuakeMultiplayerSceneMovement(
     if (!collisionWorld) return null;
     return {
       collisionWorld,
-      playerEyeHeight: scene.spawn.eyeHeight ?? 0.92,
+      playerEyeHeight: "playerEyeHeight" in scene
+        ? scene.playerEyeHeight
+        : scene.spawn.eyeHeight ?? 0.92,
     };
   } catch {
     return null;
   }
+}
+
+function isQuakeMultiplayerTrustedServerAsset(value: unknown): value is CssQuakeTrustedServerAsset {
+  if (!isRecord(value) || value.version !== 1) return false;
+  const definitions = value.gameplayDefinitions;
+  return (
+    isQuakePreparedCollisionLike(value.collision) &&
+    isFiniteNumber(value.playerEyeHeight) &&
+    isRecord(definitions) &&
+    isRecord(definitions.gameplayFacts) &&
+    Array.isArray(definitions.deathmatchSpawns) &&
+    Array.isArray(definitions.pickupDefinitions)
+  );
 }
 
 function isQuakePreparedCollisionLike(value: unknown): value is QuakePreparedCollision {

@@ -1189,6 +1189,7 @@ export function createQuakeGlyphUiOverlay(
       } else if (isBaseGrid(grid)) {
         liftCellColors(grid, backdropGamma, backdropLiftCache, 1, backdropBlack, backdropWhite);
         stampText(grid);
+        stampScoreboard(grid);
       } else {
         liftCellColors(grid, artGamma, artLiftCache, artSaturation, artBlack, artWhite);
         // Detail layers only: the backdrop's sparse glyphs are a deliberate
@@ -1334,6 +1335,86 @@ export function createQuakeGlyphUiOverlay(
         }
       }
     }
+  }
+
+  function scoreboardAsciiLines(): Array<{ color: string; text: string }> {
+    const scoreboard = getQuakeMenuSceneState().scoreboard;
+    if (!scoreboard.visible || !scoreboard.rows.length) return [];
+    const nameWidth = 14;
+    const playerColumnWidth = nameWidth + 1;
+    const border = `+${"-".repeat(28)}+`;
+    const lines: Array<{ color: string; text: string }> = [
+      { color: "#d6b55c", text: border },
+      {
+        color: "#d6b55c",
+        text: `|${"PLAYER".padEnd(playerColumnWidth)}${"F".padStart(3)}${"D".padStart(3)}${"PING".padStart(6)} |`,
+      },
+      ...scoreboard.rows.map((row) => {
+        const marker = row.local ? ">" : " ";
+        const name = row.displayName.replace(/[^\x20-\x7e]/g, "?").slice(0, nameWidth - 1);
+        const ping = row.pingMs === null ? "-" : String(row.pingMs);
+        return {
+          color: row.local ? "#fff3bd" : "#f4df9a",
+          text: `|${`${marker}${name}`.padEnd(playerColumnWidth)}${String(row.frags).padStart(3)}${String(row.deaths).padStart(3)}${ping.padStart(6)} |`.toUpperCase(),
+        };
+      }),
+      { color: "#d6b55c", text: border },
+    ];
+    if (scoreboard.spectatorCount > 0) {
+      lines.push({
+        color: "#b89b61",
+        text: `${scoreboard.spectatorCount} SPECTATOR${scoreboard.spectatorCount === 1 ? "" : "S"}`,
+      });
+    }
+    return lines;
+  }
+
+  function scoreboardGridLayout(
+    hostBox: { width: number; height: number },
+    cols: number,
+    rows: number,
+    lines: readonly { text: string }[],
+  ): { col: number; row: number; width: number; height: number; cellW: number; cellH: number } | null {
+    if (!cols || !rows || !hostBox.width || !hostBox.height || !lines.length) return null;
+    const cellW = hostBox.width / cols;
+    const cellH = hostBox.height / rows;
+    const width = Math.max(...lines.map((line) => line.text.length));
+    return {
+      col: Math.max(1, cols - Math.max(1, Math.ceil(16 / cellW)) - width),
+      row: Math.max(1, Math.round(72 / cellH)),
+      width,
+      height: lines.length,
+      cellW,
+      cellH,
+    };
+  }
+
+  function stampScoreboard(
+    grid: { cols: number; rows: number; char: string[]; color: (string | null)[] },
+  ): void {
+    const state = getQuakeMenuSceneState();
+    if (state.chrome) {
+      surface.dataset.multiplayerScoreboard = "hidden";
+      delete surface.dataset.multiplayerScoreboardLines;
+      return;
+    }
+    const lines = scoreboardAsciiLines();
+    surface.dataset.multiplayerScoreboard = lines.length ? "ascii-grid" : "hidden";
+    if (lines.length) surface.dataset.multiplayerScoreboardLines = String(lines.length);
+    else delete surface.dataset.multiplayerScoreboardLines;
+    const layout = scoreboardGridLayout(hostEl.getBoundingClientRect(), grid.cols, grid.rows, lines);
+    if (!layout) return;
+    lines.forEach((line, lineIndex) => {
+      const row = layout.row + lineIndex;
+      if (row < 0 || row >= grid.rows) return;
+      for (let index = 0; index < line.text.length; index++) {
+        const col = layout.col + index;
+        if (col < 0 || col >= grid.cols) continue;
+        const offset = row * grid.cols + col;
+        grid.char[offset] = line.text[index] ?? " ";
+        grid.color[offset] = line.color;
+      }
+    });
   }
 
   /**
@@ -2241,6 +2322,28 @@ export function createQuakeGlyphUiOverlay(
       for (const line of st.centerLines) {
         drawGlyphRun(groups, hostBox, line, hostBox.width / 2, cyLine, layout.center.h, { align: "center" });
         cyLine += layout.center.h;
+      }
+    }
+
+    // ── Multiplayer scoreboard backing ──
+    // The actual characters are stamped into the final base grid above. This
+    // glyph-scene plate gives them an occluding ground without reintroducing a
+    // CSS/HTML panel over the game.
+    if (!st.chrome && st.scoreboard.visible && st.scoreboard.rows.length) {
+      const lines = scoreboardAsciiLines();
+      const grid = sceneApi?.getOptions();
+      const layout = grid && scoreboardGridLayout(hostBox, grid.cols, grid.rows, lines);
+      if (layout) {
+        drawSolid(
+          groups,
+          hostBox,
+          layout.col * layout.cellW,
+          layout.row * layout.cellH,
+          layout.width * layout.cellW,
+          layout.height * layout.cellH,
+          "#090705",
+          2.5,
+        );
       }
     }
   }

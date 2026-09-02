@@ -2,9 +2,71 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  cleanupDuelRoom,
+  createFakePartyRoom,
   worldEnvelope,
   connectDuelRoom,
+  facts,
+  helloEnvelope,
+  partyRoomModule,
 } from "./partyRoomHarness.mjs";
+import bundledWorldFacts from "../../src/generated/quakeMultiplayerWorldFacts.json" with { type: "json" };
+
+test("party room accepts a bundled deathmatch changelevel trigger without static asset serving", () => {
+  const definition = bundledWorldFacts.e1m1.find((candidate) => candidate.kind === "changelevel");
+  assert.ok(definition?.bounds, "expected bundled e1m1 changelevel bounds");
+  const origin = definition.bounds.mins.map((value, index) =>
+    (value + definition.bounds.maxs[index]) / 2
+  );
+  const roomKey = {
+    mapName: "e1m1",
+    assetManifestVersion: 1,
+    assetRoot: "/q",
+    sceneUrl: "https://quake.example/q/e1m1.deathmatch.json",
+  };
+  const { room, createConnection } = createFakePartyRoom("bundled-changelevel");
+  const deathmatchSpawns = [{
+    spawnId: "changelevel-spawn",
+    classname: "info_player_deathmatch",
+    origin,
+    rotX: 90,
+    rotY: 0,
+  }];
+  const partyRoom = new partyRoomModule.default(room, {
+    random: () => 0.999999,
+    trustedGameplayDefinitions: facts.createQuakeMultiplayerGameplayDefinitions({
+      deathmatchSpawns,
+      pickupDefinitions: [],
+    }),
+  });
+  const alice = createConnection("alice");
+  partyRoom.onConnect(alice);
+  partyRoom.onMessage(JSON.stringify(helloEnvelope({
+    clientId: "client-a",
+    deathmatchSpawns,
+    messageId: "bundled-changelevel-hello",
+    roomKey,
+    sentAt: Date.now(),
+  })), alice);
+  partyRoom.onMessage(JSON.stringify(worldEnvelope({
+    clientId: "client-a",
+    intent: {
+      intentType: "level-transition",
+      entityIndex: definition.entityIndex,
+      origin,
+    },
+    messageId: "bundled-changelevel-intent",
+    roomKey,
+    sequence: 2,
+    sentAt: Date.now(),
+  })), alice);
+
+  const transition = alice.messages.find((message) =>
+    message.type === "room.event" && message.payload.event.eventType === "level.transition"
+  );
+  assert.equal(transition?.payload.event.targetMap, "e1m2");
+  assert.equal(alice.messages.some((message) => message.type === "room.reject"), false);
+});
 
 test("party room target dispatch activates relay chains and target teleporters", () => {
   const triggerDefinition = {
@@ -146,4 +208,48 @@ test("party room target dispatch activates relay chains and target teleporters",
   assert.equal(mover.activation, "target");
   assert.equal(mover.state, "moving-up");
   assert.equal(alice.messages.some((message) => message.type === "room.reject"), false);
+});
+
+test("party room initializes mover collision at its Quake-authored bottom offset", () => {
+  const collisionOffsets = [];
+  const moverDefinition = {
+    kind: "mover",
+    entityIndex: 137,
+    classname: "func_door",
+    bounds: {
+      mins: [0.66, 45.46, -5.26],
+      maxs: [1.9, 50.54, -3.82],
+    },
+    touchActivates: true,
+    useActivates: true,
+    shootActivates: false,
+    speed: 100,
+    moveMs: 640,
+    returnDelayMs: 3_000,
+    delayMs: 0,
+    fromOrigin: [-9.6, 7.04, -2.56],
+    toOrigin: [-9.6, 7.04, -1.28],
+    bottomOffset: [0, 0, -1.28],
+    topOffset: [0, 0, 0],
+    targetEntityIndexes: [],
+  };
+  const { alice, bob, partyRoom } = connectDuelRoom({
+    id: "party-start-open-door-collision",
+    roomOptions: {
+      trustedWorldDefinitions: [moverDefinition],
+      trustedSceneMovement: {
+        collisionWorld: {
+          setBrushOffset(entityIndex, offset) {
+            collisionOffsets.push([entityIndex, [...offset]]);
+          },
+        },
+        playerEyeHeight: 1,
+      },
+    },
+  });
+  try {
+    assert.deepEqual(collisionOffsets[0], [137, [0, 0, -1.28]]);
+  } finally {
+    cleanupDuelRoom(partyRoom, alice, bob);
+  }
 });

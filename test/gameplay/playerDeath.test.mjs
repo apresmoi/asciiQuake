@@ -59,7 +59,7 @@ test("player damage momentum follows QuakeC dir * damage * 8", () => {
   assert.equal(player.quakePlayerDamageMomentumImpulse([1, 0, 0], [0, 0, 0], 0), null);
 });
 
-test("player lifecycle plays the source-selected death sound once", () => {
+function createLifecycleHarness(overrides = {}) {
   const playedSounds = [];
   const traces = [];
   const bodyClasses = new Set();
@@ -97,6 +97,7 @@ test("player lifecycle plays the source-selected death sound once", () => {
     hasBodyClass: (className) => bodyClasses.has(className),
     hasDeathOverlay: () => false,
     hideMainMenu: () => undefined,
+    isAuthoritativeMultiplayer: () => false,
     isMainMenuOpen: () => false,
     isMenuPanelOpen: () => false,
     jumpVelocity: 4,
@@ -120,7 +121,13 @@ test("player lifecycle plays the source-selected death sound once", () => {
     viewmodel: {
       clearFireAnimation: () => undefined,
     },
+    ...overrides,
   });
+  return { bodyClasses, flow, playedSounds, traces };
+}
+
+test("player lifecycle plays the source-selected death sound once", () => {
+  const { flow, playedSounds, traces } = createLifecycleHarness();
 
   const result = flow.showPlayerDeath({
     gibbed: false,
@@ -138,4 +145,19 @@ test("player lifecycle plays the source-selected death sound once", () => {
     traces.filter((entry) => entry.kind === "player-death-sound").map((entry) => entry.details),
     [{ gibbed: false, played: true, soundPath: "player/death3.wav" }],
   );
+});
+
+test("authoritative multiplayer death waits for the room respawn", () => {
+  let respawns = 0;
+  const { flow } = createLifecycleHarness({
+    currentResult: () => ({}),
+    isAuthoritativeMultiplayer: () => true,
+    player: () => ({ respawn: () => { respawns += 1; } }),
+  });
+
+  flow.showPlayerDeath();
+
+  assert.equal(flow.respawnFromDeath(), false);
+  assert.equal(flow.isPlayerDead(), true);
+  assert.equal(respawns, 0);
 });

@@ -37,5 +37,19 @@ child.on("close", (code, signal) => {
     process.kill(process.pid, signal);
     return;
   }
-  process.exit(code ?? 0);
+  if ((code ?? 1) !== 0 || mode !== "map") {
+    process.exit(code ?? 1);
+    return;
+  }
+  const facts = spawn(process.execPath, ["src/prepare/multiplayerWorldFacts.mjs"], {
+    env,
+    stdio: "inherit",
+  });
+  facts.on("close", (factsCode, factsSignal) => {
+    if (factsSignal) {
+      process.kill(process.pid, factsSignal);
+      return;
+    }
+    process.exit(factsCode ?? 1);
+  });
 });

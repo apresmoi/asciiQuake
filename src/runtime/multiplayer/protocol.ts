@@ -187,6 +187,9 @@ export type QuakeMultiplayerWorldDefinition =
       delayMs: number;
       fromOrigin: QuakeMultiplayerVec3;
       toOrigin: QuakeMultiplayerVec3;
+      bottomOffset?: QuakeMultiplayerVec3;
+      topOffset?: QuakeMultiplayerVec3;
+      initialState?: "bottom" | "top";
       targetEntityIndexes: readonly number[];
       killtargetEntityIndexes?: readonly number[];
       soundPath?: string;

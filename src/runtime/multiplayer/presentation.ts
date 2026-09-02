@@ -67,6 +67,24 @@ export interface QuakeMultiplayerRemotePlayerPresenter {
   clear(): void;
   dispose(): void;
   count(): number;
+  snapshot(): QuakeMultiplayerRemotePlayerPresentationSnapshot[];
+}
+
+export interface QuakeMultiplayerRemotePlayerPresentationSnapshot {
+  alive: string;
+  appliedRotY: string | null;
+  clientId: string;
+  frameIndex: string | null;
+  frameName: string | null;
+  hidden: boolean;
+  lastAttackAt: string | null;
+  lastPainAt: string | null;
+  origin: string | null;
+  playerId: string;
+  renderAt: string | null;
+  renderRotY: string | null;
+  stale: string | null;
+  visualRotY: string | null;
 }
 
 export function createQuakeMultiplayerRemotePlayerPresenter(
@@ -103,6 +121,28 @@ export function createQuakeMultiplayerRemotePlayerPresenter(
     },
     count(): number {
       return players.size;
+    },
+    snapshot(): QuakeMultiplayerRemotePlayerPresentationSnapshot[] {
+      return [...players.values()].map((entry) => {
+        const element = entry.visual?.element;
+        const data = element?.dataset;
+        return {
+          alive: data?.remoteAlive ?? String(entry.player.alive),
+          appliedRotY: data?.remoteAppliedRotY ?? null,
+          clientId: entry.player.clientId,
+          frameIndex: data?.remoteFrameIndex ?? null,
+          frameName: data?.remoteFrameName ?? null,
+          hidden: element?.hidden ?? false,
+          lastAttackAt: data?.remoteLastAttackAt ?? null,
+          lastPainAt: data?.remoteLastPainAt ?? null,
+          origin: data?.remoteOrigin ?? null,
+          playerId: entry.player.playerId,
+          renderAt: data?.remoteRenderAt ?? null,
+          renderRotY: data?.remoteRenderRotY ?? null,
+          stale: data?.remoteStale ?? null,
+          visualRotY: data?.remoteVisualRotY ?? null,
+        };
+      });
     },
   };
 
