@@ -2581,6 +2581,10 @@ export function createQuakeShootablesController({
     }
     syncShootableHandleVisibility(shootable);
     syncShootableEnemyDatasets(shootable);
+    // Visibility is part of the glyph mirror's lifecycle. Static shootables
+    // (notably misc_explobox) never receive an animation tick, so waiting for a
+    // later transform update leaves their prepared glyph mesh unregistered.
+    syncShootableTransform(shootable);
     markShootableTrace("shootable-visible", shootable, {
       active: visible,
       handles: countShootableHandles(shootable),

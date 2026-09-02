@@ -395,7 +395,14 @@ export interface QuakePreparedScene {
 export interface QuakeGlyphGeometry {
   version: number;
   polygonCount: number;
-  polygons: Array<{ v: number[][]; c: string }>;
+  /** One packed texture atlas shared by world polygons carrying `u` UVs. */
+  t?: string;
+  polygons: Array<{
+    v: number[][];
+    c: string;
+    l?: number[];
+    u?: number[][];
+  }>;
 }
 
 /** One animatable brush-model mover (door/plat/button) for the glyph backend. */

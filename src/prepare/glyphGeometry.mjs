@@ -6,11 +6,19 @@
 //
 // The payload is a trimmed, rounded projection of the prepared polygons.
 
-const QUAKE_GLYPH_GEOMETRY_VERSION = 2;
+const QUAKE_GLYPH_GEOMETRY_VERSION = 3;
 const QUAKE_GLYPH_GEOMETRY_PRECISION = 1000; // 3 decimal places
+const QUAKE_GLYPH_UV_PRECISION = 1_000_000; // sub-texel precision in a 2048px atlas
+const QUAKE_GLYPH_ATLAS_MAX_SIDE = 2048;
+const QUAKE_GLYPH_ATLAS_TILE_MAX_SIDE = 24;
+const QUAKE_GLYPH_ATLAS_PADDING = 1;
 
 function roundCoordinate(value) {
   return Math.round(value * QUAKE_GLYPH_GEOMETRY_PRECISION) / QUAKE_GLYPH_GEOMETRY_PRECISION;
+}
+
+function roundUv(value) {
+  return Math.round(value * QUAKE_GLYPH_UV_PRECISION) / QUAKE_GLYPH_UV_PRECISION;
 }
 
 // Union of BSP leaf indexes touched by a polygon's source face(s). The runtime
@@ -74,6 +82,188 @@ export function buildQuakeGlyphGeometry(polygons, faceLeaves, options = {}) {
 }
 
 /**
+ * Preserve the real UV-mapped world materials without making the browser load
+ * one image per face. Each eligible floor/wall face receives a small raster
+ * tile containing its already-lit, repeated Quake texture. Tiles are packed
+ * into one map atlas; the original polygon remains intact and its UVs are
+ * remapped to that tile for glyphcss's per-cell texture sampler.
+ *
+ * @param {Array<object>} polygons
+ * @param {Map<string, { width: number, height: number, data: ArrayLike<number> }>} textureSamplers
+ * @param {Map<number, number[]>} [faceLeaves]
+ * @param {{ maxAtlasSide?: number, maxTileSide?: number, padding?: number }} [options]
+ * @returns {{ geometry: { version: number, polygonCount: number, polygons: Array<object> },
+ *   atlas: { width: number, height: number, rgba: Uint8Array } | null,
+ *   texturedPolygonCount: number }}
+ */
+export function buildQuakeGlyphWorldTextureAtlas(polygons, textureSamplers, faceLeaves, options = {}) {
+  const maxAtlasSide = positiveInteger(options.maxAtlasSide, QUAKE_GLYPH_ATLAS_MAX_SIDE);
+  const maxTileSide = positiveInteger(options.maxTileSide, QUAKE_GLYPH_ATLAS_TILE_MAX_SIDE);
+  const padding = Math.max(0, Math.trunc(
+    Number.isFinite(options.padding) ? options.padding : QUAKE_GLYPH_ATLAS_PADDING,
+  ));
+  const plans = [];
+
+  for (const polygon of polygons ?? []) {
+    const vertices = polygon?.vertices;
+    if (!Array.isArray(vertices) || vertices.length < 3 || polygon.modelIndex) continue;
+    const base = glyphPolygon(polygon, faceLeaves);
+    const sampler = typeof polygon.texture === "string"
+      ? textureSamplers?.get(polygon.texture)
+      : undefined;
+    if (!quakeGlyphWorldTextureCandidate(polygon, sampler)) {
+      plans.push({ base });
+      continue;
+    }
+    const bounds = textureUvBounds(polygon.uvs);
+    if (bounds.width <= 1e-9 || bounds.height <= 1e-9) {
+      plans.push({ base });
+      continue;
+    }
+    plans.push({
+      base,
+      polygon,
+      sampler,
+      bounds,
+      desiredWidth: Math.max(2, Math.min(maxTileSide, Math.ceil(bounds.width * sampler.width))),
+      desiredHeight: Math.max(2, Math.min(maxTileSide, Math.ceil(bounds.height * sampler.height))),
+    });
+  }
+
+  const texturedPlans = plans.filter((plan) => plan.sampler);
+  if (!texturedPlans.length) {
+    const out = plans.map((plan) => plan.base);
+    return {
+      geometry: { version: QUAKE_GLYPH_GEOMETRY_VERSION, polygonCount: out.length, polygons: out },
+      atlas: null,
+      texturedPolygonCount: 0,
+    };
+  }
+
+  const packed = packQuakeGlyphAtlasTiles(texturedPlans, maxAtlasSide, padding);
+  const rgba = new Uint8Array(packed.width * packed.height * 4);
+  for (const plan of texturedPlans) rasterizeQuakeGlyphAtlasTile(rgba, packed.width, plan, padding);
+
+  const out = plans.map((plan) => {
+    if (!plan.sampler) return plan.base;
+    return {
+      ...plan.base,
+      // GlyphCSS multiplies sampled texels by the polygon color. The atlas
+      // already contains material color and baked light, so its tint must be
+      // neutral to avoid applying either twice.
+      c: "#ffffff",
+      u: plan.polygon.uvs.map((uv) => remapQuakeGlyphAtlasUv(uv, plan, packed.width, packed.height, padding)),
+    };
+  });
+  return {
+    geometry: { version: QUAKE_GLYPH_GEOMETRY_VERSION, polygonCount: out.length, polygons: out },
+    atlas: { width: packed.width, height: packed.height, rgba },
+    texturedPolygonCount: texturedPlans.length,
+  };
+}
+
+function quakeGlyphWorldTextureCandidate(polygon, sampler) {
+  // Merged opaque world faces can lose the redundant alpha marker while
+  // retaining their opaque PNG. Only an explicit blend mode is unsafe for the
+  // solid atlas; treating an absent marker as transparent leaves real walls on
+  // the flat-color fallback.
+  if (!sampler || polygon.textureAlphaMode === "blend") return false;
+  if (!validUvs(polygon.uvs, polygon.vertices.length)) return false;
+  const textureName = String(polygon.data?.tex ?? "").toLowerCase();
+  return !textureName.startsWith("sky") &&
+    !textureName.startsWith("*") &&
+    !textureName.startsWith("+");
+}
+
+function textureUvBounds(uvs) {
+  let minU = Infinity;
+  let minV = Infinity;
+  let maxU = -Infinity;
+  let maxV = -Infinity;
+  for (const [u, v] of uvs) {
+    minU = Math.min(minU, u);
+    minV = Math.min(minV, v);
+    maxU = Math.max(maxU, u);
+    maxV = Math.max(maxV, v);
+  }
+  return { minU, minV, maxU, maxV, width: maxU - minU, height: maxV - minV };
+}
+
+function packQuakeGlyphAtlasTiles(plans, maxAtlasSide, padding) {
+  for (let scale = 1; scale >= 0.05; scale *= 0.8) {
+    for (const plan of plans) {
+      plan.width = Math.max(2, Math.floor(plan.desiredWidth * scale));
+      plan.height = Math.max(2, Math.floor(plan.desiredHeight * scale));
+    }
+    const totalArea = plans.reduce(
+      (sum, plan) => sum + (plan.width + padding * 2) * (plan.height + padding * 2),
+      0,
+    );
+    const widest = Math.max(...plans.map((plan) => plan.width + padding * 2));
+    if (widest > maxAtlasSide) continue;
+    let atlasWidth = nextPowerOfTwo(Math.max(widest, Math.ceil(Math.sqrt(totalArea))));
+    atlasWidth = Math.min(maxAtlasSide, atlasWidth);
+    for (; atlasWidth <= maxAtlasSide; atlasWidth *= 2) {
+      const height = packQuakeGlyphAtlasShelves(plans, atlasWidth, padding);
+      if (height <= maxAtlasSide) {
+        return { width: atlasWidth, height: nextPowerOfTwo(Math.max(1, height)) };
+      }
+      if (atlasWidth === maxAtlasSide) break;
+    }
+  }
+  throw new Error(`Could not fit ${plans.length} world texture tiles into a ${maxAtlasSide}px atlas.`);
+}
+
+function packQuakeGlyphAtlasShelves(plans, atlasWidth, padding) {
+  const ordered = [...plans].sort((a, b) => (b.height - a.height) || (b.width - a.width));
+  let x = 0;
+  let y = 0;
+  let shelfHeight = 0;
+  for (const plan of ordered) {
+    const width = plan.width + padding * 2;
+    const height = plan.height + padding * 2;
+    if (x > 0 && x + width > atlasWidth) {
+      y += shelfHeight;
+      x = 0;
+      shelfHeight = 0;
+    }
+    plan.x = x;
+    plan.y = y;
+    x += width;
+    shelfHeight = Math.max(shelfHeight, height);
+  }
+  return y + shelfHeight;
+}
+
+function rasterizeQuakeGlyphAtlasTile(rgba, atlasWidth, plan, padding) {
+  for (let tileY = -padding; tileY < plan.height + padding; tileY++) {
+    const innerY = Math.max(0, Math.min(plan.height - 1, tileY));
+    const sourceV = plan.bounds.maxV - ((innerY + 0.5) / plan.height) * plan.bounds.height;
+    for (let tileX = -padding; tileX < plan.width + padding; tileX++) {
+      const innerX = Math.max(0, Math.min(plan.width - 1, tileX));
+      const sourceU = plan.bounds.minU + ((innerX + 0.5) / plan.width) * plan.bounds.width;
+      const sampled = sampleTextureRgba(plan.sampler, [sourceU, sourceV], plan.polygon.textureWrap);
+      if (!sampled) continue;
+      const target = ((plan.y + padding + tileY) * atlasWidth + plan.x + padding + tileX) * 4;
+      rgba[target] = sampled[0];
+      rgba[target + 1] = sampled[1];
+      rgba[target + 2] = sampled[2];
+      rgba[target + 3] = sampled[3];
+    }
+  }
+}
+
+function remapQuakeGlyphAtlasUv(uv, plan, atlasWidth, atlasHeight, padding) {
+  const x = plan.x + padding + ((uv[0] - plan.bounds.minU) / plan.bounds.width) * plan.width;
+  const imageY = plan.y + padding + ((plan.bounds.maxV - uv[1]) / plan.bounds.height) * plan.height;
+  return [roundUv(x / atlasWidth), roundUv(1 - imageY / atlasHeight)];
+}
+
+function nextPowerOfTwo(value) {
+  return 2 ** Math.ceil(Math.log2(Math.max(1, value)));
+}
+
+/**
  * Build glyph geometry for a standalone model (e.g. BSP pickup or alias frame).
  * Polygons are never excluded based on modelIndex because standalone models do not
  * split static world geometry from movers.
@@ -112,36 +302,7 @@ export function buildQuakeTexturedStandaloneGlyphGeometry(polygons, textureSampl
       out.push(glyphPolygon(polygon));
       continue;
     }
-    const cellsS = subdivisionCount(
-      Math.max(distance3(vertices[0], vertices[1]), distance3(vertices[3], vertices[2])),
-      cellSize,
-      maxCellsPerAxis,
-    );
-    const cellsT = subdivisionCount(
-      Math.max(distance3(vertices[0], vertices[3]), distance3(vertices[1], vertices[2])),
-      cellSize,
-      maxCellsPerAxis,
-    );
-    for (let t = 0; t < cellsT; t++) {
-      const t0 = t / cellsT;
-      const t1 = (t + 1) / cellsT;
-      for (let s = 0; s < cellsS; s++) {
-        const s0 = s / cellsS;
-        const s1 = (s + 1) / cellsS;
-        const uv = bilinear2(polygon.uvs, (s0 + s1) * 0.5, (t0 + t1) * 0.5);
-        const sampled = sampleTextureColor(sampler, uv, polygon.textureWrap);
-        const color = sampled ?? (typeof polygon.color === "string" ? polygon.color : "#cccccc");
-        out.push(glyphPolygon({
-          vertices: [
-            bilinear3(vertices, s0, t0),
-            bilinear3(vertices, s1, t0),
-            bilinear3(vertices, s1, t1),
-            bilinear3(vertices, s0, t1),
-          ],
-          color,
-        }));
-      }
-    }
+    out.push(...texturedQuadGlyphPolygons(polygon, sampler, undefined, cellSize, maxCellsPerAxis));
   }
   return {
     version: QUAKE_GLYPH_GEOMETRY_VERSION,
@@ -150,8 +311,55 @@ export function buildQuakeTexturedStandaloneGlyphGeometry(polygons, textureSampl
   };
 }
 
+function texturedQuadGlyphPolygons(polygon, sampler, faceLeaves, cellSize, maxCellsPerAxis) {
+  const vertices = polygon.vertices;
+  const cellsS = subdivisionCount(
+    Math.max(distance3(vertices[0], vertices[1]), distance3(vertices[3], vertices[2])),
+    cellSize,
+    maxCellsPerAxis,
+  );
+  const cellsT = subdivisionCount(
+    Math.max(distance3(vertices[0], vertices[3]), distance3(vertices[1], vertices[2])),
+    cellSize,
+    maxCellsPerAxis,
+  );
+  if (cellsS === 1 && cellsT === 1) return [glyphPolygon(polygon, faceLeaves)];
+
+  const cells = [];
+  const colors = new Set();
+  for (let t = 0; t < cellsT; t++) {
+    const t0 = t / cellsT;
+    const t1 = (t + 1) / cellsT;
+    for (let s = 0; s < cellsS; s++) {
+      const s0 = s / cellsS;
+      const s1 = (s + 1) / cellsS;
+      const uv = bilinear2(polygon.uvs, (s0 + s1) * 0.5, (t0 + t1) * 0.5);
+      const sampled = sampleTextureColor(sampler, uv, polygon.textureWrap);
+      const color = sampled ?? (typeof polygon.color === "string" ? polygon.color : "#cccccc");
+      colors.add(color);
+      cells.push(glyphPolygon({
+        ...polygon,
+        vertices: [
+          bilinear3(vertices, s0, t0),
+          bilinear3(vertices, s1, t0),
+          bilinear3(vertices, s1, t1),
+          bilinear3(vertices, s0, t1),
+        ],
+        color,
+      }, faceLeaves));
+    }
+  }
+  return colors.size === 1
+    ? [glyphPolygon({ ...polygon, color: cells[0]?.c ?? polygon.color }, faceLeaves)]
+    : cells;
+}
+
 function positiveNumber(value, fallback) {
   return Number.isFinite(value) && value > 0 ? value : fallback;
+}
+
+function positiveInteger(value, fallback) {
+  return Math.max(1, Math.trunc(positiveNumber(value, fallback)));
 }
 
 function validUvs(uvs, length) {
@@ -192,6 +400,12 @@ function lerp3(a, b, amount) {
 }
 
 function sampleTextureColor(sampler, uv, textureWrap = {}) {
+  const sampled = sampleTextureRgba(sampler, uv, textureWrap);
+  if (!sampled || sampled[3] < 32) return null;
+  return `#${hexByte(sampled[0])}${hexByte(sampled[1])}${hexByte(sampled[2])}`;
+}
+
+function sampleTextureRgba(sampler, uv, textureWrap = {}) {
   const width = Math.trunc(sampler?.width ?? 0);
   const height = Math.trunc(sampler?.height ?? 0);
   const data = sampler?.data;
@@ -201,8 +415,7 @@ function sampleTextureColor(sampler, uv, textureWrap = {}) {
   const x = Math.min(width - 1, Math.floor(u * width));
   const y = Math.min(height - 1, Math.floor((1 - v) * height));
   const offset = (y * width + x) * 4;
-  if ((data[offset + 3] ?? 255) < 32) return null;
-  return `#${hexByte(data[offset])}${hexByte(data[offset + 1])}${hexByte(data[offset + 2])}`;
+  return [data[offset] ?? 0, data[offset + 1] ?? 0, data[offset + 2] ?? 0, data[offset + 3] ?? 255];
 }
 
 function wrapTextureCoordinate(value, mode) {

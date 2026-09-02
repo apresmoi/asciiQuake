@@ -160,6 +160,11 @@ export interface QuakeGlyphWorldOverlayOptions {
 interface GlyphPolygon {
   vertices: Vec3[];
   color: string;
+  /** Atlas texels already contain Quake's baked surface lighting. */
+  unlit?: boolean;
+  texture?: string;
+  uvs?: [number, number][];
+  textureWrap?: { s: "repeat" | "clamp-to-edge" | "mirrored-repeat"; t: "repeat" | "clamp-to-edge" | "mirrored-repeat" };
   /** Toggled per frame by the PVS cull; glyphcss skips hidden polygons. */
   hidden?: boolean;
 }
@@ -203,8 +208,15 @@ export interface QuakeGlyphEntityTransform {
 }
 
 export interface QuakeGlyphWorldGeometry {
+  /** Packed per-map world texture shared by polygons carrying `u` UVs. */
+  t?: string;
   /** `l` = BSP leaf indexes the polygon touches, for the runtime PVS cull. */
-  polygons: ReadonlyArray<{ v: number[][]; c: string; l?: number[] }>;
+  polygons: ReadonlyArray<{
+    v: number[][];
+    c: string;
+    l?: number[];
+    u?: number[][];
+  }>;
 }
 
 /** glyphcss scene render modes we expose. */
@@ -645,10 +657,11 @@ export function createQuakeGlyphWorldOverlay(
   // (each distinct colour votes once — rare brights keep their slots).
   const paletteBudget = Math.max(1, options.fontAtlas?.maxPaletteSize ?? 68);
   const paletteColors = new Set<string>();
+  let worldHasTextures = false;
   let palettePinnedCount = -1;
   let paletteTimer = 0;
   function schedulePinnedAtlasPalette(): void {
-    if (colorEncoding !== "atlas") return;
+    if (colorEncoding !== "atlas" || worldHasTextures) return;
     if (paletteColors.size === palettePinnedCount || paletteTimer) return;
     // Coalesce bursts (world mesh + the initial entity wave) into one rebuild.
     paletteTimer = window.setTimeout(() => {
@@ -701,6 +714,14 @@ export function createQuakeGlyphWorldOverlay(
 
   function setGeometry(geometry: QuakeGlyphWorldGeometry | null): void {
     lastWorldGeometry = geometry;
+    const nextWorldHasTextures = Boolean(
+      typeof geometry?.t === "string" && geometry.polygons.some((polygon) => Array.isArray(polygon.u)),
+    );
+    if (nextWorldHasTextures !== worldHasTextures) {
+      worldHasTextures = nextWorldHasTextures;
+      palettePinnedCount = -1;
+      if (worldHasTextures) scene.setOptions({ atlasPalette: undefined });
+    }
     if (meshHandle) {
       meshHandle.dispose();
       meshHandle = null;
@@ -713,9 +734,21 @@ export function createQuakeGlyphWorldOverlay(
       return;
     }
     const polygons: GlyphPolygon[] = geometry.polygons.map((polygon) => {
+      const texture = Array.isArray(polygon.u) ? geometry.t : undefined;
       const color = flattenHex(toneHex(brightenHex(polygon.c, brighten)), flatten);
       paletteColors.add(color);
-      return { vertices: polygon.v as Vec3[], color };
+      return {
+        vertices: polygon.v as Vec3[],
+        color,
+        ...(typeof texture === "string" && Array.isArray(polygon.u)
+          ? {
+              texture,
+              unlit: true,
+              uvs: polygon.u as [number, number][],
+              textureWrap: { s: "clamp-to-edge", t: "clamp-to-edge" },
+            }
+          : {}),
+      };
     });
     schedulePinnedAtlasPalette();
     if (pvsVisibleLeavesAt) {
