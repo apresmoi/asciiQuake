@@ -39,6 +39,46 @@ test("compact multiplayer invite values always encode auto in the room string", 
   assert.equal(invite.createQuakeMultiplayerCompactInviteValue("bad", "bcdfghjk"), null);
 });
 
+test("compact multiplayer invites retarget a room token to another map", () => {
+  assert.equal(
+    invite.retargetQuakeMultiplayerCompactInvite("01bcdfghjkau", "02"),
+    "02bcdfghjkau",
+  );
+  assert.equal(invite.retargetQuakeMultiplayerCompactInvite("invalid", "02"), null);
+  assert.equal(invite.retargetQuakeMultiplayerCompactInvite("01bcdfghjkau", "bad"), null);
+});
+
+test("multiplayer invite urls preserve room settings across reloads", () => {
+  const url = invite.createQuakeMultiplayerInviteUrl(
+    "https://quake.example/play?debug=1#old",
+    {
+      inviteId: "01bcdfghjkau",
+      fragLimit: 3,
+      maxPlayers: 2,
+    },
+  );
+
+  assert.equal(url.href, "https://quake.example/play?room=01bcdfghjkau&fraglimit=3&maxPlayers=2");
+});
+
+test("level-transition invite urls retain connection overrides but remove stale map state", () => {
+  const url = invite.createQuakeMultiplayerInviteUrl(
+    "http://127.0.0.1:5173/?room=01bcdfghjkau&map=e1m1&view=1,2,3,4,5,0&partyHost=127.0.0.1%3A1999&debug=1",
+    {
+      inviteId: "02bcdfghjkau",
+      fragLimit: 3,
+      maxPlayers: 2,
+      preserveQuery: true,
+    },
+  );
+
+  assert.equal(url.searchParams.get("room"), "02bcdfghjkau");
+  assert.equal(url.searchParams.get("partyHost"), "127.0.0.1:1999");
+  assert.equal(url.searchParams.get("debug"), "1");
+  assert.equal(url.searchParams.get("map"), null);
+  assert.equal(url.searchParams.get("view"), null);
+});
+
 test("multiplayer room ids always use the auto namespace", () => {
   assert.equal(
     invite.createQuakeMultiplayerRoomIdFromToken("e1m1", "bcdfghjk"),

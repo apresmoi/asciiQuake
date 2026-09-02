@@ -339,6 +339,8 @@ function isRoomPayload(type: QuakeMultiplayerMessageType, payload: unknown): boo
           (Array.isArray(payload.dynamicPickups) && payload.dynamicPickups.every(isPickupDefinition))) &&
         (payload.pickups === undefined ||
           (Array.isArray(payload.pickups) && payload.pickups.every(isAuthoritativePickupState))) &&
+        (payload.movers === undefined ||
+          (Array.isArray(payload.movers) && payload.movers.every(isAuthoritativeMoverState))) &&
         (payload.projectiles === undefined ||
           (Array.isArray(payload.projectiles) && payload.projectiles.every(isProjectileState))) &&
         isNonNegativeInteger(payload.lastWorldEventSequence);
@@ -630,6 +632,13 @@ function isAuthoritativePlayerState(value: unknown): value is QuakeMultiplayerAu
 
 function isPlayerColor(value: unknown): value is string {
   return typeof value === "string" && /^#[0-9a-f]{6}$/i.test(value);
+}
+
+function isAuthoritativeMoverState(value: unknown): boolean {
+  return isRecord(value) &&
+    isNonNegativeInteger(value.entityIndex) &&
+    (value.state === "moving-up" || value.state === "top" || value.state === "moving-down") &&
+    isVec3(value.offset);
 }
 
 function isRoomMatchState(value: unknown): value is QuakeMultiplayerRoomMatchState {

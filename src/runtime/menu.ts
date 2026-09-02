@@ -220,6 +220,7 @@ export function createQuakeMenuController(options: QuakeMenuControllerOptions): 
     const wasOpen = currentScreen() !== null;
     updateQuakeMenuSceneState({ screen: null, activeItem: null, multiplayerFailure: false, editingItem: null });
     document.body.classList.remove("quake-menu-open");
+    document.body.classList.remove("quake-menu-pointer");
     syncMultiplayerControls();
     if (wasOpen) {
       options.onMenuVisibilityChange?.(false);
@@ -431,14 +432,11 @@ export function createQuakeMenuController(options: QuakeMenuControllerOptions): 
     bindings.forEach((binding, index) => {
       const el = binding.element;
       const rect = quakeMenuMultiplayerControlRect(index);
-      el.style.display = "block";
-      el.style.position = "absolute";
       el.style.left = `${frame.x + rect.x * sx}px`;
       el.style.top = `${frame.y + rect.y * sy}px`;
       el.style.width = `${rect.w * sx}px`;
       el.style.height = `${rect.h * sy}px`;
       el.style.fontSize = `${6 * sy}px`;
-      el.style.zIndex = "5";
     });
   }
 
@@ -508,15 +506,15 @@ export function createQuakeMenuController(options: QuakeMenuControllerOptions): 
     if (!enabled || !currentScreen()) return;
     if (document.pointerLockElement) return;
     if (isNativeInteractive(event.target)) {
-      document.body.style.cursor = "";
+      document.body.classList.remove("quake-menu-pointer");
       return;
     }
     const item = itemAtPointer(event.clientX, event.clientY);
     if (item) {
       if (state().activeItem !== item) setActiveItem(item);
-      document.body.style.cursor = "pointer";
+      document.body.classList.add("quake-menu-pointer");
     } else {
-      document.body.style.cursor = "";
+      document.body.classList.remove("quake-menu-pointer");
     }
   }
 
@@ -679,7 +677,7 @@ export function createQuakeMenuController(options: QuakeMenuControllerOptions): 
     options.unmountMultiplayerControls?.();
     controls.removeEventListener("start", handleControlsStart);
     controls.removeEventListener("end", handleControlsEnd);
-    document.body.style.cursor = "";
+    document.body.classList.remove("quake-menu-pointer");
   }
 
   if (enabled) {

@@ -2,11 +2,25 @@ import type {
   QuakeMultiplayerAuthoritativePlayerState,
   QuakeMultiplayerVec3,
 } from "./protocol";
+import { QUAKE_COLLISION_UNIT_SCALE } from "../constants";
+
+export const QUAKE_MULTIPLAYER_LOCAL_CORRECTION_OPTIONS = {
+  hardSnapDistance: 256 * QUAKE_COLLISION_UNIT_SCALE,
+  softCorrectionDistance: 8 * QUAKE_COLLISION_UNIT_SCALE,
+  blendFraction: 0.5,
+  maxBlendDistance: 64 * QUAKE_COLLISION_UNIT_SCALE,
+} as const;
 
 export type QuakeMultiplayerLocalCorrectionDecision =
   | {
       action: "none";
-      reason: "not-alive" | "no-authoritative-input" | "already-handled" | "within-threshold";
+      reason:
+        | "not-alive"
+        | "no-authoritative-input"
+        | "already-handled"
+        | "local-prediction-active"
+        | "unacknowledged-motion"
+        | "within-threshold";
       drift: number;
       inputSequence: number;
     }
@@ -31,6 +45,8 @@ export interface QuakeMultiplayerLocalCorrectionOptions {
   softCorrectionDistance?: number;
   blendFraction?: number;
   maxBlendDistance?: number;
+  minimumAcknowledgedInputSequence?: number;
+  predictionActive?: boolean;
 }
 
 export function decideQuakeMultiplayerLocalCorrection(
@@ -49,6 +65,12 @@ export function decideQuakeMultiplayerLocalCorrection(
   }
   if (inputSequence <= lastHandledInputSequence) {
     return { action: "none", reason: "already-handled", drift, inputSequence };
+  }
+  if (options.predictionActive) {
+    return { action: "none", reason: "local-prediction-active", drift, inputSequence };
+  }
+  if (inputSequence < Math.max(0, options.minimumAcknowledgedInputSequence ?? 0)) {
+    return { action: "none", reason: "unacknowledged-motion", drift, inputSequence };
   }
   const hardSnapDistance = Math.max(0, options.hardSnapDistance);
   const requestedSoftCorrectionDistance = Math.max(0, options.softCorrectionDistance ?? hardSnapDistance);

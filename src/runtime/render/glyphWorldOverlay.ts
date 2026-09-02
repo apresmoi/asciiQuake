@@ -539,15 +539,9 @@ export function createQuakeGlyphWorldOverlay(
 
   const element = document.createElement("div");
   element.className = "quake-glyph-overlay";
-  element.style.position = "absolute";
-  element.style.inset = "0";
   // Same stacking level as the the CSS renderer camera (z-index 1); inserted after it in
   // the DOM so it paints over the textured world, while the viewmodel (2), HUD
   // (3) and menu (5+) layers still render on top.
-  element.style.zIndex = "1";
-  element.style.overflow = "hidden";
-  element.style.background = "#000";
-  element.style.fontFamily = '"Menlo", "Consolas", monospace';
   // Coverage, not colour: ASCII ink fills ~a third of a cell, so the same
   // colours read far darker than the CSS renderer's solid raster. The sub-pixel stroke
   // fattens every letterform (COLR atlas glyphs keep their palette colours;
@@ -556,8 +550,6 @@ export function createQuakeGlyphWorldOverlay(
   if (strokePx > 0) element.style.setProperty("-webkit-text-stroke", `${strokePx}px currentColor`);
   element.style.fontSize = `${cellPx}px`;
   element.style.lineHeight = `${lineHeightPx}px`;
-  element.style.letterSpacing = "0";
-  element.style.pointerEvents = "none";
   if (options.insertBefore && options.insertBefore.parentElement === options.host) {
     options.host.insertBefore(element, options.insertBefore);
   } else {
@@ -565,9 +557,7 @@ export function createQuakeGlyphWorldOverlay(
   }
   if (entityOutline) {
     // DEBUG: box each per-entity detail <pre> so its placement is visible.
-    const dbg = document.createElement("style");
-    dbg.textContent = ".quake-glyph-overlay .glyph-output--detail{outline:1px solid #ff00ff;outline-offset:-1px;}";
-    element.appendChild(dbg);
+    element.classList.add("quake-glyph-entity-outline");
   }
 
   const camera = createGlyphPerspectiveCamera({ rotX: 90, rotY: 270, zoom, perspective, distance: 0, fovScale });
@@ -913,10 +903,6 @@ export function createQuakeGlyphWorldOverlay(
     readout.id = "quake-glyph-readout";
     // Attach to <body> (not the overlay) so it escapes the overlay's z-index:1
     // stacking context and paints above the logo/HUD; pin to the bottom-left.
-    readout.style.cssText =
-      "position:fixed;bottom:6px;left:6px;z-index:2147483647;padding:4px 7px;" +
-      "font:12px/1.4 Menlo,monospace;color:#0f0;background:rgba(0,0,0,0.8);" +
-      "white-space:pre;pointer-events:auto;cursor:pointer;letter-spacing:0;border:1px solid #0f0;";
     readout.title = "Click to copy a full URL that reproduces this exact view + settings";
     readout.addEventListener("click", () => {
       if (!lastGlyphView) return;
@@ -932,9 +918,8 @@ export function createQuakeGlyphWorldOverlay(
         text = u.toString();
       } catch { /* fall back to the raw glyphView value */ }
       void navigator.clipboard?.writeText(text);
-      const prev = readout!.style.background;
-      readout!.style.background = "rgba(0,80,0,0.95)";
-      window.setTimeout(() => { if (readout) readout.style.background = prev; }, 250);
+      readout!.classList.add("quake-glyph-readout-copied");
+      window.setTimeout(() => readout?.classList.remove("quake-glyph-readout-copied"), 250);
     });
     document.body.appendChild(readout);
   }
@@ -1193,8 +1178,8 @@ export function createQuakeGlyphWorldOverlay(
       // the CSS renderer CSS px → cells via the live cell size; without it project() falls
       // back to BASE_TILE/cellAspect and the FOV is wrong).
       const probe = document.createElement("span");
+      probe.className = "quake-glyph-measure-probe";
       probe.textContent = Array(20).fill("M").join("\n");
-      probe.style.cssText = "position:absolute;visibility:hidden;font:inherit;line-height:inherit;white-space:pre";
       scene.output.appendChild(probe);
       const rc = probe.getBoundingClientRect();
       probe.remove();
@@ -1326,11 +1311,6 @@ export function createQuakeGlyphWeaponOverlay(
 ): QuakeGlyphWeaponOverlay {
   const element = options.host;
   element.classList.add("quake-glyph-weapon-overlay");
-  element.style.background = "transparent";
-  element.style.overflow = "hidden";
-  element.style.pointerEvents = "none";
-  element.style.fontFamily = '"Menlo", "Consolas", monospace';
-  element.style.letterSpacing = "0";
 
   let cellPx = Math.max(6, Math.min(40, options.cellPx ?? QUAKE_GLYPH_OVERLAY_CELL_PX));
   const pinnedLineHeight = options.lineHeight !== undefined;
@@ -1436,7 +1416,7 @@ export function createQuakeGlyphWeaponOverlay(
     scene.output.style.lineHeight = `${lineHeightPx}px`;
     scene.fit();
   }
-  scene.output.style.background = "transparent";
+  scene.output.classList.add("quake-glyph-transparent-output");
 
   if (typeof requestAnimationFrame !== "undefined") {
     requestAnimationFrame(() => {
@@ -1533,7 +1513,7 @@ export function createQuakeGlyphWeaponOverlay(
   let needsCellRefit = true;
   function renderFrame(): void {
     pendingFrame = 0;
-    if (element.style.display === "none") {
+    if (element.classList.contains("quake-glyph-overlay-hidden")) {
       applyStagedEntities();
       return;
     }
@@ -1569,7 +1549,6 @@ export function createQuakeGlyphWeaponOverlay(
     }
     if (projection.screenScale) {
       const [trimX, trimY] = projection.screenTrim ?? [0, 0];
-      element.style.transformOrigin = "50% 50%";
       element.style.transform =
         (trimX !== 0 || trimY !== 0 ? `translate(${trimX * 100}%, ${trimY * 100}%) ` : "") +
         `scaleX(${projection.screenScale[0]}) scaleY(${projection.screenScale[1]})`;
@@ -1647,7 +1626,7 @@ export function createQuakeGlyphWeaponOverlay(
   }
 
   function setVisible(visible: boolean): void {
-    element.style.display = visible ? "" : "none";
+    element.classList.toggle("quake-glyph-overlay-hidden", !visible);
     if (visible) scheduleRender();
   }
 

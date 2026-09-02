@@ -26,6 +26,7 @@ const CONTROLLED_DAMAGE_CENTER_DROP = 0.85;
 const CONTROLLED_DAMAGE_HISTORY_SETTLE_MS = 220;
 const CONTROLLED_DUEL_POSE_EPSILON = 0.2;
 const CONTROLLED_DUEL_ROT_EPSILON = 1;
+const RESPAWN_MOVEMENT_DRIFT_EPSILON = 0.75;
 const CONTROLLED_DUEL_LANES_BY_MAP = {
   e1m7: [
     [3.84, 0, 4.6],
@@ -115,6 +116,11 @@ const SPAWN_ESCAPE_MIN_DISTANCE = 0.75;
 const SPAWN_ESCAPE_KEYS = ["w", "a", "d", "s", "w", "d", "a", "s"];
 const ROOM_LIFECYCLE_MAX_PLAYERS = 2;
 const ROOM_LIFECYCLE_SPECTATOR_SLOTS = 8;
+const MATCH_RESTART_MAP = "e1m7";
+const LEVEL_TRANSITION_SOURCE_MAP = "e1m1";
+const LEVEL_TRANSITION_TARGET_MAP = "e1m2";
+const LEVEL_TRANSITION_ENTITY_INDEX = 345;
+const LEVEL_TRANSITION_ORIGIN = [16.64, 17.92, -5.36];
 const REMOTE_POSE_ROT_EPSILON = 2;
 const DAMAGE_OVERLAY_ACTIVE_TIMEOUT_MS = 1_000;
 const DAMAGE_OVERLAY_CLEAR_TIMEOUT_MS = 1_500;
@@ -143,6 +149,8 @@ const skipControlledDamage = hasFlag(args, "skip-controlled-damage");
 const skipControlledSustainedDamage = hasFlag(args, "skip-controlled-sustained-damage");
 const skipControlledKill = hasFlag(args, "skip-controlled-kill");
 const skipControlledRespawn = hasFlag(args, "skip-controlled-respawn");
+const skipMatchRestart = hasFlag(args, "skip-match-restart");
+const skipLevelTransition = hasFlag(args, "skip-level-transition");
 const skipControlledProjectile = hasFlag(args, "skip-controlled-projectile");
 const skipSharedPickup = hasFlag(args, "skip-shared-pickup");
 const skipLocalWorldMutation = !extendedChecks || hasFlag(args, "skip-local-world-mutation");
@@ -175,6 +183,11 @@ if (!skipSpawnEscape && !requiredMaps.includes(SPAWN_ESCAPE_MAP)) {
 if (!skipWrongMap) {
   const wrongMap = wrongMapProbeMap(mapName);
   if (!requiredMaps.includes(wrongMap)) requiredMaps.push(wrongMap);
+}
+if (!skipMatchRestart && !requiredMaps.includes(MATCH_RESTART_MAP)) requiredMaps.push(MATCH_RESTART_MAP);
+if (!skipLevelTransition) {
+  if (!requiredMaps.includes(LEVEL_TRANSITION_SOURCE_MAP)) requiredMaps.push(LEVEL_TRANSITION_SOURCE_MAP);
+  if (!requiredMaps.includes(LEVEL_TRANSITION_TARGET_MAP)) requiredMaps.push(LEVEL_TRANSITION_TARGET_MAP);
 }
 
 console.log("Multiplayer deep checks");
@@ -211,7 +224,7 @@ try {
     servers.push(await startManagedServer({
       name: "partykit",
       command: "pnpm",
-      args: ["exec", "partykit", "dev", "--port", String(partyPort), "--serve", "build/generated/public"],
+      args: ["exec", "partykit", "dev", "--port", String(partyPort)],
       ready: /Ready on|Updated and ready/i,
       timeoutMs: common.timeoutMs,
     }));
@@ -285,6 +298,26 @@ try {
       common,
       externalMode,
       mapName,
+      manifest,
+      partyHost,
+    }));
+  }
+  if (!skipMatchRestart) {
+    checks.push(await runMatchRestartCase({
+      appUrl,
+      browser,
+      common,
+      externalMode,
+      manifest,
+      partyHost,
+    }));
+  }
+  if (!skipLevelTransition) {
+    checks.push(await runLevelTransitionCase({
+      appUrl,
+      browser,
+      common,
+      externalMode,
       manifest,
       partyHost,
     }));
@@ -418,6 +451,8 @@ Options:
                                Skip sustained browser damage checks.
   --skip-controlled-kill       Skip controlled browser death/kill animation check.
   --skip-controlled-respawn    Skip controlled browser respawn recovery check.
+  --skip-match-restart         Skip frag-limit restart lifecycle check.
+  --skip-level-transition      Skip synchronized level-to-room transition check.
   --skip-controlled-projectile Skip controlled remote projectile presentation check.
   --skip-shared-pickup         Skip shared pickup state check.
   --skip-local-world-mutation  Skip extended local world-damage mutation check.
@@ -472,11 +507,18 @@ async function readRemoteAssetManifest(appUrl, timeoutMs) {
 }
 
 function createCompactInvite(manifest, mapName, token = createRoomToken()) {
-  const mapNames = (manifest?.maps ?? [])
+  const manifestMaps = manifest?.maps ?? [];
+  const mapNames = manifestMaps
     .filter((map) => map?.selectable !== false)
     .map((map) => String(map.mapName ?? "").trim().toLowerCase())
     .filter(Boolean)
     .sort((a, b) => a.localeCompare(b));
+  if (
+    manifestMaps.some((map) => String(map?.mapName ?? "").trim().toLowerCase() === "start") &&
+    !mapNames.includes("start")
+  ) {
+    mapNames.push("start");
+  }
   const normalizedMapName = String(mapName ?? "").trim().toLowerCase();
   const index = mapNames.indexOf(normalizedMapName);
   if (index < 0) throw new Error(`Map ${normalizedMapName} is not selectable in the deployed manifest.`);
@@ -545,7 +587,7 @@ async function runMapReadinessCase(options) {
           waitForClientReady(client, 2, options.common.timeoutMs, { allowInputPaused: true })
         ));
         await waitForSnapshotPlayers(clients, 2, options.common.timeoutMs);
-        await waitForRemoteDomCounts(clients, 1, options.common.timeoutMs);
+        await waitForRemotePlayerCounts(clients, 1, options.common.timeoutMs);
       } catch (error) {
         mapFailures.push(`readiness failed: ${errorMessage(error)}`);
       }
@@ -567,8 +609,8 @@ async function runMapReadinessCase(options) {
         if ((multiplayer?.scoreboardRows ?? 0) < 2) {
           mapFailures.push(`client ${index} scoreboard rows ${String(multiplayer?.scoreboardRows)} did not reach 2`);
         }
-        if ((multiplayer?.remoteDomCount ?? 0) < 1) {
-          mapFailures.push(`client ${index} remote DOM count ${String(multiplayer?.remoteDomCount)} did not reach 1`);
+        if ((multiplayer?.remotePlayerCount ?? 0) < 1) {
+          mapFailures.push(`client ${index} remote player count ${String(multiplayer?.remotePlayerCount)} did not reach 1`);
         }
         if (playerCount < 2) {
           mapFailures.push(`client ${index} room snapshot player count ${playerCount} did not reach 2`);
@@ -710,7 +752,10 @@ async function runControlledDamageCase(options) {
       damageOverlayActive = await damageOverlayActivePromise;
       if (damageOverlayActive?.error) {
         failures.push(`victim damage overlay did not activate: ${damageOverlayActive.error}`);
-      } else if (damageOverlayActive?.classicHudDamage !== true) {
+      } else if (
+        damageOverlayActive?.classicHudDamage !== null &&
+        damageOverlayActive?.classicHudDamage !== true
+      ) {
         failures.push("victim HUD damage cue did not activate");
       } else {
         damageOverlayCleared = await waitForDamageOverlayState(
@@ -1135,6 +1180,9 @@ async function runControlledRespawnCase(options) {
     const poseUpdates = [pose];
     let killEvent = null;
     let deathOverlayActive = null;
+    let deadClickState = null;
+    let respawnOriginState = null;
+    let respawnMovementState = null;
     let respawnOverlayCleared = null;
     let respawnCueCleared = null;
     await clearRemoteFrameSamples(attacker);
@@ -1174,8 +1222,29 @@ async function runControlledRespawnCase(options) {
       ).catch((error) => ({ error: errorMessage(error) }));
       if (deathOverlayActive?.error) {
         failures.push(`victim death damage overlay did not activate: ${deathOverlayActive.error}`);
-      } else if (deathOverlayActive?.classicHudDamage !== true) {
+      } else if (
+        deathOverlayActive?.classicHudDamage !== null &&
+        deathOverlayActive?.classicHudDamage !== true
+      ) {
         failures.push("victim death HUD damage cue did not activate");
+      }
+      deadClickState = await victim.page.evaluate(async () => {
+        const host = document.querySelector("#quake-app [tabindex='0']");
+        host?.dispatchEvent(new PointerEvent("pointerdown", {
+          bubbles: true,
+          button: 0,
+          isPrimary: true,
+          pointerId: 91,
+        }));
+        await new Promise((resolve) => window.setTimeout(resolve, 50));
+        const stats = window.__cssQuakeDebug?.stats?.() ?? null;
+        return {
+          bodyDead: document.body.classList.contains("quake-dead"),
+          health: stats?.playerHealth ?? null,
+        };
+      });
+      if (!deadClickState.bodyDead || !(deadClickState.health <= 0)) {
+        failures.push(`dead click escaped authoritative respawn state: ${JSON.stringify(deadClickState)}`);
       }
     }
     const deathFrameSeen = await deathFramePromise;
@@ -1202,7 +1271,28 @@ async function runControlledRespawnCase(options) {
         health: 100,
         playerId: victimPlayer.playerId,
       }, options.common.timeoutMs);
-      await waitForRemoteDomCounts(clients, 1, options.common.timeoutMs);
+      await waitForRemotePlayerCounts(clients, 1, options.common.timeoutMs);
+      respawnOriginState = await victim.page.evaluate(() => {
+        const stats = window.__cssQuakeDebug?.stats?.() ?? null;
+        const clientId = stats?.multiplayer?.clientId;
+        const authoritative = window.__cssQuakeMpDeepTrace?.lastSnapshot?.players
+          ?.find((candidate) => candidate.clientId === clientId) ?? null;
+        const local = stats?.origin ?? null;
+        return {
+          authoritative: authoritative?.origin ?? null,
+          drift: local && authoritative?.origin
+            ? Math.hypot(
+                local[0] - authoritative.origin[0],
+                local[1] - authoritative.origin[1],
+                local[2] - authoritative.origin[2],
+              )
+            : null,
+          local,
+        };
+      });
+      if (!(respawnOriginState.drift <= CONTROLLED_DUEL_POSE_EPSILON)) {
+        failures.push(`victim local origin diverged after respawn: ${JSON.stringify(respawnOriginState)}`);
+      }
       respawnOverlayCleared = await waitForDamageOverlayState(
         victim,
         false,
@@ -1242,9 +1332,9 @@ async function runControlledRespawnCase(options) {
       const attackerRemoteVictim = afterRespawnAttacker.remotePlayers
         .filter((player) => player.clientId === victimPlayer.clientId);
       if (attackerRemoteVictim.length !== 1) {
-        failures.push(`expected one remote victim DOM after respawn, got ${attackerRemoteVictim.length}`);
+        failures.push(`expected one remote victim presentation after respawn, got ${attackerRemoteVictim.length}`);
       } else if (attackerRemoteVictim[0].hidden) {
-        failures.push("remote victim DOM stayed hidden after respawn");
+        failures.push("remote victim presentation stayed hidden after respawn");
       }
     }
 
@@ -1315,6 +1405,55 @@ async function runControlledRespawnCase(options) {
     if (postRespawnDamage && !postRespawnPainSeen) {
       failures.push("attacker did not sample victim pain animation after respawn damage");
     }
+    if (respawnOriginState?.authoritative) {
+      await victim.page.evaluate(() => {
+        window.__cssQuakeDebug?.setMultiplayerInputPaused?.(false);
+        document.querySelector("#quake-app [tabindex='0']")?.focus();
+      });
+      await waitForLocalInput(victim, options.common.timeoutMs);
+      await victim.page.keyboard.down("w");
+      await victim.page.waitForTimeout(450);
+      await victim.page.keyboard.up("w");
+      await victim.page.waitForTimeout(500);
+      respawnMovementState = await victim.page.evaluate((spawnOrigin) => {
+        const stats = window.__cssQuakeDebug?.stats?.() ?? null;
+        const clientId = stats?.multiplayer?.clientId;
+        const authoritative = window.__cssQuakeMpDeepTrace?.lastSnapshot?.players
+          ?.find((candidate) => candidate.clientId === clientId) ?? null;
+        const local = stats?.origin ?? null;
+        return {
+          authoritative: authoritative?.origin ?? null,
+          authoritativeDistance: authoritative?.origin
+            ? Math.hypot(
+                authoritative.origin[0] - spawnOrigin[0],
+                authoritative.origin[1] - spawnOrigin[1],
+                authoritative.origin[2] - spawnOrigin[2],
+              )
+            : null,
+          drift: local && authoritative?.origin
+            ? Math.hypot(
+                local[0] - authoritative.origin[0],
+                local[1] - authoritative.origin[1],
+                local[2] - authoritative.origin[2],
+              )
+            : null,
+          local,
+          localDistance: local
+            ? Math.hypot(
+                local[0] - spawnOrigin[0],
+                local[1] - spawnOrigin[1],
+                local[2] - spawnOrigin[2],
+              )
+            : null,
+        };
+      }, respawnOriginState.authoritative);
+      if (!(respawnMovementState.localDistance > 0.1) || !(respawnMovementState.authoritativeDistance > 0.1)) {
+        failures.push(`victim did not resume local and authoritative movement: ${JSON.stringify(respawnMovementState)}`);
+      }
+      if (!(respawnMovementState.drift <= RESPAWN_MOVEMENT_DRIFT_EPSILON)) {
+        failures.push(`victim movement diverged after respawn: ${JSON.stringify(respawnMovementState)}`);
+      }
+    }
 
     return {
       kind: "controlled-respawn",
@@ -1330,6 +1469,7 @@ async function runControlledRespawnCase(options) {
       afterPostDamage: compactSnapshot(afterPostDamage),
       afterPostDamageAttacker: compactSnapshot(afterPostDamageAttacker),
       deathAnimation,
+      deadClickState,
       deathFrameSeen,
       deathOverlayActive,
       event: killEvent,
@@ -1340,11 +1480,250 @@ async function runControlledRespawnCase(options) {
       postRespawnImpactParticles,
       postRespawnPainSeen,
       respawnCueCleared,
+      respawnOriginState,
+      respawnMovementState,
       respawnOverlayCleared,
       respawnEvent,
       postAnimation,
       attacker: compactClient(attacker),
       victim: compactClient(victim),
+    };
+  } finally {
+    await Promise.all(clients.map((client) => client.context.close().catch(() => undefined)));
+  }
+}
+
+async function runMatchRestartCase(options) {
+  const spec = CONTROLLED_WEAPONS.find((candidate) => candidate.weapon === "shotgun");
+  const room = createDeepRoomName("matchrestart", MATCH_RESTART_MAP);
+  console.log(`match restart: ${MATCH_RESTART_MAP} room=${room}`);
+  const clients = await Promise.all(Array.from({ length: 2 }, (_, index) =>
+    openClient(options.browser, {
+      ...options,
+      clientIndex: index,
+      clientsCount: 2,
+      compactInvite: true,
+      debugMultiplayerInputPaused: true,
+      fragLimit: 1,
+      mapName: MATCH_RESTART_MAP,
+      maxPlayers: 2,
+      room,
+    })
+  ));
+  const failures = [];
+  let killEvent = null;
+  let restartEvent = null;
+  let before = [];
+  let after = [];
+  try {
+    await Promise.all(clients.map((client) =>
+      waitForClientReady(client, 2, options.common.timeoutMs, { allowInputPaused: true })
+    ));
+    await waitForSnapshotPlayers(clients, 2, options.common.timeoutMs);
+    before = await safeReadClientSnapshots(clients);
+    for (const [index, snapshot] of before.entries()) {
+      const match = snapshot.trace.lastSnapshot?.match;
+      if (match?.fragLimit !== 1 || match?.maxPlayers !== 2 || match?.restartDelayMs !== 5_000) {
+        failures.push(`client ${index} did not retain requested match settings: ${JSON.stringify(match)}`);
+      }
+    }
+
+    let pose = await setControlledDuelPose(clients, spec, "a-to-b", {
+      mapName: MATCH_RESTART_MAP,
+      timeoutMs: options.common.timeoutMs,
+    });
+    await Promise.all(clients.map((client) =>
+      client.page.evaluate(() => window.__cssQuakeDebug?.setWeapon?.("shotgun"))
+    ));
+    await clients[0].page.evaluate(() => window.__cssQuakeDebug?.setMultiplayerInputPaused?.(false));
+    await waitForLocalInput(clients[0], options.common.timeoutMs);
+    const attacker = await localSnapshotPlayer(clients[0]);
+    const victim = await localSnapshotPlayer(clients[1]);
+    for (let index = 0; index < 6 && !killEvent; index += 1) {
+      pose = await setControlledDuelPose(clients, spec, "a-to-b", {
+        baseOrigin: pose.baseOrigin,
+        mapName: MATCH_RESTART_MAP,
+        timeoutMs: options.common.timeoutMs,
+      });
+      await sleep(150);
+      await clients[0].page.evaluate(() => window.__cssQuakeDebug?.fire?.());
+      try {
+        killEvent = await waitForPlayerEvent(clients, (event) =>
+          event.eventType === "player.killed" &&
+          event.attackerPlayerId === attacker.playerId &&
+          event.victimPlayerId === victim.playerId,
+          650,
+        );
+      } catch {
+        await sleep(600);
+      }
+    }
+    if (!killEvent) failures.push("frag-limit kill did not occur");
+    if (killEvent) {
+      await Promise.all(clients.map((client) => client.page.waitForFunction(() =>
+        window.__cssQuakeMpDeepTrace?.lastSnapshot?.match?.status === "intermission",
+        null,
+        { timeout: options.common.timeoutMs },
+      )));
+      await clients[1].page.evaluate(() => {
+        document.querySelector("#quake-app [tabindex='0']")?.dispatchEvent(new PointerEvent("pointerdown", {
+          bubbles: true,
+          button: 0,
+          isPrimary: true,
+          pointerId: 92,
+        }));
+      });
+      restartEvent = await waitForRoomEvent(clients, (event) =>
+        event.eventType === "match.notice" && event.code === "restart",
+        options.common.timeoutMs,
+      );
+      await Promise.all(clients.map((client) => client.page.waitForFunction(() => {
+        const snapshot = window.__cssQuakeMpDeepTrace?.lastSnapshot;
+        return snapshot?.match?.status === "active" &&
+          snapshot.players?.length === 2 &&
+          snapshot.players.every((player) =>
+            player.alive && player.health === 100 && player.frags === 0 && player.deaths === 0
+          );
+      }, null, { timeout: options.common.timeoutMs })));
+    }
+    after = await safeReadClientSnapshots(clients);
+    for (const [index, snapshot] of after.entries()) {
+      if (snapshot.trace.rejects.length) {
+        failures.push(`client ${index} received match restart rejects: ${JSON.stringify(snapshot.trace.rejects)}`);
+      }
+    }
+    return {
+      kind: "match-restart",
+      mapName: MATCH_RESTART_MAP,
+      room,
+      pass: failures.length === 0,
+      failures,
+      killEvent,
+      restartEvent,
+      before: before.map(compactSnapshot),
+      after: after.map(compactSnapshot),
+      clients: clients.map(compactClient),
+    };
+  } catch (error) {
+    failures.push(errorMessage(error));
+    after = await safeReadClientSnapshots(clients);
+    return {
+      kind: "match-restart",
+      mapName: MATCH_RESTART_MAP,
+      room,
+      pass: false,
+      failures,
+      killEvent,
+      restartEvent,
+      before: before.map(compactSnapshot),
+      after: after.map(compactSnapshot),
+      clients: clients.map(compactClient),
+    };
+  } finally {
+    await Promise.all(clients.map((client) => client.context.close().catch(() => undefined)));
+  }
+}
+
+async function runLevelTransitionCase(options) {
+  const room = createDeepRoomName("leveltransition", LEVEL_TRANSITION_SOURCE_MAP);
+  const token = roomTokenForCompactInvite(room);
+  const sourceInvite = createCompactInvite(options.manifest, LEVEL_TRANSITION_SOURCE_MAP, token).value;
+  const targetInvite = createCompactInvite(options.manifest, LEVEL_TRANSITION_TARGET_MAP, token).value;
+  console.log(`level transition: ${LEVEL_TRANSITION_SOURCE_MAP}->${LEVEL_TRANSITION_TARGET_MAP} room=${room}`);
+  const clients = await Promise.all(Array.from({ length: 2 }, (_, index) =>
+    openClient(options.browser, {
+      ...options,
+      clientIndex: index,
+      clientsCount: 2,
+      compactInvite: true,
+      debugMultiplayerInputPaused: true,
+      fragLimit: 3,
+      mapName: LEVEL_TRANSITION_SOURCE_MAP,
+      maxPlayers: 2,
+      room,
+    })
+  ));
+  const failures = [];
+  let after = [];
+  try {
+    await Promise.all(clients.map((client) =>
+      waitForClientReady(client, 2, options.common.timeoutMs, { allowInputPaused: true })
+    ));
+    await waitForSnapshotPlayers(clients, 2, options.common.timeoutMs);
+    const triggerClient = clients[0];
+    const pose = await triggerClient.page.evaluate((origin) => {
+      const debug = window.__cssQuakeDebug;
+      debug.setPose(origin, 90, 270, { stableViewmodel: true });
+      return {
+        clientId: debug.stats().multiplayer?.clientId ?? null,
+        origin: debug.stats().origin,
+        poseSynced: debug.syncMultiplayerPose(),
+      };
+    }, LEVEL_TRANSITION_ORIGIN);
+    if (!pose.poseSynced) failures.push("level-transition pose was not sent");
+    await waitForLocalAuthoritativePose(triggerClient, pose, options.common.timeoutMs);
+    const touched = await triggerClient.page.evaluate((origin) =>
+      window.__cssQuakeDebug?.setPose?.(origin, 90, 270, { gameplay: true, stableViewmodel: true }) ?? false,
+      LEVEL_TRANSITION_ORIGIN,
+    );
+    if (!touched) failures.push("level-transition trigger was not touched");
+
+    await Promise.all(clients.map((client) => client.page.waitForURL((url) =>
+      url.searchParams.get("room") === targetInvite,
+      { timeout: options.common.timeoutMs },
+    )));
+    await Promise.all(clients.map((client) =>
+      waitForClientReady(client, 2, options.common.timeoutMs, { allowInputPaused: true })
+    ));
+    await waitForSnapshotPlayers(clients, 2, options.common.timeoutMs);
+    after = await safeReadClientSnapshots(clients);
+    for (const [index, snapshot] of after.entries()) {
+      const url = new URL(clients[index].page.url());
+      const match = snapshot.trace.lastSnapshot?.match;
+      if (snapshot.stats?.mapName !== LEVEL_TRANSITION_TARGET_MAP) {
+        failures.push(`client ${index} loaded ${String(snapshot.stats?.mapName)} instead of ${LEVEL_TRANSITION_TARGET_MAP}`);
+      }
+      if (url.searchParams.get("room") !== targetInvite || url.searchParams.get("room") === sourceInvite) {
+        failures.push(`client ${index} did not retarget the compact room invite`);
+      }
+      if (url.searchParams.get("fraglimit") !== "3" || url.searchParams.get("maxPlayers") !== "2") {
+        failures.push(`client ${index} lost match settings during level transition`);
+      }
+      if (match?.fragLimit !== 3 || match?.maxPlayers !== 2) {
+        failures.push(`client ${index} joined target room with wrong settings: ${JSON.stringify(match)}`);
+      }
+      if (snapshot.trace.rejects.length) {
+        failures.push(`client ${index} received level-transition rejects: ${JSON.stringify(snapshot.trace.rejects)}`);
+      }
+    }
+    return {
+      kind: "level-transition",
+      sourceMap: LEVEL_TRANSITION_SOURCE_MAP,
+      targetMap: LEVEL_TRANSITION_TARGET_MAP,
+      entityIndex: LEVEL_TRANSITION_ENTITY_INDEX,
+      sourceInvite,
+      targetInvite,
+      room,
+      pass: failures.length === 0,
+      failures,
+      after: after.map(compactSnapshot),
+      clients: clients.map(compactClient),
+    };
+  } catch (error) {
+    failures.push(errorMessage(error));
+    after = await safeReadClientSnapshots(clients);
+    return {
+      kind: "level-transition",
+      sourceMap: LEVEL_TRANSITION_SOURCE_MAP,
+      targetMap: LEVEL_TRANSITION_TARGET_MAP,
+      entityIndex: LEVEL_TRANSITION_ENTITY_INDEX,
+      sourceInvite,
+      targetInvite,
+      room,
+      pass: false,
+      failures,
+      after: after.map(compactSnapshot),
+      clients: clients.map(compactClient),
     };
   } finally {
     await Promise.all(clients.map((client) => client.context.close().catch(() => undefined)));
@@ -1441,7 +1820,7 @@ async function runControlledProjectileVisualCase(options) {
         postImpact = impacted ? await readClientSnapshot(victim) : null;
         postImpactAttacker = impacted ? await readClientSnapshot(attacker) : null;
         explosionSprite = await waitForExplosionSprite(victim, 1_000);
-        await waitForNoRemoteProjectileDom(victim, spawned.projectile.projectileId, 2_000);
+        await waitForNoRemoteProjectile(victim, spawned.projectile.projectileId, 2_000);
       } catch (error) {
         failures.push(errorMessage(error));
       }
@@ -1523,15 +1902,15 @@ async function runControlledProjectileVisualCase(options) {
     }
     const projectilePresentationExpected = !Number.isFinite(projectileFlightMs) || projectileFlightMs >= 250;
     if (spawned && !visibleProjectile && projectilePresentationExpected) {
-      failures.push("victim did not render remote projectile DOM before impact");
+      failures.push("victim did not render the remote projectile before impact");
     }
     if (spawned && !movedProjectile && projectilePresentationExpected) {
-      failures.push("victim remote projectile DOM did not receive a moved snapshot before impact");
+      failures.push("victim remote projectile did not receive a moved snapshot before impact");
     }
     if (spawned && !attackSeen) failures.push("victim did not sample projectile attacker attack animation");
     if (impacted && !explosionSprite) failures.push("victim did not render projectile explosion sprite after impact");
-    if (impacted && (finalAfter.stats?.multiplayer?.remoteProjectileDomCount ?? 0) !== 0) {
-      failures.push(`remote projectile DOM leaked after impact: ${finalAfter.stats?.multiplayer?.remoteProjectileDomCount}`);
+    if (impacted && (finalAfter.stats?.multiplayer?.remoteProjectileCount ?? 0) !== 0) {
+      failures.push(`remote projectile leaked after impact: ${finalAfter.stats?.multiplayer?.remoteProjectileCount}`);
     }
 
     return {
@@ -1594,7 +1973,9 @@ async function runSharedPickupStateCase(options) {
     await waitForSnapshotPlayers(clients, 2, options.common.timeoutMs);
     const actor = clients[0];
     const observer = clients[1];
-    const pickup = await pickupWeaponForControlledCase(actor, "supershotgun", options.common.timeoutMs);
+    const pickup = options.mapName === "e1m7"
+      ? await pickupByNaturalApproach(actor, "weapon_supershotgun", options.common.timeoutMs)
+      : await pickupWeaponForControlledCase(actor, "supershotgun", options.common.timeoutMs);
     try {
       await waitForPickupSnapshotUnavailable(clients, pickup.pickupEntityIndex, options.common.timeoutMs);
     } catch (error) {
@@ -2019,7 +2400,7 @@ async function runReconnectCase(options) {
     try {
       await Promise.all(clients.map((client) => waitForClientReady(client, 3, options.common.timeoutMs)));
       await waitForSnapshotPlayers(clients, 3, options.common.timeoutMs);
-      await waitForRemoteDomCounts(clients, 2, options.common.timeoutMs);
+      await waitForRemotePlayerCounts(clients, 2, options.common.timeoutMs);
     } catch (error) {
       failures.push(`initial readiness failed: ${errorMessage(error)}`);
       before = await safeReadClientSnapshots(clients);
@@ -2039,7 +2420,7 @@ async function runReconnectCase(options) {
       await clients[2].page.reload({ waitUntil: "domcontentloaded", timeout: options.common.timeoutMs });
       await waitForClientReady(clients[2], 3, options.common.timeoutMs);
       await waitForSnapshotPlayers(clients, 3, options.common.timeoutMs);
-      await waitForRemoteDomCounts(clients, 2, options.common.timeoutMs);
+      await waitForRemotePlayerCounts(clients, 2, options.common.timeoutMs);
     } catch (error) {
       failures.push(`reload readiness failed: ${errorMessage(error)}`);
     }
@@ -2097,7 +2478,7 @@ async function runRoomLifecycleCase(options) {
         waitForClientReady(client, ROOM_LIFECYCLE_MAX_PLAYERS, options.common.timeoutMs)
       ));
       await waitForSnapshotPlayers(playerClients, ROOM_LIFECYCLE_MAX_PLAYERS, options.common.timeoutMs);
-      await waitForRemoteDomCounts(playerClients, ROOM_LIFECYCLE_MAX_PLAYERS - 1, options.common.timeoutMs);
+      await waitForRemotePlayerCounts(playerClients, ROOM_LIFECYCLE_MAX_PLAYERS - 1, options.common.timeoutMs);
     } catch (error) {
       failures.push(`player readiness failed: ${errorMessage(error)}`);
     }
@@ -2194,6 +2575,7 @@ async function runWrongMapCase(options) {
       ...options,
       clientIndex: 0,
       clientsCount: 1,
+      compactInvite: false,
       debugMultiplayer: true,
       maxPlayers: 1,
       room,
@@ -2210,7 +2592,7 @@ async function runWrongMapCase(options) {
       ...options,
       clientIndex: 1,
       clientsCount: 1,
-      compactInviteMapName: options.mapName,
+      compactInvite: false,
       debugMultiplayer: true,
       mapName: wrongMap,
       maxPlayers: 1,
@@ -2289,7 +2671,8 @@ async function openClient(browser, options) {
 function clientUrl(options) {
   const url = new URL(options.appUrl);
   const compactInviteMapName = options.compactInviteMapName ?? options.mapName;
-  const room = options.externalMode
+  const compactInvite = options.compactInvite ?? options.externalMode;
+  const room = compactInvite
     ? createCompactInvite(options.manifest, compactInviteMapName, roomTokenForCompactInvite(options.room)).value
     : options.room;
   url.searchParams.set("debug", "1");
@@ -2300,9 +2683,10 @@ function clientUrl(options) {
   url.searchParams.set("player", `Deep ${options.clientIndex + 1}`);
   url.searchParams.set("color", colorForClient(options.clientIndex));
   url.searchParams.set("maxPlayers", String(options.maxPlayers ?? options.clientsCount));
+  if (options.fragLimit !== undefined) url.searchParams.set("fraglimit", String(options.fragLimit));
   url.searchParams.set("disableEnemies", "1");
   if (options.externalMode) url.searchParams.set("multiplayer", "party");
-  else if (options.debugMultiplayer) url.searchParams.set("debugMultiplayer", "party");
+  if (!compactInvite && options.debugMultiplayer) url.searchParams.set("debugMultiplayer", "party");
   if (options.debugMultiplayerInputPaused) url.searchParams.set("debugMultiplayerInputPaused", "1");
   return url.toString();
 }
@@ -2310,14 +2694,13 @@ function clientUrl(options) {
 async function waitForClientReady(client, clientsCount, timeoutMs, options = {}) {
   await client.page.waitForFunction(({ minPlayers, allowInputPaused }) => {
     const stats = window.__cssQuakeDebug?.stats?.();
-    const rows = document.querySelectorAll("#quake-multiplayer-scoreboard tbody tr");
     return Boolean(
       stats &&
       !stats.loading &&
       stats.multiplayer?.sessionState === "connected" &&
       stats.multiplayer?.helloAccepted === true &&
       (allowInputPaused || stats.multiplayer?.inputPaused === false) &&
-      rows.length >= minPlayers
+      stats.multiplayer?.scoreboardRows >= minPlayers
     );
   }, { minPlayers: clientsCount, allowInputPaused: Boolean(options.allowInputPaused) }, { timeout: timeoutMs });
 }
@@ -2537,12 +2920,12 @@ async function waitForPickupSnapshotUnavailable(clients, entityIndex, timeoutMs)
   ));
 }
 
-async function waitForRemoteDomCounts(clients, expected, timeoutMs) {
+async function waitForRemotePlayerCounts(clients, expected, timeoutMs) {
   await Promise.all(clients.map((client) =>
     client.page.waitForFunction((minimum) => {
-      const players = Array.from(document.querySelectorAll("[data-player-id][data-client-id]"));
+      const players = window.__cssQuakeDebug?.stats?.()?.multiplayer?.remotePlayers ?? [];
       return players.length >= minimum &&
-        players.filter((element) => element instanceof HTMLElement && !element.hidden).length >= minimum;
+        players.filter((player) => !player.hidden).length >= minimum;
     }, expected, { timeout: timeoutMs })
   ));
 }
@@ -2738,6 +3121,63 @@ async function pickupWeaponForControlledCase(client, weapon, timeoutMs) {
   };
 }
 
+async function pickupByNaturalApproach(client, pickupClassname, timeoutMs) {
+  const pickupEntityIndex = await client.page.evaluate((pickupClassname) => {
+    const indexes = window.__cssQuakeDebug?.entityIndexes?.(pickupClassname) ?? [];
+    return Number.isInteger(indexes.at(-1)) ? indexes.at(-1) : null;
+  }, pickupClassname);
+  if (!Number.isInteger(pickupEntityIndex)) throw new Error(`Could not find ${pickupClassname} pickup entity.`);
+
+  const pickupPose = await client.page.evaluate((pickupEntityIndex) => {
+    const debug = window.__cssQuakeDebug;
+    const focused = debug?.focusEntity?.(pickupEntityIndex, 1.3, 90, 90);
+    if (!focused) return null;
+    const origin = debug.stats?.().origin ?? null;
+    if (!Array.isArray(origin) || origin.length !== 3) return null;
+    debug.setPose?.(origin, 90, 90, { gameplay: true, stableViewmodel: true });
+    const poseSynced = debug.syncMultiplayerPose?.() ?? false;
+    return {
+      clientId: debug.stats?.().multiplayer?.clientId ?? null,
+      entityIndex: pickupEntityIndex,
+      origin: debug.stats?.().origin ?? null,
+      poseSynced,
+    };
+  }, pickupEntityIndex);
+  if (!pickupPose?.poseSynced) {
+    throw new Error(`Failed to sync multiplayer approach pose for ${pickupClassname} (${pickupEntityIndex}).`);
+  }
+  await waitForLocalAuthoritativePose(client, pickupPose, timeoutMs);
+  await client.page.evaluate(() => {
+    window.__cssQuakeDebug?.setMultiplayerInputPaused?.(false);
+    document.querySelector("#quake-app [tabindex='0']")?.focus();
+  });
+  await waitForLocalInput(client, timeoutMs);
+  await client.page.keyboard.down("w");
+  let event;
+  try {
+    event = await waitForRoomEvent([client], (candidate) =>
+      candidate.eventType === "pickup.taken" &&
+      candidate.entityIndex === pickupEntityIndex,
+      timeoutMs,
+    );
+  } catch (error) {
+    const snapshot = await readClientSnapshot(client);
+    throw new Error(
+      `Natural ${pickupClassname} approach failed: ${errorMessage(error)} ${JSON.stringify(compactSnapshot(snapshot))}`,
+    );
+  } finally {
+    await client.page.keyboard.up("w").catch(() => undefined);
+  }
+  const player = await localSnapshotPlayer(client);
+  return {
+    pickupClassname,
+    pickupEntityIndex,
+    player,
+    event,
+    pose: pickupPose,
+  };
+}
+
 function weaponPickupClassname(weapon) {
   if (weapon === "grenadelauncher") return "weapon_grenadelauncher";
   if (weapon === "rocketlauncher") return "weapon_rocketlauncher";
@@ -2792,37 +3232,13 @@ async function uniqueRoomEvents(clients, predicate = () => true) {
   return [...unique.values()];
 }
 
-async function waitForRemoteProjectileDom(client, projectileId, timeoutMs) {
-  await client.page.waitForFunction((projectileId) => {
-    const element = document.querySelector(`.remote-projectile[data-projectile-id="${CSS.escape(projectileId)}"]`);
-    const stats = window.__cssQuakeDebug?.stats?.();
-    return Boolean(
-      element instanceof HTMLElement &&
-      !element.hidden &&
-      (stats?.multiplayer?.remoteProjectileDomCount ?? 0) >= 1
-    );
-  }, projectileId, { timeout: timeoutMs });
-  return await client.page.evaluate((projectileId) => {
-    const element = document.querySelector(`.remote-projectile[data-projectile-id="${CSS.escape(projectileId)}"]`);
-    return element instanceof HTMLElement
-      ? {
-          className: element.className,
-          hidden: element.hidden,
-          ownerPlayerId: element.dataset.ownerPlayerId ?? null,
-          projectileId: element.dataset.projectileId ?? null,
-          origin: element.dataset.remoteProjectileOrigin ?? null,
-        }
-      : null;
-  }, projectileId);
-}
-
 async function waitForRemoteProjectilePresentationOrImpact(client, clients, projectileId, timeoutMs) {
   const started = Date.now();
   let visibleProjectile = null;
   let movedProjectile = null;
   let initialOrigin = null;
   while (Date.now() - started < timeoutMs) {
-    const projectile = await readRemoteProjectileDom(client, projectileId);
+    const projectile = await readRemoteProjectile(client, projectileId);
     if (projectile) {
       if (!visibleProjectile) {
         visibleProjectile = projectile;
@@ -2841,18 +3257,10 @@ async function waitForRemoteProjectilePresentationOrImpact(client, clients, proj
   throw new Error(`Timed out waiting for projectile ${projectileId} impact.`);
 }
 
-async function readRemoteProjectileDom(client, projectileId) {
+async function readRemoteProjectile(client, projectileId) {
   return await client.page.evaluate((projectileId) => {
-    const element = document.querySelector(`.remote-projectile[data-projectile-id="${CSS.escape(projectileId)}"]`);
-    return element instanceof HTMLElement
-      ? {
-          className: element.className,
-          hidden: element.hidden,
-          ownerPlayerId: element.dataset.ownerPlayerId ?? null,
-          projectileId: element.dataset.projectileId ?? null,
-          origin: element.dataset.remoteProjectileOrigin ?? null,
-        }
-      : null;
+    return (window.__cssQuakeDebug?.stats?.()?.multiplayer?.remoteProjectiles ?? [])
+      .find((projectile) => projectile.projectileId === projectileId) ?? null;
   }, projectileId);
 }
 
@@ -2868,7 +3276,7 @@ async function waitForDamageOverlayState(client, active, timeoutMs) {
 async function waitForHudDamageCueState(client, active, timeoutMs) {
   await client.page.waitForFunction((active) => {
     const classicHud = document.querySelector("#quake-classic-hud");
-    if (!(classicHud instanceof HTMLElement)) return false;
+    if (!(classicHud instanceof HTMLElement)) return true;
     return classicHud.classList.contains("quake-hud-damage") === active;
   }, active, { timeout: timeoutMs });
   return await readHudFeedback(client);
@@ -2890,11 +3298,10 @@ async function readHudFeedback(client) {
   });
 }
 
-async function waitForNoRemoteProjectileDom(client, projectileId, timeoutMs) {
+async function waitForNoRemoteProjectile(client, projectileId, timeoutMs) {
   await client.page.waitForFunction((projectileId) => {
-    const element = document.querySelector(`.remote-projectile[data-projectile-id="${CSS.escape(projectileId)}"]`);
-    const stats = window.__cssQuakeDebug?.stats?.();
-    return !element && (stats?.multiplayer?.remoteProjectileDomCount ?? 0) === 0;
+    const projectiles = window.__cssQuakeDebug?.stats?.()?.multiplayer?.remoteProjectiles ?? [];
+    return !projectiles.some((projectile) => projectile.projectileId === projectileId);
   }, projectileId, { timeout: timeoutMs });
 }
 
@@ -2968,23 +3375,11 @@ async function sampleRemoteFrames(client) {
   return await client.page.evaluate(() => {
     const trace = window.__cssQuakeMpDeepTrace;
     if (!trace) return [];
-    for (const element of document.querySelectorAll("[data-player-id][data-client-id]")) {
+    const players = window.__cssQuakeDebug?.stats?.()?.multiplayer?.remotePlayers ?? [];
+    for (const player of players) {
       trace.remoteFrames.push({
         sampledAt: performance.now(),
-        playerId: element.dataset.playerId ?? null,
-        clientId: element.dataset.clientId ?? null,
-        alive: element.dataset.remoteAlive ?? null,
-        appliedRotY: element.dataset.remoteAppliedRotY ?? null,
-        lastAttackAt: element.dataset.remoteLastAttackAt ?? null,
-        lastPainAt: element.dataset.remoteLastPainAt ?? null,
-        hidden: element instanceof HTMLElement ? element.hidden : false,
-        frameIndex: element.dataset.remoteFrameIndex ?? null,
-        frameName: element.dataset.remoteFrameName ?? null,
-        origin: element.dataset.remoteOrigin ?? null,
-        renderAt: element.dataset.remoteRenderAt ?? null,
-        renderRotY: element.dataset.remoteRenderRotY ?? null,
-        stale: element.dataset.remoteStale ?? null,
-        visualRotY: element.dataset.remoteVisualRotY ?? null,
+        ...player,
       });
     }
     if (trace.remoteFrames.length > 500) trace.remoteFrames.splice(0, trace.remoteFrames.length - 500);
@@ -2994,12 +3389,13 @@ async function sampleRemoteFrames(client) {
 
 async function waitForRemoteVisualPose(client, remoteClientId, expectedRotY, timeoutMs) {
   await client.page.waitForFunction(({ expectedRotY, remoteClientId, rotEpsilon }) => {
-    const element = document.querySelector(`[data-client-id="${CSS.escape(remoteClientId)}"]`);
-    if (!(element instanceof HTMLElement) || element.hidden) return false;
-    const visualRotY = Number(element.dataset.remoteVisualRotY);
-    const renderRotY = Number(element.dataset.remoteRenderRotY);
-    const alive = element.dataset.remoteAlive === "true";
-    const stale = element.dataset.remoteStale === "true";
+    const player = (window.__cssQuakeDebug?.stats?.()?.multiplayer?.remotePlayers ?? [])
+      .find((candidate) => candidate.clientId === remoteClientId);
+    if (!player || player.hidden) return false;
+    const visualRotY = Number(player.visualRotY);
+    const renderRotY = Number(player.renderRotY);
+    const alive = player.alive === "true";
+    const stale = player.stale === "true";
     const angleDelta = (left, right) =>
       Math.abs(((Number(left) - Number(right) + 540) % 360) - 180);
     return alive &&
@@ -3018,25 +3414,8 @@ async function waitForRemoteVisualPose(client, remoteClientId, expectedRotY, tim
 
 async function readRemoteVisualPose(client, remoteClientId) {
   return await client.page.evaluate((remoteClientId) => {
-    const element = document.querySelector(`[data-client-id="${CSS.escape(remoteClientId)}"]`);
-    return element instanceof HTMLElement
-      ? {
-          alive: element.dataset.remoteAlive ?? null,
-          appliedRotY: element.dataset.remoteAppliedRotY ?? null,
-          clientId: element.dataset.clientId ?? null,
-          frameIndex: element.dataset.remoteFrameIndex ?? null,
-          frameName: element.dataset.remoteFrameName ?? null,
-          hidden: element.hidden,
-          lastAttackAt: element.dataset.remoteLastAttackAt ?? null,
-          lastPainAt: element.dataset.remoteLastPainAt ?? null,
-          origin: element.dataset.remoteOrigin ?? null,
-          playerId: element.dataset.playerId ?? null,
-          renderAt: element.dataset.remoteRenderAt ?? null,
-          renderRotY: element.dataset.remoteRenderRotY ?? null,
-          stale: element.dataset.remoteStale ?? null,
-          visualRotY: element.dataset.remoteVisualRotY ?? null,
-        }
-      : null;
+    return (window.__cssQuakeDebug?.stats?.()?.multiplayer?.remotePlayers ?? [])
+      .find((candidate) => candidate.clientId === remoteClientId) ?? null;
   }, remoteClientId);
 }
 
@@ -3085,31 +3464,8 @@ async function readClientSnapshot(client) {
   return await client.page.evaluate(() => {
     const stats = window.__cssQuakeDebug?.stats?.() ?? null;
     const trace = window.__cssQuakeMpDeepTrace ?? {};
-    const remotePlayers = Array.from(document.querySelectorAll("[data-player-id][data-client-id]"))
-      .map((element) => ({
-        playerId: element.dataset.playerId ?? null,
-        clientId: element.dataset.clientId ?? null,
-        alive: element.dataset.remoteAlive ?? null,
-        appliedRotY: element.dataset.remoteAppliedRotY ?? null,
-        frameIndex: element.dataset.remoteFrameIndex ?? null,
-        frameName: element.dataset.remoteFrameName ?? null,
-        hidden: element instanceof HTMLElement ? element.hidden : false,
-        lastAttackAt: element.dataset.remoteLastAttackAt ?? null,
-        lastPainAt: element.dataset.remoteLastPainAt ?? null,
-        origin: element.dataset.remoteOrigin ?? null,
-        renderAt: element.dataset.remoteRenderAt ?? null,
-        renderRotY: element.dataset.remoteRenderRotY ?? null,
-        stale: element.dataset.remoteStale ?? null,
-        visualRotY: element.dataset.remoteVisualRotY ?? null,
-      }));
-    const remoteProjectiles = Array.from(document.querySelectorAll(".remote-projectile"))
-      .map((element) => ({
-        className: element.className,
-        hidden: element instanceof HTMLElement ? element.hidden : false,
-        ownerPlayerId: element.dataset.ownerPlayerId ?? null,
-        projectileId: element.dataset.projectileId ?? null,
-        origin: element.dataset.remoteProjectileOrigin ?? null,
-      }));
+    const remotePlayers = stats?.multiplayer?.remotePlayers ?? [];
+    const remoteProjectiles = stats?.multiplayer?.remoteProjectiles ?? [];
     const damageOverlay = document.querySelector("#quake-damage-overlay");
     const classicHud = document.querySelector("#quake-classic-hud");
     return {
@@ -3499,6 +3855,10 @@ function printSummary(report, artifact) {
       console.log(`kill ${check.weapon}: ${check.pass ? "pass" : "fail"} killed=${check.event ? "yes" : "no"} frames=${compactCounts(countAll(check.remoteAnimation.names))}`);
     } else if (check.kind === "controlled-respawn") {
       console.log(`respawn ${check.weapon}: ${check.pass ? "pass" : "fail"} respawned=${check.respawnEvent ? "yes" : "no"} postDamage=${check.postRespawnDamage?.health ?? "n/a"} deathFrames=${compactCounts(countAll(check.deathAnimation.names))} postFrames=${compactCounts(countAll(check.postAnimation.names))}`);
+    } else if (check.kind === "match-restart") {
+      console.log(`match restart ${check.mapName}: ${check.pass ? "pass" : "fail"} killed=${check.killEvent ? "yes" : "no"} restarted=${check.restartEvent ? "yes" : "no"}`);
+    } else if (check.kind === "level-transition") {
+      console.log(`level transition ${check.sourceMap}->${check.targetMap}: ${check.pass ? "pass" : "fail"} invite=${check.targetInvite}`);
     } else if (check.kind === "controlled-projectile") {
       console.log(`projectile ${check.weapon}: ${check.pass ? "pass" : "fail"} spawned=${check.spawned ? "yes" : "no"} visible=${check.visibleProjectile ? "yes" : "no"} moved=${check.movedProjectile ? "yes" : "no"} impact=${check.impacted?.impactKind ?? "n/a"} victimHealth=${check.after?.health ?? "n/a"} attackerHealth=${check.afterAttacker?.health ?? "n/a"} explosion=${check.explosionSprite ? "yes" : "no"} attackerFrames=${compactCounts(countAll(check.remoteAttackAnimation?.names ?? []))}`);
     } else if (check.kind === "shared-pickup") {
@@ -3592,11 +3952,10 @@ function compactSnapshot(snapshot) {
       inputPaused: snapshot.stats?.multiplayer?.inputPaused ?? null,
       inputSequence: snapshot.stats?.multiplayer?.inputSequence ?? null,
       lastReject: snapshot.stats?.multiplayer?.lastReject ?? null,
-      remoteDomCount: snapshot.stats?.multiplayer?.remoteDomCount ?? null,
+      remotePlayerCount: snapshot.stats?.multiplayer?.remotePlayerCount ?? null,
       remoteProjectileCount: snapshot.stats?.multiplayer?.remoteProjectileCount ?? null,
-      remoteProjectileDomCount: snapshot.stats?.multiplayer?.remoteProjectileDomCount ?? null,
-      remoteVisibleProjectileDomCount: snapshot.stats?.multiplayer?.remoteVisibleProjectileDomCount ?? null,
-      remoteVisibleDomCount: snapshot.stats?.multiplayer?.remoteVisibleDomCount ?? null,
+      remoteVisibleProjectileCount: snapshot.stats?.multiplayer?.remoteVisibleProjectileCount ?? null,
+      remoteVisiblePlayerCount: snapshot.stats?.multiplayer?.remoteVisiblePlayerCount ?? null,
       scoreboardRows: snapshot.stats?.multiplayer?.scoreboardRows ?? null,
       sessionState: snapshot.stats?.multiplayer?.sessionState ?? null,
       spectating: snapshot.stats?.multiplayer?.spectating ?? null,

@@ -108,6 +108,59 @@ test("zero-travel func_button with finite wait can close and be reused", (t) => 
   ]);
 });
 
+test("authoritative mover snapshots restore an exact door offset and resting state", (t) => {
+  const clock = installManualRuntimeClock(t);
+  const applied = [];
+  let blockChecks = 0;
+  const controller = createQuakeMoversController({
+    applyState: (state, movePlayer) => applied.push({
+      mode: state.mode,
+      movePlayer,
+      offset: [...state.offset],
+    }),
+    fireTarget: () => undefined,
+    groupUnlocked: () => true,
+    playerBlocks: () => {
+      blockChecks += 1;
+      return true;
+    },
+  });
+  const door = {
+    classname: "func_door",
+    index: 14,
+    model: "*14",
+    modelIndex: 14,
+    properties: {
+      angle: "0",
+      classname: "func_door",
+      model: "*14",
+    },
+  };
+  const model = {
+    faceCount: 0,
+    firstFace: 0,
+    headNodes: [0, 0, 0, 0],
+    hulls: [],
+    index: 14,
+    mins: { x: 0, y: 0, z: 0 },
+    maxs: { x: 64, y: 16, z: 64 },
+    origin: { x: 0, y: 0, z: 0 },
+  };
+  controller.setup([door], [model], { x: 0, y: 0, z: 0 }, null);
+
+  assert.equal(controller.applyAuthoritativeState(14, "moving-up", [0.4, 0, 0]), true);
+  assert.deepEqual(controller.get(14).offset, [0.4, 0, 0]);
+  assert.equal(controller.get(14).mode, "opening");
+  assert.deepEqual(applied.at(-1), { mode: "opening", movePlayer: false, offset: [0.4, 0, 0] });
+  clock.advanceFrames(1, 16);
+  assert.equal(blockChecks, 0, "server-owned mover motion must not reverse on local collision prediction");
+
+  assert.equal(controller.applyAuthoritativeState(14, "bottom"), true);
+  assert.deepEqual(controller.get(14).offset, controller.get(14).closedOffset);
+  assert.equal(controller.get(14).mode, "closed");
+  controller.clear();
+});
+
 function installManualRuntimeClock(t) {
   const previousPerformance = globalThis.performance;
   const previousWindow = globalThis.window;

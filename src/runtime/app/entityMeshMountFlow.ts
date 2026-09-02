@@ -121,7 +121,7 @@ function mountEntityModelMesh(
 
 function keepPickupBackfacesVisible(element: HTMLElement): void {
   for (const leaf of element.querySelectorAll<HTMLElement>("b,i,s,u")) {
-    leaf.style.backfaceVisibility = "visible";
+    leaf.classList.add("quake-pickup-backface");
   }
 }
 

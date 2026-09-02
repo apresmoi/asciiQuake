@@ -5,7 +5,6 @@ export const QUAKE_MOBILE_CONTROLS_QUERY =
 
 const QUAKE_MOBILE_MOVE_ZONE_SIZE = 144;
 const QUAKE_MOBILE_STICK_SIZE = 108;
-const QUAKE_MOBILE_STICK_FRONT_SIZE = 54;
 const QUAKE_MOBILE_STICK_FRONT_TRAVEL = QUAKE_MOBILE_STICK_SIZE / 4;
 const QUAKE_MOBILE_STICK_CENTER = QUAKE_MOBILE_MOVE_ZONE_SIZE / 2;
 
@@ -48,7 +47,6 @@ export function createQuakeMobileControls(options: QuakeMobileControlsOptions): 
   let root: HTMLElement | null = null;
   let moveZone: HTMLElement | null = null;
   let moveStick: HTMLElement | null = null;
-  let moveStickBack: HTMLElement | null = null;
   let moveStickFront: HTMLElement | null = null;
   let lookZone: HTMLElement | null = null;
   let fireButton: HTMLButtonElement | null = null;
@@ -283,7 +281,6 @@ export function createQuakeMobileControls(options: QuakeMobileControlsOptions): 
     lookZone = nextLookZone;
     moveZone = nextMoveZone;
     moveStick = nextMoveStick;
-    moveStickBack = nextMoveStickBack;
     moveStickFront = nextMoveStickFront;
     fireButton = nextFireButton;
     jumpButton = nextJumpButton;
@@ -343,7 +340,6 @@ export function createQuakeMobileControls(options: QuakeMobileControlsOptions): 
     lookZone = null;
     moveZone = null;
     moveStick = null;
-    moveStickBack = null;
     moveStickFront = null;
     fireButton = null;
     jumpButton = null;
@@ -669,52 +665,13 @@ export function createQuakeMobileControls(options: QuakeMobileControlsOptions): 
 
   function syncMoveStickVisual(x: number, y: number, active: boolean): void {
     const stick = moveStick;
-    const back = moveStickBack;
     const front = moveStickFront;
-    if (!stick || !back || !front) return;
-    stick.style.position = "absolute";
-    stick.style.display = "block";
-    stick.style.left = `${moveStickCenterX}px`;
-    stick.style.top = `${moveStickCenterY}px`;
-    stick.style.width = `${QUAKE_MOBILE_STICK_SIZE}px`;
-    stick.style.height = `${QUAKE_MOBILE_STICK_SIZE}px`;
-    stick.style.marginLeft = `${-QUAKE_MOBILE_STICK_SIZE / 2}px`;
-    stick.style.marginTop = `${-QUAKE_MOBILE_STICK_SIZE / 2}px`;
-    stick.style.opacity = active ? "1" : "0.58";
-    stick.style.touchAction = "none";
-    stick.style.userSelect = "none";
-    stick.style.pointerEvents = "none";
-    stick.style.zIndex = "999";
-
-    back.style.position = "absolute";
-    back.style.display = "block";
-    back.style.left = "0px";
-    back.style.top = "0px";
-    back.style.width = `${QUAKE_MOBILE_STICK_SIZE}px`;
-    back.style.height = `${QUAKE_MOBILE_STICK_SIZE}px`;
-    back.style.marginLeft = "0px";
-    back.style.marginTop = "0px";
-    back.style.borderRadius = "50%";
-    back.style.background = "rgba(10, 9, 7, 0.34)";
-    back.style.boxSizing = "border-box";
-    back.style.border = "2px solid rgba(245, 232, 200, 0.42)";
-    back.style.pointerEvents = "none";
-
-    front.style.position = "absolute";
-    front.style.display = "block";
-    front.style.left = "50%";
-    front.style.top = "50%";
-    front.style.width = `${QUAKE_MOBILE_STICK_FRONT_SIZE}px`;
-    front.style.height = `${QUAKE_MOBILE_STICK_FRONT_SIZE}px`;
-    front.style.marginLeft = `${-QUAKE_MOBILE_STICK_FRONT_SIZE / 2}px`;
-    front.style.marginTop = `${-QUAKE_MOBILE_STICK_FRONT_SIZE / 2}px`;
-    front.style.borderRadius = "50%";
-    front.style.background = "rgba(245, 232, 200, 0.18)";
-    front.style.opacity = "0.5";
-    front.style.boxSizing = "border-box";
-    front.style.border = "2px solid rgba(245, 232, 200, 0.48)";
-    front.style.pointerEvents = "none";
-    front.style.transform = `translate(${x * QUAKE_MOBILE_STICK_FRONT_TRAVEL}px, ${-y * QUAKE_MOBILE_STICK_FRONT_TRAVEL}px)`;
+    if (!stick || !front) return;
+    stick.style.setProperty("--quake-mobile-stick-center-x", `${moveStickCenterX}px`);
+    stick.style.setProperty("--quake-mobile-stick-center-y", `${moveStickCenterY}px`);
+    stick.classList.toggle("quake-mobile-stick-active", active);
+    front.style.setProperty("--quake-mobile-stick-travel-x", `${x * QUAKE_MOBILE_STICK_FRONT_TRAVEL}px`);
+    front.style.setProperty("--quake-mobile-stick-travel-y", `${-y * QUAKE_MOBILE_STICK_FRONT_TRAVEL}px`);
   }
 
   function handleFirePointerDown(event: PointerEvent): void {

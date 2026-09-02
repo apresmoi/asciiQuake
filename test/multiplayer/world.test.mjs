@@ -9,6 +9,10 @@ import { importTsModule } from "../importTsModule.mjs";
 
 const world = await importTsModule("src/runtime/multiplayer/world.ts");
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
+const bundledWorldFacts = JSON.parse(readFileSync(
+  path.join(projectRoot, "src/generated/quakeMultiplayerWorldFacts.json"),
+  "utf8",
+));
 
 const PREPARED_SHAREWARE_MAPS = [
   "start",
@@ -174,6 +178,46 @@ test("prepared shareware maps derive trusted multiplayer world definitions witho
   }
 
   assert.deepEqual(failures, []);
+});
+
+test("bundled multiplayer world facts match every prepared deathmatch scene", (t) => {
+  if (!hasPreparedSharewareScenes()) {
+    t.skip("requires generated shareware scene JSON; run pnpm prepare:quake first");
+    return;
+  }
+  for (const mapName of PREPARED_SHAREWARE_MAPS) {
+    const deathmatchPath = path.join(projectRoot, "build/generated/public/q", `${mapName}.deathmatch.json`);
+    const scene = JSON.parse(readFileSync(deathmatchPath, "utf8"));
+    assert.deepEqual(
+      bundledWorldFacts[mapName],
+      world.quakeMultiplayerWorldDefinitionsFromScene(scene, {}),
+      `${mapName} bundled world facts are stale`,
+    );
+  }
+});
+
+test("mover collision endpoints preserve Quake start-open doors and lowered platforms", () => {
+  const startOpenDoor = bundledWorldFacts.e1m1.find((definition) =>
+    definition.kind === "mover" && definition.entityIndex === 137
+  );
+  const loweredPlatform = bundledWorldFacts.e1m1.find((definition) =>
+    definition.kind === "mover" && definition.entityIndex === 70
+  );
+
+  assert.ok(startOpenDoor);
+  assert.deepEqual(startOpenDoor.bottomOffset, [0, 0, -1.28]);
+  assert.deepEqual(startOpenDoor.topOffset, [0, 0, 0]);
+  assert.deepEqual(world.quakeMultiplayerMoverOffsetAtTime(
+    startOpenDoor,
+    "moving-up",
+    1_000,
+    1_320,
+    640,
+  ), [0, 0, -0.64]);
+
+  assert.ok(loweredPlatform);
+  assert.deepEqual(loweredPlatform.bottomOffset, [0, 0, -3]);
+  assert.deepEqual(loweredPlatform.topOffset, [0, 0, 0]);
 });
 
 test("world touch accepts a bounded local origin hint when the authoritative pose is one tick behind", () => {

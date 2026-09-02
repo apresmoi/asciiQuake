@@ -46,6 +46,43 @@ test("multiplayer correction ignores snapshots that should not move the local pl
   );
 });
 
+test("runtime correction bounds visible drift in scaled Quake world units", () => {
+  const options = reconciliation.QUAKE_MULTIPLAYER_LOCAL_CORRECTION_OPTIONS;
+  assert.equal(options.softCorrectionDistance, 0.16);
+  assert.equal(options.hardSnapDistance, 5.12);
+  assert.equal(options.maxBlendDistance, 1.28);
+  assert.equal(options.blendFraction, 0.5);
+
+  const decision = reconciliation.decideQuakeMultiplayerLocalCorrection(
+    [0, 0, 0],
+    createPlayer({ lastInputSequence: 11, origin: [3.2, 0, 0] }),
+    10,
+    options,
+  );
+  assert.equal(decision.action, "blend");
+});
+
+test("multiplayer correction waits for local prediction and its last moving input", () => {
+  assertDecision(
+    reconciliation.decideQuakeMultiplayerLocalCorrection(
+      [0, 0, 0],
+      createPlayer({ lastInputSequence: 12, origin: [3.2, 0, 0] }),
+      10,
+      correctionOptions({ predictionActive: true }),
+    ),
+    { action: "none", reason: "local-prediction-active", inputSequence: 12 },
+  );
+  assertDecision(
+    reconciliation.decideQuakeMultiplayerLocalCorrection(
+      [0, 0, 0],
+      createPlayer({ lastInputSequence: 12, origin: [3.2, 0, 0] }),
+      10,
+      correctionOptions({ minimumAcknowledgedInputSequence: 13 }),
+    ),
+    { action: "none", reason: "unacknowledged-motion", inputSequence: 12 },
+  );
+});
+
 test("multiplayer correction blends medium drift and caps blend distance", () => {
   const decision = reconciliation.decideQuakeMultiplayerLocalCorrection(
     [0, 0, 0],

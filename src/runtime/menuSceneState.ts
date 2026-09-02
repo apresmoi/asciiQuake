@@ -47,6 +47,8 @@ export interface QuakeMenuSceneState {
   readonly chrome: boolean;
   /** The gameplay HUD's presentation state — see {@link QuakeHudSceneState}. */
   readonly hud: QuakeHudSceneState;
+  /** Multiplayer scoreboard drawn by the glyph scene, never as visible HTML. */
+  readonly scoreboard: QuakeMultiplayerScoreboardSceneState;
   /**
    * Dynamic strings by key, drawn by the manifest text defs (`key` lookups):
    * option values ("opt:<rowId>"), the version tag ("version"), the
@@ -100,6 +102,21 @@ export interface QuakeHudSceneState {
   readonly crosshair: string;
 }
 
+export interface QuakeMultiplayerScoreboardSceneRow {
+  readonly clientId: string;
+  readonly deaths: number;
+  readonly displayName: string;
+  readonly frags: number;
+  readonly local: boolean;
+  readonly pingMs: number | null;
+}
+
+export interface QuakeMultiplayerScoreboardSceneState {
+  readonly rows: readonly QuakeMultiplayerScoreboardSceneRow[];
+  readonly spectatorCount: number;
+  readonly visible: boolean;
+}
+
 type Listener = () => void;
 
 // Mirrors the boot markup: <body class="quake-menu-open quake-main-menu-pending">
@@ -122,6 +139,11 @@ let state: QuakeMenuSceneState = {
     // The options flow's default (index 1, "plus") — pushed properly the first
     // time the crosshair option is applied.
     crosshair: "plus",
+  },
+  scoreboard: {
+    rows: [],
+    spectatorCount: 0,
+    visible: false,
   },
   texts: {},
   consoleLines: [],
@@ -150,6 +172,7 @@ export function updateQuakeMenuSceneState(partial: Partial<QuakeMenuSceneState>)
     next.multiplayerFailure === state.multiplayerFailure &&
     next.chrome === state.chrome &&
     hudSceneStatesEqual(next.hud, state.hud) &&
+    scoreboardSceneStatesEqual(next.scoreboard, state.scoreboard) &&
     stringArraysEqual(next.disabledItems, state.disabledItems) &&
     next.texts === state.texts &&
     stringArraysEqual(next.consoleLines, state.consoleLines) &&
@@ -194,6 +217,29 @@ function hudSceneStatesEqual(a: QuakeHudSceneState, b: QuakeHudSceneState): bool
     a.crosshair === b.crosshair &&
     a.slots.length === b.slots.length &&
     a.slots.every((id, i) => id === b.slots[i])
+  );
+}
+
+function scoreboardSceneStatesEqual(
+  a: QuakeMultiplayerScoreboardSceneState,
+  b: QuakeMultiplayerScoreboardSceneState,
+): boolean {
+  return (
+    a.visible === b.visible &&
+    a.spectatorCount === b.spectatorCount &&
+    a.rows.length === b.rows.length &&
+    a.rows.every((row, index) => {
+      const other = b.rows[index];
+      return Boolean(
+        other &&
+        row.clientId === other.clientId &&
+        row.deaths === other.deaths &&
+        row.displayName === other.displayName &&
+        row.frags === other.frags &&
+        row.local === other.local &&
+        row.pingMs === other.pingMs
+      );
+    })
   );
 }
 

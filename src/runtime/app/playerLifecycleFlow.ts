@@ -36,6 +36,7 @@ export interface QuakePlayerLifecycleFlowOptions {
   hasBodyClass(className: string): boolean;
   hasDeathOverlay(): boolean;
   hideMainMenu(): void;
+  isAuthoritativeMultiplayer(): boolean;
   isMainMenuOpen(): boolean;
   isMenuPanelOpen(): boolean;
   jumpVelocity: number;
@@ -254,7 +255,7 @@ export function createQuakePlayerLifecycleFlow(
   }
 
   function respawnFromDeath(): boolean {
-    if (!playerDead || !options.currentResult()) return false;
+    if (!playerDead || !options.currentResult() || options.isAuthoritativeMultiplayer()) return false;
     options.clearMegahealthRot();
     options.clearPowerups();
     options.player().respawn();
