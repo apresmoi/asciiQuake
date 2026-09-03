@@ -2,7 +2,7 @@
  * Glyph lab — a standalone page for tuning the image→glyph and bitmap-font→
  * glyph pipelines WITHOUT booting Quake.
  *
- * Open `/lab.html` on the dev server. It mounts the game's real
+ * Open `/lab/` on the dev server. It mounts the game's real
  * `createQuakeGlyphUiOverlay` (the exact pipeline the menus/boot console
  * render through — same gamma/levels/saturation lifts, ink compensation,
  * pinned atlas palette, conchars text-art path) on a bare host element, so
@@ -10,7 +10,7 @@
  * `glyphTuningSpec.ts`, the same table the in-game `?debug` panel builds
  * from, so lab and game cannot drift.
  *
- * Dev-only by construction: `lab.html` is not in the production build's
+ * Dev-only by construction: `lab/index.html` is not in the production build's
  * rollup inputs (Vite's default input is `index.html` alone), and nothing in
  * the game imports this module.
  */

@@ -402,6 +402,9 @@ export interface QuakeGlyphGeometry {
     c: string;
     l?: number[];
     u?: number[][];
+    /** Animated lightstyle id and per-frame pre-lit intensity multipliers. */
+    s?: number;
+    a?: number[];
   }>;
 }
 
@@ -409,7 +412,13 @@ export interface QuakeGlyphGeometry {
 export interface QuakeGlyphMover {
   entityIndex: number;
   modelIndex: number;
-  polygons: Array<{ v: number[][]; c: string }>;
+  polygons: Array<{
+    v: number[][];
+    c: string;
+    /** Animated lightstyle id and per-frame intensity multipliers. */
+    s?: number;
+    a?: number[];
+  }>;
 }
 
 export interface QuakeGlyphMovers {

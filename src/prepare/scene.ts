@@ -656,6 +656,9 @@ export interface QuakeGlyphGeometry {
     c: string;
     l?: number[];
     u?: number[][];
+    /** Animated lightstyle id and per-frame pre-lit intensity multipliers. */
+    s?: number;
+    a?: number[];
   }>;
 }
 

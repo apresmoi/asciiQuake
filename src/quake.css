@@ -132,6 +132,9 @@ body.quake-menu-pointer {
   overflow: hidden;
   pointer-events: none;
 }
+.quake-glyph-render.quake-menu-open.quake-gameplay-started #quake-glyph-ui-host {
+  background: rgba(0, 0, 0, 0.65);
+}
 .quake-glyph-ui {
   position: absolute;
   inset: 0;

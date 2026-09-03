@@ -1,5 +1,91 @@
+diff --git a/packages/glyphcss/src/render/rasterize.test.ts b/packages/glyphcss/src/render/rasterize.test.ts
+index 24814c9..925504a 100644
+--- a/packages/glyphcss/src/render/rasterize.test.ts
++++ b/packages/glyphcss/src/render/rasterize.test.ts
+@@ -35,6 +35,34 @@ function makeCubePolygons(): Polygon[] {
+ }
+
+ describe("rasterize", () => {
++  it("preserves blank cells during temporal reprojection with a non-blank-first ramp", () => {
++    const camera = createGlyphPerspectiveCamera({ zoom: 120, distance: 20 });
++    const context = buildRasterizeContext({
++      camera,
++      grid: { cols: 24, rows: 12, cellAspect: 2 },
++      polygons: makeCubePolygons(),
++      mode: "solid",
++      useColors: true,
++      glyphPalette: "dense",
++      colorEncoding: "atlas",
++      atlasPalette: ["#ffffff"],
++      temporalBlend: 0.1,
++    });
++    context.temporalHistory = {
++      idx: new Float32Array(0),
++      r: new Float32Array(0),
++      g: new Float32Array(0),
++      b: new Float32Array(0),
++      cols: 0,
++      rows: 0,
++      cam: null,
++    };
++
++    rasterize(context);
++
++    expect(context.atlasEncoded).toBe(true);
++  });
++
+   it("renders a solid cube to non-empty text", () => {
+     // rotX/rotY in degrees; zoom=300 with distance=20 produces a clearly visible cube
+     const camera = createGlyphPerspectiveCamera({ rotX: 25, rotY: 30, zoom: 300, distance: 20 });
+@@ -229,4 +257,46 @@ describe("rasterize", () => {
+     expect(unlit.replace(/[\s\n]/g, "").length).toBe(0);
+     expect(ambientOnly.replace(/[\s\n]/g, "").length).toBeGreaterThan(0);
+   });
++
++  it("lets an explicitly double-sided polygon override a single-sided scene", () => {
++    const backFace: Polygon = {
++      vertices: [[-5, -5, 0], [0, 5, 0], [5, -5, 0]],
++      color: "#ffffff",
++    };
++    const camera = createGlyphPerspectiveCamera({ rotX: 90, rotY: 0, zoom: 400, distance: 20 });
++    const render = (polygon: Polygon) => rasterize(buildRasterizeContext({
++      camera,
++      grid: { cols: 40, rows: 20, cellAspect: 2 },
++      polygons: [polygon],
++      mode: "solid",
++      useColors: false,
++      doubleSided: false,
++      ambientLight: { color: "#ffffff", intensity: 1 },
++      directionalLight: { direction: [0, 0, 1], color: "#ffffff", intensity: 0 },
++    })).replace(/[\s\n]/g, "").length;
++
++    expect(render(backFace)).toBe(0);
++    expect(render({ ...backFace, doubleSided: true })).toBeGreaterThan(0);
++  });
++
++  it("lets an explicitly single-sided polygon override a double-sided scene", () => {
++    const backFace: Polygon = {
++      vertices: [[-5, -5, 0], [0, 5, 0], [5, -5, 0]],
++      color: "#ffffff",
++    };
++    const camera = createGlyphPerspectiveCamera({ rotX: 90, rotY: 0, zoom: 400, distance: 20 });
++    const render = (polygon: Polygon) => rasterize(buildRasterizeContext({
++      camera,
++      grid: { cols: 40, rows: 20, cellAspect: 2 },
++      polygons: [polygon],
++      mode: "solid",
++      useColors: false,
++      doubleSided: true,
++      ambientLight: { color: "#ffffff", intensity: 1 },
++      directionalLight: { direction: [0, 0, 1], color: "#ffffff", intensity: 0 },
++    })).replace(/[\s\n]/g, "").length;
++
++    expect(render(backFace)).toBeGreaterThan(0);
++    expect(render({ ...backFace, doubleSided: false })).toBe(0);
++  });
+ });
 diff --git a/packages/glyphcss/src/render/rasterize.ts b/packages/glyphcss/src/render/rasterize.ts
-index ff618b0..811722f 100644
+index ff618b0..560fa2a 100644
 --- a/packages/glyphcss/src/render/rasterize.ts
 +++ b/packages/glyphcss/src/render/rasterize.ts
 @@ -1649,6 +1649,7 @@ function rasterizeSolid(
@@ -10,64 +96,160 @@ index ff618b0..811722f 100644
 
    // Per-vertex normals for Gouraud shading. `null` when flat-shading.
    // Index: [polyIdx][vertIdx] → normalized Vec3.
-@@ -1720,6 +1721,9 @@ function rasterizeSolid(
+@@ -1720,6 +1721,30 @@ function rasterizeSolid(
    };
    for (let polyIdx = 0; polyIdx < polygons.length; polyIdx++) {
      const poly = polygons[polyIdx]!;
 +    // Internal material bit used by integrations whose texture already
 +    // contains baked lighting (for example, a lightmapped BSP atlas).
-+    const unlit = (poly as Polygon & { unlit?: boolean }).unlit === true;
++    const material = poly as Polygon & {
++      unlit?: boolean;
++      lightstyleIntensity?: number;
++      textureInkIntensity?: number;
++      textureCellSampling?: boolean;
++      doubleSided?: boolean;
++    };
++    const unlit = material.unlit === true;
++    const lightstyleIntensity = Number.isFinite(material.lightstyleIntensity)
++      ? Math.max(0, Math.min(1, material.lightstyleIntensity!))
++      : 1;
++    // Internal display-space compensation for textured integrations whose
++    // sampled colour is painted through sparse glyph ink rather than a solid
++    // pixel. It brightens the ink only: texture luminance still chooses the
++    // same glyph, so authored texture detail and baked lighting remain intact.
++    const textureInkIntensity = Number.isFinite(material.textureInkIntensity)
++      ? Math.max(0, material.textureInkIntensity!)
++      : 1;
++    const textureCellSampling = material.textureCellSampling === true;
++    const polygonDoubleSided = typeof material.doubleSided === "boolean"
++      ? material.doubleSided
++      : doubleSided;
      const verts = poly.vertices;
      if (verts.length < 3) continue;
      // Pre-transform vertices, parallel to `verts` — see `objectPosBuf`.
-@@ -1844,6 +1848,15 @@ function rasterizeSolid(
-         iB = shadeCache.iB[triT]!;
-         iC = shadeCache.iC[triT]!;
-         litColor = shadeCache.lit[triT]!;
-+      } else if (unlit) {
+@@ -1737,6 +1762,15 @@ function rasterizeSolid(
+     // Texture for this polygon: sample per cell when a sampler + matching UVs
+     // exist; otherwise fall back to the flat per-face color.
+     const polyUvs = poly.uvs && poly.uvs.length >= verts.length ? poly.uvs : null;
++    let textureMinU = Infinity, textureMinV = Infinity, textureMaxU = -Infinity, textureMaxV = -Infinity;
++    if (textureCellSampling && polyUvs) {
++      for (const uv of polyUvs) {
++        if (uv[0] < textureMinU) textureMinU = uv[0];
++        if (uv[0] > textureMaxU) textureMaxU = uv[0];
++        if (uv[1] < textureMinV) textureMinV = uv[1];
++        if (uv[1] > textureMaxV) textureMaxV = uv[1];
++      }
++    }
+     let polySampler: TextureSampler | null = null;
+     if (textureSamplers !== null && polyUvs) {
+       const texUrl = polygonTexture(poly);
+@@ -1793,7 +1827,7 @@ function rasterizeSolid(
+       // after clipping). `scanFillTriangle` also drops `area2 > 0`, but doing it
+       // here skips the face normal, Lambert shading and shadow context below for
+       // back faces (≈half a closed mesh).
+-      if (nanCount === 0 && !doubleSided) {
++      if (nanCount === 0 && !polygonDoubleSided) {
+         const area2 = (pb[0] - pa[0]) * (pc[1] - pa[1]) - (pb[1] - pa[1]) * (pc[0] - pa[0]);
+         if (area2 > 0) continue;
+       }
+@@ -1805,7 +1839,7 @@ function rasterizeSolid(
+       // clears the cache when geometry, light, or shading options change.
+       const shadeCacheHit = shadeCache !== null && shadeCache.iA[triT] !== undefined;
+       let fnxN = 0, fnyN = 0, fnzN = 0;
+-      if (normalBuf !== null || !shadeCacheHit) {
++      if (normalBuf !== null || (!unlit && !shadeCacheHit)) {
+         const ux = v1[0] - v0[0], uy = v1[1] - v0[1], uz = v1[2] - v0[2];
+         const vvx = v2[0] - v0[0], vvy = v2[1] - v0[1], vvz = v2[2] - v0[2];
+         const fnx = uy * vvz - uz * vvy;
+@@ -1839,7 +1873,10 @@ function rasterizeSolid(
+       }
+       let iA: number, iB: number, iC: number;
+       let litColor: string | null = null;
+-      if (shadeCacheHit && shadeCache !== null) {
++      if (unlit) {
 +        iA = iB = iC = 1;
 +        litColor = useColors ? (poly.color ?? "#ffffff") : null;
-+        if (shadeCache !== null) {
-+          shadeCache.iA[triT] = iA;
-+          shadeCache.iB[triT] = iB;
-+          shadeCache.iC[triT] = iC;
-+          shadeCache.lit[triT] = litColor;
++      } else if (shadeCacheHit && shadeCache !== null) {
+         iA = shadeCache.iA[triT]!;
+         iB = shadeCache.iB[triT]!;
+         iC = shadeCache.iC[triT]!;
+@@ -1916,6 +1953,26 @@ function rasterizeSolid(
+         }
+       }
+
++      // Internal post-lighting multiplier for integrations with animated baked
++      // light (for example, Quake lightstyles). Apply it after cache lookup so
++      // mutating the polygon between renders cannot freeze an earlier frame.
++      const baseIA = iA, baseIB = iB, baseIC = iC;
++      if (lightstyleIntensity !== 1) {
++        iA *= lightstyleIntensity;
++        iB *= lightstyleIntensity;
++        iC *= lightstyleIntensity;
++        if (litColor !== null) {
++          const cacheKey = `lightstyle:${litColor}:${lightstyleIntensity}`;
++          let scaled = litCache.get(cacheKey);
++          if (scaled === undefined) {
++            const rgb = hexToRgb(litColor);
++            scaled = `#${toHex2(rgb[0] * lightstyleIntensity)}${toHex2(rgb[1] * lightstyleIntensity)}${toHex2(rgb[2] * lightstyleIntensity)}`;
++            litCache.set(cacheKey, scaled);
++          }
++          litColor = scaled;
 +        }
-       } else {
-         // Pick per-vertex normals. Smooth-shaded → look up from precomputed
-         // table. Flat-shaded → all three vertices use the face normal.
-@@ -1938,9 +1951,9 @@ function rasterizeSolid(
++      }
++
+       const receiveShadow = receiveShadowFlags[polyIdx] ?? false;
+       // Per-mesh depth bias (z-fight resolution): scale the screen-linear depth so
+       // a biased mesh wins coincident/coplanar cells. Larger zbuf = nearer.
+@@ -1934,13 +1991,15 @@ function rasterizeSolid(
+       let texCtx: ScanFillTexCtx | null = null;
+       if (polySampler !== null && polyUvs) {
+         const uvA = polyUvs[vi0]!, uvB = polyUvs[vi1]!, uvC = polyUvs[vi2]!;
+-        const avgKey = Math.max(0, (iA + iB + iC) / 3 - ambIntensity);
++        const avgKey = Math.max(0, (baseIA + baseIB + baseIC) / 3 - ambIntensity);
          texCtx = {
            sampler: polySampler,
            ua: uvA[0], va: uvA[1], ub: uvB[0], vb: uvB[1], uc: uvC[0], vc: uvC[1],
 -          tintR: ambIntensity * ambRgb[0] / 255 + avgKey * keyRgb[0] / 255,
 -          tintG: ambIntensity * ambRgb[1] / 255 + avgKey * keyRgb[1] / 255,
 -          tintB: ambIntensity * ambRgb[2] / 255 + avgKey * keyRgb[2] / 255,
-+          tintR: unlit ? 1 : ambIntensity * ambRgb[0] / 255 + avgKey * keyRgb[0] / 255,
-+          tintG: unlit ? 1 : ambIntensity * ambRgb[1] / 255 + avgKey * keyRgb[1] / 255,
-+          tintB: unlit ? 1 : ambIntensity * ambRgb[2] / 255 + avgKey * keyRgb[2] / 255,
++          cellSampling: textureCellSampling,
++          minU: textureMinU, minV: textureMinV, maxU: textureMaxU, maxV: textureMaxV,
++          tintR: (unlit ? 1 : ambIntensity * ambRgb[0] / 255 + avgKey * keyRgb[0] / 255) * lightstyleIntensity * textureInkIntensity,
++          tintG: (unlit ? 1 : ambIntensity * ambRgb[1] / 255 + avgKey * keyRgb[1] / 255) * lightstyleIntensity * textureInkIntensity,
++          tintB: (unlit ? 1 : ambIntensity * ambRgb[2] / 255 + avgKey * keyRgb[2] / 255) * lightstyleIntensity * textureInkIntensity,
          };
        }
 
-@@ -1958,7 +1971,7 @@ function rasterizeSolid(
+@@ -1958,8 +2017,8 @@ function rasterizeSolid(
            ramp, rampMax, litColor,
            glyphBuf, colorBuf, depthBuf, shadeBuf,
            cols, rows,
 -          makeShadowCtx(v0, v1, v2, receiveShadow),
+-          doubleSided,
 +          makeShadowCtx(v0, v1, v2, receiveShadow && !unlit),
-           doubleSided,
++          polygonDoubleSided,
            v0, v1, v2, worldPosBuf,
            ov0, ov1, ov2, objectPosBuf,
-@@ -1971,7 +1984,7 @@ function rasterizeSolid(
+           fnxN, fnyN, fnzN, normalBuf,
+@@ -1971,7 +2030,7 @@ function rasterizeSolid(
            winnerPolygonBuf,
            albedoRgbBuf,
            targetRgbBuf,
 -          ambIntensity, ambRgb, keyRgb,
-+          unlit ? 1 : ambIntensity, unlit ? unlitRgb : ambRgb, keyRgb,
++          (unlit ? 1 : ambIntensity) * lightstyleIntensity, unlit ? unlitRgb : ambRgb, keyRgb,
            poly.color ?? "#ffffff",
            weightRamp, weightBuf,
            meshId, winnerMeshBuf,
-@@ -2047,6 +2060,14 @@ function rasterizeSolid(
+@@ -2039,7 +2098,7 @@ function rasterizeSolid(
+           for (let f = 1; f < cw.length - 1; f++) {
+             const qa = cp[0]!, qb = cp[f]!, qc = cp[f + 1]!;
+             const area2c = (qb[0] - qa[0]) * (qc[1] - qa[1]) - (qb[1] - qa[1]) * (qc[0] - qa[0]);
+-            if (!doubleSided && area2c > 0) continue;
++            if (!polygonDoubleSided && area2c > 0) continue;
+             const clippedUvCtx: ScanFillSurfaceUvCtx | null = surfaceUvBuf !== null && cuv
+               ? {
+                   ua: cuv[0]![0], va: cuv[0]![1],
+@@ -2047,6 +2106,14 @@ function rasterizeSolid(
                    uc: cuv[f + 1]![0], vc: cuv[f + 1]![1],
                  }
                : null;
@@ -82,16 +264,17 @@ index ff618b0..811722f 100644
              scanFillTriangle(
                qa[0], qa[1], (qa[3] ?? qa[2]) * biasScale, qa[3] ?? 1, ci[0]!,
                qb[0], qb[1], (qb[3] ?? qb[2]) * biasScale, qb[3] ?? 1, ci[f]!,
-@@ -2054,7 +2075,7 @@ function rasterizeSolid(
+@@ -2054,23 +2121,20 @@ function rasterizeSolid(
                ramp, rampMax, litColor,
                glyphBuf, colorBuf, depthBuf, shadeBuf,
                cols, rows,
 -              makeShadowCtx(cw[0]!, cw[f]!, cw[f + 1]!, receiveShadow),
+-              doubleSided,
 +              makeShadowCtx(cw[0]!, cw[f]!, cw[f + 1]!, receiveShadow && !unlit),
-               doubleSided,
++              polygonDoubleSided,
                cw[0]!, cw[f]!, cw[f + 1]!, worldPosBuf,
                cow ? cow[0]! : ov0, cow ? cow[f]! : ov1, cow ? cow[f + 1]! : ov2, objectPosBuf,
-@@ -2062,15 +2083,12 @@ function rasterizeSolid(
+               fnxN, fnyN, fnzN, normalBuf,
                onxN, onyN, onzN, objectNormalBuf,
                clippedUvCtx, surfaceUvBuf,
                depthEpsilon,
@@ -105,24 +288,164 @@ index ff618b0..811722f 100644
                albedoRgbBuf,
                targetRgbBuf,
 -              ambIntensity, ambRgb, keyRgb,
-+              unlit ? 1 : ambIntensity, unlit ? unlitRgb : ambRgb, keyRgb,
++              (unlit ? 1 : ambIntensity) * lightstyleIntensity, unlit ? unlitRgb : ambRgb, keyRgb,
                poly.color ?? "#ffffff",
                weightRamp, weightBuf,
                meshId, winnerMeshBuf,
+@@ -2332,7 +2396,8 @@ function applyReprojectionTAA(
+   let prevCam = H.cam;
+   if (H.cols !== cols || H.rows !== rows || H.idx.length !== n) {
+     H.cols = cols; H.rows = rows;
+-    H.idx = new Float32Array(n); H.r = new Float32Array(n); H.g = new Float32Array(n); H.b = new Float32Array(n);
++    H.idx = new Float32Array(n); H.idx.fill(NaN);
++    H.r = new Float32Array(n); H.g = new Float32Array(n); H.b = new Float32Array(n);
+     prevCam = null;
+   }
+
+@@ -2361,6 +2426,17 @@ function applyReprojectionTAA(
+   for (let row = 0; row < rows; row++) {
+     for (let col = 0; col < cols; col++) {
+       const i = row * cols + col;
++      const wx = worldPos[i * 3]!;
++      // Occupancy is independent of the ramp: some palettes deliberately
++      // start with a visible high-coverage glyph instead of a space. Keep
++      // empty cells empty, and mark their history index invalid with NaN so a
++      // newly exposed surface never blends against an empty prior cell.
++      if (wx !== wx) {
++        nIdx[i] = NaN;
++        glyphBuf[i] = " ";
++        if (colorBuf) colorBuf[i] = null;
++        continue;
++      }
+       const idxNow = rampIndex.get(glyphBuf[i]!) ?? 0;
+       let rNow = 0, gNow = 0, bNow = 0;
+       const c = colorBuf ? colorBuf[i] : null;
+@@ -2368,14 +2444,16 @@ function applyReprojectionTAA(
+
+       let b = 0; // effective history weight (0 when no valid reprojection)
+       let hIdx = 0, hR = 0, hG = 0, hB = 0;
+-      const wx = worldPos[i * 3]!;
+-      if (reproj && wx === wx) { // wx===wx → not NaN (cell has a surface)
++      if (reproj) {
+         const p = reproj([wx, worldPos[i * 3 + 1]!, worldPos[i * 3 + 2]!]);
+         const pcCol = Math.round(p[0]), pcRow = Math.round(p[1]);
+         if (p[0] === p[0] && pcCol >= 0 && pcCol < cols && pcRow >= 0 && pcRow < rows) {
+           const j = pcRow * cols + pcCol;
+-          hIdx = H.idx[j]!; hR = H.r[j]!; hG = H.g[j]!; hB = H.b[j]!;
+-          b = blend;
++          const candidateIdx = H.idx[j]!;
++          if (candidateIdx === candidateIdx) {
++            hIdx = candidateIdx; hR = H.r[j]!; hG = H.g[j]!; hB = H.b[j]!;
++            b = blend;
++          }
+         }
+       }
+       const cur = 1 - b;
+@@ -2386,8 +2464,9 @@ function applyReprojectionTAA(
+       nIdx[i] = bi; nR[i] = br; nG[i] = bg; nB[i] = bb;
+       let gi = Math.round(bi);
+       if (gi < 0) gi = 0; else if (gi > rampMax) gi = rampMax;
+-      glyphBuf[i] = ramp[gi]!;
+-      if (colorBuf) colorBuf[i] = gi === 0 ? null : `#${toHex2(br)}${toHex2(bg)}${toHex2(bb)}`;
++      const glyph = ramp[gi]!;
++      glyphBuf[i] = glyph;
++      if (colorBuf) colorBuf[i] = glyph === " " ? null : `#${toHex2(br)}${toHex2(bg)}${toHex2(bb)}`;
+     }
+   }
+   H.idx = nIdx; H.r = nR; H.g = nG; H.b = nB;
+@@ -2903,10 +2982,58 @@ const TEXEL_COVERAGE_ALPHA_MIN = 8;
+ interface ScanFillTexCtx {
+   sampler: TextureSampler;
+   ua: number; va: number; ub: number; vb: number; uc: number; vc: number;
++  cellSampling: boolean;
++  minU: number; minV: number; maxU: number; maxV: number;
+   // Per-triangle light multiplier (ambient + key·lambert) applied to each texel.
+   tintR: number; tintG: number; tintB: number;
+ }
+
++function sampleTextureCell(
++  tex: ScanFillTexCtx,
++  ax: number, ay: number, aq: number,
++  bx: number, by: number, bq: number,
++  cx: number, cy: number, cq: number,
++  px: number, py: number,
++  invArea2: number,
++  perspectiveAttributes: boolean,
++): ReturnType<typeof sampleTexel> {
++  const sampler = tex.sampler;
++  const width = sampler.width;
++  const height = sampler.height;
++  if (width <= 0 || height <= 0) return null;
++  let r = 0, g = 0, b = 0, a = 0, count = 0;
++  for (let sampleY = -0.25; sampleY <= 0.25; sampleY += 0.5) {
++    const sy = py + sampleY;
++    for (let sampleX = -0.25; sampleX <= 0.25; sampleX += 0.5) {
++      const sx = px + sampleX;
++      const wA = (bx - sx) * (cy - sy) - (by - sy) * (cx - sx);
++      const wB = (cx - sx) * (ay - sy) - (cy - sy) * (ax - sx);
++      const wC = (ax - sx) * (by - sy) - (ay - sy) * (bx - sx);
++      const scale = perspectiveAttributes ? 1 / (wA * aq + wB * bq + wC * cq) : invArea2;
++      const u = perspectiveAttributes
++        ? (wA * aq * tex.ua + wB * bq * tex.ub + wC * cq * tex.uc) * scale
++        : (wA * tex.ua + wB * tex.ub + wC * tex.uc) * scale;
++      const v = perspectiveAttributes
++        ? (wA * aq * tex.va + wB * bq * tex.vb + wC * cq * tex.vc) * scale
++        : (wA * tex.va + wB * tex.vb + wC * tex.vc) * scale;
++      const clampedU = Math.max(tex.minU, Math.min(tex.maxU, u));
++      const clampedV = Math.max(tex.minV, Math.min(tex.maxV, v));
++      if (!Number.isFinite(clampedU) || !Number.isFinite(clampedV)) continue;
++      const x = Math.max(0, Math.min(width - 1, Math.floor(clampedU * width)));
++      const y = Math.max(0, Math.min(height - 1, Math.floor((1 - clampedV) * height)));
++      const offset = (y * width + x) * 4;
++      r += sampler.data[offset] ?? 0;
++      g += sampler.data[offset + 1] ?? 0;
++      b += sampler.data[offset + 2] ?? 0;
++      a += sampler.data[offset + 3] ?? 255;
++      count++;
++    }
++  }
++  return count > 0
++    ? { r: Math.round(r / count), g: Math.round(g / count), b: Math.round(b / count), a: Math.round(a / count) }
++    : null;
++}
++
+ /** Authored face UVs retained for a post-rasterize surface-space cell effect. */
+ interface ScanFillSurfaceUvCtx {
+   ua: number; va: number; ub: number; vb: number; uc: number; vc: number;
+@@ -3175,7 +3302,17 @@ function scanFillTriangle(
+         const tv = perspectiveAttributes
+           ? (wA * aq * tex.va + wB * bq * tex.vb + wC * cq * tex.vc) * tq
+           : (wA * tex.va + wB * tex.vb + wC * tex.vc) * invArea2;
+-        cellTexel = sampleTexel(tex.sampler, tu, tv);
++        cellTexel = tex.cellSampling
++          ? sampleTextureCell(
++              tex,
++              ax, ay, aq,
++              bx, by, bq,
++              cx, cy, cq,
++              px, py,
++              invArea2,
++              perspectiveAttributes,
++            )
++          : sampleTexel(tex.sampler, tu, tv);
+         if (cellTexel === null || cellTexel.a <= TEXEL_COVERAGE_ALPHA_MIN) continue;
+       }
+       if (pixelDepth > (prevDepth > 0 ? prevDepth * (1 - depthEpsilon) : prevDepth)) {
 diff --git a/packages/glyphcss/src/render/textureSampling.test.ts b/packages/glyphcss/src/render/textureSampling.test.ts
-index ca5a4e0..ca26c4c 100644
+index ca5a4e0..69528eb 100644
 --- a/packages/glyphcss/src/render/textureSampling.test.ts
 +++ b/packages/glyphcss/src/render/textureSampling.test.ts
 @@ -1,7 +1,7 @@
  import { describe, it, expect } from "vitest";
  import { buildRasterizeContext } from "../api/rasterizeContext";
- import { rasterize } from "./rasterize";
+-import { rasterize } from "./rasterize";
 -import { createGlyphOrthographicCamera } from "../api/createGlyphCamera";
++import { rasterize, rasterizeToCells } from "./rasterize";
 +import { createGlyphOrthographicCamera, createGlyphPerspectiveCamera } from "../api/createGlyphCamera";
  import type { TextureSampler } from "@glyphcss/core";
 
  // A 2×2 texture: red / green / blue / white quadrants.
-@@ -51,4 +51,69 @@ describe("per-cell texture sampling", () => {
+@@ -51,4 +51,181 @@ describe("per-cell texture sampling", () => {
      const colors = renderColors(false);
      expect(colors).not.toEqual(expect.arrayContaining(["#ff0000", "#00ff00", "#0000ff"]));
    });
@@ -151,6 +474,118 @@ index ca5a4e0..ca26c4c 100644
 +
 +    expect(render(true)).toContain("#f0b478");
 +    expect(render(false)).toContain("#3c2d1e");
++  });
++
++  it("modulates an unlit baked texture without restoring scene lighting", () => {
++    const camera = createGlyphOrthographicCamera({ rotX: 0, rotY: 0, zoom: 400 });
++    const polygon = { ...quad, unlit: true, lightstyleIntensity: 1 };
++    const ctx = buildRasterizeContext({
++      camera,
++      grid: { cols: 40, rows: 40, cellAspect: 2 },
++      polygons: [polygon],
++      mode: "solid",
++      useColors: true,
++      doubleSided: true,
++      directionalLight: { direction: [0, 0, 1], intensity: 0 },
++      ambientLight: { intensity: .25 },
++    });
++    ctx.textureSamplers = new Map([["tex", {
++      width: 1,
++      height: 1,
++      lowDetail: false,
++      data: new Uint8ClampedArray([240, 180, 120, 255]),
++    }]]);
++    ctx.shadeCache = { iA: [], iB: [], iC: [], lit: [] };
++    const render = () => {
++      const cells = rasterizeToCells(ctx);
++      const shades = [...cells.shade!].filter(Number.isFinite);
++      return {
++        colors: new Set(cells.color.filter(Boolean)),
++        meanShade: shades.reduce((sum, shade) => sum + shade, 0) / shades.length,
++      };
++    };
++
++    const full = render();
++    polygon.lightstyleIntensity = .5;
++    const dimmed = render();
++    expect(dimmed.colors).toContain("#785a3c");
++    expect(dimmed.meanShade).toBeCloseTo(full.meanShade * .5, 5);
++  });
++
++  it("compensates sparse glyph ink without changing texture-driven glyph density", () => {
++    const polygon = { ...quad, color: "#808080", unlit: true, textureInkIntensity: 1 };
++    const ctx = buildRasterizeContext({
++      camera: createGlyphOrthographicCamera({ rotX: 0, rotY: 0, zoom: 400 }),
++      grid: { cols: 40, rows: 40, cellAspect: 2 },
++      polygons: [polygon],
++      mode: "solid",
++      useColors: true,
++      doubleSided: true,
++      directionalLight: { direction: [0, 0, 1], intensity: 0 },
++      ambientLight: { intensity: .25 },
++    });
++    ctx.textureSamplers = new Map([["tex", sampler]]);
++
++    const uncompensated = rasterizeToCells(ctx);
++    polygon.textureInkIntensity = 2;
++    const compensated = rasterizeToCells(ctx);
++    expect(new Set(uncompensated.color.filter(Boolean))).toContain("#800000");
++    expect(new Set(compensated.color.filter(Boolean))).toContain("#ff0000");
++    expect(compensated.char).toEqual(uncompensated.char);
++    expect(compensated.shade).toEqual(uncompensated.shade);
++  });
++
++  it("area-samples texture detail across one screen cell without supersampling geometry", () => {
++    const stripes = new Uint8ClampedArray(128 * 4);
++    for (let x = 0; x < 128; x++) {
++      const value = x % 2 === 0 ? 0 : 255;
++      stripes.set([value, value, value, 255], x * 4);
++    }
++    const polygon = { ...quad, color: "#ffffff", unlit: true, textureCellSampling: true };
++    const ctx = buildRasterizeContext({
++      camera: createGlyphOrthographicCamera({ rotX: 0, rotY: 0, zoom: 400 }),
++      grid: { cols: 40, rows: 40, cellAspect: 2 },
++      polygons: [polygon],
++      mode: "solid",
++      useColors: true,
++      doubleSided: true,
++      supersample: 1,
++      directionalLight: { direction: [0, 0, 1], intensity: 0 },
++      ambientLight: { intensity: 1 },
++    });
++    ctx.textureSamplers = new Map([["tex", {
++      width: 128,
++      height: 1,
++      lowDetail: false,
++      data: stripes,
++    }]]);
++
++    const cells = rasterizeToCells(ctx);
++    expect(new Set(cells.color.filter(Boolean))).toContain("#808080");
++  });
++
++  it("modulates cached lit flat geometry after scene lighting", () => {
++    const polygon = { ...quad, texture: undefined, color: "#f0b478", lightstyleIntensity: 1 };
++    const ctx = buildRasterizeContext({
++      camera: createGlyphOrthographicCamera({ rotX: 0, rotY: 0, zoom: 400 }),
++      grid: { cols: 40, rows: 40, cellAspect: 2 },
++      polygons: [polygon],
++      mode: "solid",
++      useColors: true,
++      doubleSided: true,
++      directionalLight: { direction: [0, 0, 1], intensity: 0 },
++      ambientLight: { intensity: .25 },
++    });
++    ctx.shadeCache = { iA: [], iB: [], iC: [], lit: [] };
++    const full = rasterizeToCells(ctx);
++    polygon.lightstyleIntensity = .5;
++    const dimmed = rasterizeToCells(ctx);
++    const fullShades = [...full.shade!].filter(Number.isFinite);
++    const dimmedShades = [...dimmed.shade!].filter(Number.isFinite);
++    const mean = (values: number[]) => values.reduce((sum, value) => sum + value, 0) / values.length;
++
++    expect(new Set(dimmed.color.filter(Boolean))).toContain("#1e160f");
++    expect(mean(dimmedShades)).toBeCloseTo(mean(fullShades) * .5, 5);
 +  });
 +
 +  it("keeps sampling the texture when a triangle crosses the perspective near plane", () => {

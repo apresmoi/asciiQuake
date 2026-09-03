@@ -58,10 +58,142 @@ test("near-plane-clipped baked-light polygons keep their texture and authored br
   }
 });
 
-async function waitForTextureRender(output) {
+test("animated lightstyle intensity dims baked texture color inside GlyphCSS", async () => {
+  const window = new Window();
+  const globals = installWindowGlobals(window);
+  try {
+    const { createGlyphOrthographicCamera, createGlyphScene } = await import("glyphcss");
+    const host = document.createElement("div");
+    document.body.append(host);
+    const scene = createGlyphScene(host, {
+      camera: createGlyphOrthographicCamera({ rotX: 0, rotY: 0, zoom: 400 }),
+      cols: 40,
+      rows: 24,
+      autoSize: false,
+      mode: "solid",
+      colorEncoding: "spans",
+      useColors: true,
+      doubleSided: true,
+      ambientLight: { intensity: .25 },
+      directionalLight: { direction: [0, 0, 1], intensity: 0 },
+    });
+    try {
+      const polygon = {
+        color: "#ffffff",
+        texture: "test://red-green",
+        unlit: true,
+        lightstyleIntensity: 1,
+        vertices: [[-1, -1, 0], [-1, 1, 0], [1, 1, 0], [1, -1, 0]],
+        uvs: [[0, 1], [1, 1], [1, 0], [0, 0]],
+      };
+      scene.add([polygon]);
+      await waitForTextureRender(scene.output);
+      const fullIntensityGlyphs = scene.output.textContent;
+      polygon.lightstyleIntensity = .5;
+      scene.rerender();
+      const html = await waitForTextureRender(scene.output, ["#7f0000", "#007f00"]);
+      assert.match(html, /color:#7f0000/);
+      assert.match(html, /color:#007f00/);
+      assert.doesNotMatch(html, /color:#ff0000|color:#00ff00/);
+      assert.notEqual(scene.output.textContent, fullIntensityGlyphs, "lightstyle intensity must also change glyph density");
+    } finally {
+      scene.destroy();
+    }
+  } finally {
+    globals.restore();
+  }
+});
+
+test("world texture ink compensation brightens color without flattening glyph detail", async () => {
+  const window = new Window();
+  const globals = installWindowGlobals(window);
+  try {
+    const { createGlyphOrthographicCamera, createGlyphScene } = await import("glyphcss");
+    const host = document.createElement("div");
+    document.body.append(host);
+    const polygon = {
+      color: "#808080",
+      texture: "test://red-green",
+      unlit: true,
+      textureInkIntensity: 1,
+      vertices: [[-1, -1, 0], [-1, 1, 0], [1, 1, 0], [1, -1, 0]],
+      uvs: [[0, 1], [1, 1], [1, 0], [0, 0]],
+    };
+    const scene = createGlyphScene(host, {
+      camera: createGlyphOrthographicCamera({ rotX: 0, rotY: 0, zoom: 400 }),
+      cols: 40,
+      rows: 24,
+      autoSize: false,
+      mode: "solid",
+      colorEncoding: "spans",
+      useColors: true,
+      doubleSided: true,
+      ambientLight: { intensity: .25 },
+      directionalLight: { direction: [0, 0, 1], intensity: 0 },
+    });
+    try {
+      scene.add([polygon]);
+      await waitForTextureRender(scene.output, ["#800000", "#008000"]);
+      const uncompensatedGlyphs = scene.output.textContent;
+      polygon.textureInkIntensity = 2;
+      scene.rerender();
+      const html = await waitForTextureRender(scene.output, ["#ff0000", "#00ff00"]);
+      assert.match(html, /color:#ff0000/);
+      assert.match(html, /color:#00ff00/);
+      assert.equal(scene.output.textContent, uncompensatedGlyphs, "ink compensation must not change texture detail glyphs");
+    } finally {
+      scene.destroy();
+    }
+  } finally {
+    globals.restore();
+  }
+});
+
+test("animated lightstyle intensity dims cached flat mover geometry", async () => {
+  const window = new Window();
+  const globals = installWindowGlobals(window);
+  try {
+    const { createGlyphOrthographicCamera, createGlyphScene } = await import("glyphcss");
+    const host = document.createElement("div");
+    document.body.append(host);
+    const polygon = {
+      color: "#f0b478",
+      lightstyleIntensity: 1,
+      vertices: [[-1, -1, 0], [-1, 1, 0], [1, 1, 0], [1, -1, 0]],
+    };
+    const scene = createGlyphScene(host, {
+      camera: createGlyphOrthographicCamera({ rotX: 0, rotY: 0, zoom: 400 }),
+      cols: 40,
+      rows: 24,
+      autoSize: false,
+      mode: "solid",
+      colorEncoding: "spans",
+      useColors: true,
+      doubleSided: true,
+      ambientLight: { intensity: .25 },
+      directionalLight: { direction: [0, 0, 1], intensity: 0 },
+    });
+    try {
+      scene.add([polygon]);
+      await waitForTextureRender(scene.output, ["#3c2d1e"]);
+      const fullIntensityGlyphs = scene.output.textContent;
+      polygon.lightstyleIntensity = .5;
+      scene.rerender();
+      const html = await waitForTextureRender(scene.output, ["#1e160f"]);
+      assert.match(html, /color:#1e160f/);
+      assert.notEqual(scene.output.textContent, fullIntensityGlyphs, "flat mover glyph density must animate too");
+    } finally {
+      scene.destroy();
+    }
+  } finally {
+    globals.restore();
+  }
+});
+
+async function waitForTextureRender(output, expectedColors = ["#ff0000", "#00ff00"]) {
   const deadline = Date.now() + 500;
   while (Date.now() < deadline) {
-    if (output.innerHTML.includes("#ff0000") && output.innerHTML.includes("#00ff00")) return output.innerHTML;
+    if (expectedColors.every((color) => output.innerHTML.includes(color))) return output.innerHTML;
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
   return output.innerHTML;

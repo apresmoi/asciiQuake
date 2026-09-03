@@ -15,7 +15,7 @@ const EFFECTS_MANIFEST = {
     "progs/s_explod.spr": {
       sourcePath: "progs/s_explod.spr",
       frameCount: 6,
-      frameDurationMs: 100,
+      frameDurationMs: 80,
       header: {
         maxWidth: 56,
         maxHeight: 56,
@@ -31,14 +31,8 @@ const EFFECTS_MANIFEST = {
         y: 0,
         width: 56,
         height: 56,
-      })),
-      glyphFrames: [0, 1, 2, 3, 4, 5].map((index) => ({
-        version: 2,
-        polygonCount: 1,
-        polygons: [{
-          v: [[-0.28, 0, -0.28], [0.28, 0, -0.28], [0.28, 0, 0.28], [-0.28, 0, 0.28]],
-          c: `#ff${String(index * 32).padStart(2, "0")}00`,
-        }],
+        originX: -28,
+        originY: 28,
       })),
     },
   },
@@ -183,7 +177,7 @@ test("effect sprite flow preloads and animates the prepared s_explod sheet", asy
     assert.equal(sprite.style.backgroundPosition, "0px 0px");
     assert.equal(sprite.style.left, "400px");
     assert.equal(sprite.style.top, "300px");
-    assert.match(sprite.style.transform, /scale\(2\)/);
+    assert.match(sprite.style.transform, /scale\(4\)/);
     assert.equal(frames.size, 1);
 
     flow.spawnExplosion({ origin: [0, 4, 0], radiusUnits: 160 });
@@ -192,16 +186,16 @@ test("effect sprite flow preloads and animates the prepared s_explod sheet", asy
     assert.equal(alternateRadiusSprite.style.height, "56px");
     assert.equal(alternateRadiusSprite.style.transform, sprite.style.transform);
 
-    now += 100;
+    now += 80;
     [...frames.values()][0](now);
     assert.equal(sprite.style.backgroundPosition, "-56px 0px");
     assert.equal(sprite.getAttribute("data-quake-effect-sprite-frame"), "1");
 
-    now += 400;
+    now += 320;
     [...frames.values()][0](now);
     assert.equal(sprite.style.backgroundPosition, "-280px 0px");
 
-    now += 100;
+    now += 80;
     [...frames.values()][0](now);
     assert.equal(sprite.style.opacity, "0");
     assert.equal(sprite.getAttribute("data-quake-effect-sprite-active"), "false");
@@ -281,19 +275,49 @@ test("effect sprite flow renders original explosion frames through the glyph sce
 
     assert.equal(layer.children.length, 0, "glyph mode must not allocate hidden DOM sprite nodes");
     assert.equal(await flow.preload(), true);
+    assert.equal(setEntityCalls.length, 1, "preload must register the texture before the first visible frame");
+    assert.equal(setEntityCalls[0].id, "effect-texture-preload:explosion");
+    assert.equal(setEntityCalls[0].geometry.t, "/q/e/s_explod-test.png");
+    assert.equal(setEntityCalls[0].transform.scale, 0,
+      "the texture preloader must never appear in the scene");
     flow.spawnExplosion({ origin: [0, 4, 0], radiusUnits: 200 });
 
-    assert.equal(setEntityCalls.length, 1);
-    assert.equal(setEntityCalls[0].id, "effect:explosion:0");
-    assert.equal(setEntityCalls[0].geometry.polygons[0].c, "#ff0000");
-    assert.deepEqual(setEntityCalls[0].transform.position, [0, 4, 0]);
-    assert.deepEqual(setEntityCalls[0].transform.rotation, [0, 0, 0]);
+    const visibleCall = setEntityCalls.at(-1);
+    assert.equal(setEntityCalls.length, 2);
+    assert.equal(visibleCall.id, "effect:explosion:0");
+    assert.equal(visibleCall.geometry.t, "/q/e/s_explod-test.png");
+    assert.equal(visibleCall.geometry.polygons.length, 1,
+      "an explosion frame must be one textured quad, not a mosaic of flat blocks");
+    assert.equal(visibleCall.geometry.polygons[0].c, "#ffffff",
+      "the neutral texture tint must preserve the authored explosion colours");
+    assert.deepEqual(visibleCall.geometry.polygons[0].v, [
+      [-0.56, 0, -0.56],
+      [0.56, 0, -0.56],
+      [0.56, 0, 0.56],
+      [-0.56, 0, 0.56],
+    ], "the billboard must preserve the sprite's Quake-unit size and origin");
+    assert.deepEqual(visibleCall.geometry.polygons[0].u, [
+      [0, 0],
+      [1 / 6, 0],
+      [1 / 6, 1],
+      [0, 1],
+    ], "the first quad must sample only the first original sprite frame");
+    assert.deepEqual(visibleCall.transform.position, [0, 4, 0]);
+    assert.deepEqual(visibleCall.transform.rotation, [0, 0, 0]);
+    assert.equal(visibleCall.transform.scale, 2, "explosions must use the lab-approved 2x world scale");
+    assert.equal(visibleCall.transform.density, 1, "explosions must keep glyphs readable at base density");
+    assert.ok(Math.abs(visibleCall.transform.toneScale - (3.9 / 3.5)) < 1e-9,
+      "explosions must reach the lab-approved 3.9 effective brightness at the shipped 3.5 scene tone");
     assert.equal(layer.children.length, 0);
 
-    now += 100;
+    now += 80;
     [...frames.values()][0](now);
-    assert.equal(setEntityCalls.at(-1).geometry.polygons[0].c, "#ff3200",
-      "the glyph entity must advance through the original sprite frames");
+    assert.deepEqual(setEntityCalls.at(-1).geometry.polygons[0].u, [
+      [1 / 6, 0],
+      [2 / 6, 0],
+      [2 / 6, 1],
+      [1 / 6, 1],
+    ], "the glyph entity must advance through the original sprite sheet");
 
     viewRotation = { rotX: 90, rotY: 180 };
     now += 50;
@@ -301,7 +325,7 @@ test("effect sprite flow renders original explosion frames through the glyph sce
     assert.deepEqual(transformCalls.at(-1).transform.rotation, [0, 0, -90],
       "the live glyph billboard must continue facing the camera between sprite frames");
 
-    now += 450;
+    now += 350;
     [...frames.values()][0](now);
     assert.deepEqual(removed, ["effect:explosion:0"]);
     flow.dispose();

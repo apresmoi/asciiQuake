@@ -30,7 +30,10 @@ test("world tone uses the renderer's calibrated brightness unless the URL overri
     QUAKE_GLYPH_WORLD_TUNING_KNOBS,
     new URLSearchParams("glyphBright=4.2"),
   );
-  assert.equal(defaults.brighten, 2.9);
+  assert.equal(defaults.brighten, 3.5);
+  assert.equal(defaults.flat, 0.5);
+  assert.equal(defaults.ambient, 0.55);
+  assert.equal(defaults.dir, 0.5);
   assert.equal(overridden.brighten, 4.2);
 });
 

@@ -29,7 +29,7 @@ const common = parseCommonBrowserArgs(args, {
 });
 
 console.log("Browser URL/API smoke gate");
-console.log("validates: public URL map/view links, every world texture atlas, shell ownership, lazy multiplayer form, weapon output, debug roll rejection");
+console.log("validates: public URL map/view links, world atlases/lightstyles, shell ownership, lazy multiplayer form, weapon output, debug roll rejection");
 console.log("requires prepared assets: yes, all shareware maps");
 console.log("classification: acceptance");
 assertAssetState({ requiredMaps: ["start", "e1m1", "e1m2", "e1m3", "e1m4", "e1m5", "e1m6", "e1m7", "e1m8"], requireGlyphGeometry: true });
@@ -41,9 +41,11 @@ try {
   browser = await chromium.launch({ headless: !common.headed });
   const page = await browser.newPage({ viewport: common.viewport });
   const textureResponses = [];
+  const effectSpriteResponses = [];
   page.on("response", (response) => {
     const pathname = new URL(response.url()).pathname;
     if (pathname.startsWith("/q/t/")) textureResponses.push({ pathname, status: response.status() });
+    if (pathname.startsWith("/q/e/")) effectSpriteResponses.push({ pathname, status: response.status() });
   });
   const pageErrors = collectPageErrors(page, {
     ignoreConsoleError: (text) => text.includes("the server responded with a status of 409 (Conflict)"),
@@ -67,9 +69,12 @@ try {
 
   for (const testCase of cases) await runRouteCase(page, server.url, testCase, common.timeoutMs);
   await assertWorldTextureAtlases(page, server.url, textureResponses);
+  await assertGlyphLightstylesAnimate(page, common.timeoutMs);
   await assertDomShell(page, common.timeoutMs);
+  await assertGameplayMenuBackdrop(page);
   await assertIntermissionBackdrop(page);
   await assertGlyphWeaponsRender(page, common.timeoutMs);
+  await assertGlyphExplosionRenders(page, effectSpriteResponses, common.timeoutMs);
   const debugRoll = await page.evaluate(() => ({
     zeroRoll: window.__cssQuakeDebug?.setViewpos?.(-576, 192, 184, 0, 90, 0),
     nonZeroRoll: window.__cssQuakeDebug?.setViewpos?.(-576, 192, 184, 0, 90, 3),
@@ -91,16 +96,34 @@ async function assertWorldTextureAtlases(page, baseUrl, textureResponses) {
     .filter((response) => response.status >= 200 && response.status < 300)
     .map((response) => response.pathname));
   let texturedFaceCount = 0;
+  let animatedFaceCount = 0;
+  let animatedMoverFaceCount = 0;
+  const animatedMaps = new Set();
   for (const map of maps) {
     const sceneUrl = new URL(map.sceneUrl, baseUrl).toString();
-    const geometry = await page.evaluate(async (url) => (await (await fetch(url)).json()).glyphGeometry, sceneUrl);
+    const sceneData = await page.evaluate(async (url) => await (await fetch(url)).json(), sceneUrl);
+    const geometry = sceneData.glyphGeometry;
     assert(geometry?.version >= 3, `${map.mapName} glyph geometry must use the textured schema: ${JSON.stringify(geometry?.version)}`);
     assert(typeof geometry.t === "string" && geometry.t.startsWith("/q/t/"), `${map.mapName} must carry one top-level world atlas URL`);
     const textured = geometry.polygons.filter((polygon) => Array.isArray(polygon.u));
+    const animated = geometry.polygons.filter((polygon) => Array.isArray(polygon.a));
+    const animatedMovers = (sceneData.glyphMovers?.movers ?? [])
+      .flatMap((mover) => mover.polygons)
+      .filter((polygon) => Array.isArray(polygon.a));
     assert(textured.length > 0, `${map.mapName} must carry UV-mapped world polygons`);
     assert(
       textured.every((polygon) => polygon.u.length === polygon.v.length && polygon.t === undefined),
       `${map.mapName} textured polygons must use matching UVs and the shared top-level atlas`,
+    );
+    assert(
+      animated.every((polygon) => Number.isInteger(polygon.s) && polygon.s > 0 && polygon.a.length > 1 &&
+        polygon.a.every((intensity) => Number.isFinite(intensity) && intensity >= 0 && intensity <= 1)),
+      `${map.mapName} animated lightstyles must carry a valid style and intensity frames`,
+    );
+    assert(
+      animatedMovers.every((polygon) => Number.isInteger(polygon.s) && polygon.s > 0 && polygon.a.length > 1 &&
+        polygon.a.every((intensity) => Number.isFinite(intensity) && intensity >= 0 && intensity <= 1)),
+      `${map.mapName} animated mover lightstyles must carry a valid style and intensity frames`,
     );
     if (map.mapName === "e1m1") {
       assert(atlasesLoadedByTheApp.has(geometry.t), `the active map did not load its atlas ${geometry.t}`);
@@ -108,8 +131,83 @@ async function assertWorldTextureAtlases(page, baseUrl, textureResponses) {
     const atlasStatus = await page.evaluate(async (url) => (await fetch(url)).status, new URL(geometry.t, baseUrl).toString());
     assert(atlasStatus >= 200 && atlasStatus < 300, `${map.mapName} atlas ${geometry.t} returned ${atlasStatus}`);
     texturedFaceCount += textured.length;
+    animatedFaceCount += animated.length;
+    animatedMoverFaceCount += animatedMovers.length;
+    if (animated.length || animatedMovers.length) animatedMaps.add(map.mapName);
   }
-  console.log(`ok worldTextureAtlases (${maps.length} maps, ${texturedFaceCount} UV-mapped faces)`);
+  for (const mapName of ["start", "e1m1", "e1m5", "e1m6"]) {
+    assert(animatedMaps.has(mapName), `${mapName} must preserve its animated lightstyle faces`);
+  }
+  const ink = await page.evaluate(() => window.__quakeGlyphOverlay?.__textureInkStats?.());
+  assert(ink?.polygonCount > 0, `the active e1m1 world must register textured polygons: ${JSON.stringify(ink)}`);
+  assert(
+    ink.intensities.length === 1 && Math.abs(ink.intensities[0] - 3.5) < 1e-9,
+    `world texture ink must receive the shipped unobstructed-gameplay lift: ${JSON.stringify(ink)}`,
+  );
+  assert(
+    ink.cellSampling.length === 1 && ink.cellSampling[0] === true,
+    `world textures must reduce their projected footprint into each glyph cell: ${JSON.stringify(ink)}`,
+  );
+  await page.waitForFunction(() => {
+    const overlay = window.__quakeGlyphOverlay;
+    const pre = overlay?.element?.querySelector("pre.glyph-output");
+    return pre && pre.style.fontFamily.includes("GlyphCssAtlas") && pre.querySelectorAll("span").length === 0;
+  }, null, { timeout: 10_000 });
+  const temporal = await page.evaluate(async () => {
+    const overlay = window.__quakeGlyphOverlay;
+    const eye = overlay.__debugEye();
+    overlay.setFixedView(eye[0], eye[1], eye[2], eye[3], eye[4] + 0.1);
+    await new Promise((resolve) => requestAnimationFrame(resolve));
+    const pre = overlay.element.querySelector("pre.glyph-output");
+    return {
+      blend: overlay.__cameraParams().sceneOpts.temporalBlend,
+      spans: pre.querySelectorAll("span").length,
+      literalPercentGlyphs: (pre.textContent.match(/%/g) ?? []).length,
+    };
+  });
+  assert(Math.abs(temporal.blend - 0.05) < 1e-9, `world temporal blend must use the tuned default: ${JSON.stringify(temporal)}`);
+  assert(
+    temporal.spans === 0 && temporal.literalPercentGlyphs === 0,
+    `dense-ramp temporal reprojection must preserve blank cells and the atlas fast path: ${JSON.stringify(temporal)}`,
+  );
+  console.log(`ok worldTextureAtlases (${maps.length} maps, ${texturedFaceCount} UV-mapped, ${animatedFaceCount} animated world + ${animatedMoverFaceCount} mover faces)`);
+}
+
+async function assertGlyphLightstylesAnimate(page, timeoutMs) {
+  const initialHandle = await page.waitForFunction(() => {
+    const state = window.__quakeGlyphOverlay?.__lightstyleStats?.();
+    const output = document.querySelector(".quake-glyph-overlay .glyph-output")?.textContent ?? "";
+    if (!state || !output.trim()) return false;
+    let outputHash = 2166136261;
+    for (const char of output) {
+      outputHash ^= char.codePointAt(0) ?? 0;
+      outputHash = Math.imul(outputHash, 16777619);
+    }
+    return { ...state, outputHash: outputHash >>> 0 };
+  }, null, { timeout: timeoutMs });
+  const initial = await initialHandle.jsonValue();
+  assert(initial?.hz === 10, `glyph lightstyles must run at Quake's 10 Hz cadence: ${JSON.stringify(initial)}`);
+  assert(initial?.polygonCount > 0, `the active e1m1 map must register animated lightstyles: ${JSON.stringify(initial)}`);
+  assert(initial?.visiblePolygonCount > 0, `e1m1 must expose an animated lightstyle in the current PVS: ${JSON.stringify(initial)}`);
+  const changedHandle = await page.waitForFunction((previous) => {
+    const state = window.__quakeGlyphOverlay?.__lightstyleStats?.();
+    const output = document.querySelector(".quake-glyph-overlay .glyph-output")?.textContent ?? "";
+    let outputHash = 2166136261;
+    for (const char of output) {
+      outputHash ^= char.codePointAt(0) ?? 0;
+      outputHash = Math.imul(outputHash, 16777619);
+    }
+    outputHash >>>= 0;
+    return state?.tick > 0 && state.visibleSignature && state.visibleSignature !== previous.signature &&
+      outputHash !== previous.outputHash ? { ...state, outputHash } : false;
+  }, { signature: initial.visibleSignature, outputHash: initial.outputHash }, {
+    polling: 50,
+    timeout: Math.min(timeoutMs, 5_000),
+  });
+  const changed = await changedHandle.jsonValue();
+  assert(changed.visibleSignature !== initial.visibleSignature, "visible lightstyle intensities must change over time");
+  assert(changed.outputHash !== initial.outputHash, "animated lightstyles must change the rendered ASCII frame");
+  console.log(`ok glyphLightstyles (${changed.visiblePolygonCount} visible faces at ${changed.hz} Hz)`);
 }
 
 async function assertGlyphWeaponsRender(page, timeoutMs) {
@@ -159,6 +257,54 @@ async function assertGlyphWeaponsRender(page, timeoutMs) {
   }
 }
 
+async function assertGlyphExplosionRenders(page, effectSpriteResponses, timeoutMs) {
+  await page.evaluate(() => {
+    window.__cssQuakeDebug?.setViewpos?.(480, -104, 50.032, 0, 90, 0, { gameplay: true });
+    const cameraHost = document.querySelector(".quake-camera-host");
+    Object.defineProperty(document, "pointerLockElement", {
+      configurable: true,
+      get: () => cameraHost,
+    });
+    document.dispatchEvent(new Event("pointerlockchange"));
+  });
+  await page.waitForFunction(() =>
+    !document.body.classList.contains("quake-game-paused") &&
+    !document.body.classList.contains("quake-menu-unlocked"), null, { timeout: timeoutMs });
+  const impact = await page.evaluate(() =>
+    window.__cssQuakeDebug?.projectileImpact?.("rocketlauncher", 138, 480, -4, 50, 0) ?? null);
+  assert(impact?.impactResult === "remove", `could not trigger the explosion fixture: ${JSON.stringify(impact)}`);
+  const renderedHandle = await page.waitForFunction(() => {
+    const overlay = window.__quakeGlyphOverlay;
+    const id = overlay?.__entityIds?.().find((candidate) => candidate.startsWith("effect:explosion:"));
+    if (!id) return false;
+    const texture = overlay.__entityTextureStats?.(id);
+    return texture?.texturedPolygonCount === 1
+      ? {
+          domSpriteCount: document.querySelectorAll(".quake-effect-sprite").length,
+          fontFamily: getComputedStyle(overlay.element.querySelector("pre.glyph-output")).fontFamily,
+          id,
+          texture,
+        }
+      : false;
+  }, null, { timeout: timeoutMs });
+  const rendered = await renderedHandle.jsonValue();
+  assert(rendered.texture.polygonCount === 1 && rendered.texture.texturedPolygonCount === 1,
+    `explosion must be one textured GlyphCSS quad: ${JSON.stringify(rendered)}`);
+  assert(rendered.texture.unlit.length === 1 && rendered.texture.unlit[0] === true,
+    `explosion sprite colors must remain authored: ${JSON.stringify(rendered)}`);
+  assert(rendered.texture.textures.length === 1 && rendered.texture.textures[0].includes("/q/e/s_explod-"),
+    `explosion must sample the original Quake sprite sheet: ${JSON.stringify(rendered)}`);
+  assert(rendered.domSpriteCount === 0, `explosion must not fall back to an HTML image: ${JSON.stringify(rendered)}`);
+  assert(rendered.fontFamily.includes("GlyphCssAtlas"),
+    `explosion must render through the ASCII glyph atlas: ${JSON.stringify(rendered)}`);
+  assert(effectSpriteResponses.some((response) => response.status >= 200 && response.status < 300),
+    `explosion texture did not load: ${JSON.stringify(effectSpriteResponses)}`);
+  await page.waitForFunction(() =>
+    !window.__quakeGlyphOverlay?.__entityIds?.().some((id) => id.startsWith("effect:explosion:")),
+  null, { timeout: timeoutMs });
+  console.log("ok glyphExplosion (one textured ASCII quad, six-frame cleanup, no DOM sprite)");
+}
+
 async function assertIntermissionBackdrop(page) {
   const state = await page.evaluate(() => {
     const root = document.getElementById("quake-intermission");
@@ -197,6 +343,24 @@ async function assertIntermissionBackdrop(page) {
   assert(state?.classAfterClear === false, `intermission class should be removed on clear: ${JSON.stringify(state)}`);
   assert(state?.uiBackgroundAfterClear === "rgba(0, 0, 0, 0)", `intermission backdrop should clear with its class: ${JSON.stringify(state)}`);
   console.log("ok intermissionBackdrop");
+}
+
+async function assertGameplayMenuBackdrop(page) {
+  const openState = await page.locator("#quake-glyph-ui-host").evaluate((element) => ({
+    background: getComputedStyle(element).backgroundColor,
+    gameplayStarted: document.body.classList.contains("quake-gameplay-started"),
+    menuOpen: document.body.classList.contains("quake-menu-open"),
+  }));
+  assert(openState.menuOpen, `Esc backdrop must be tested with the gameplay menu open: ${JSON.stringify(openState)}`);
+  assert(openState.gameplayStarted, `Esc backdrop must be tested during gameplay: ${JSON.stringify(openState)}`);
+  assert(openState.background === "rgba(0, 0, 0, 0.65)", `open Esc menu must dim behind the Glyph UI: ${JSON.stringify(openState)}`);
+
+  const restoredBackground = await page.locator("#quake-glyph-ui-host").evaluate((element) => {
+    document.body.classList.remove("quake-menu-open");
+    return getComputedStyle(element).backgroundColor;
+  });
+  assert(restoredBackground === "rgba(0, 0, 0, 0)", `closing Esc must clear its backdrop: ${restoredBackground}`);
+  console.log("ok gameplayMenuBackdrop");
 }
 
 async function assertDomShell(page, timeoutMs) {
