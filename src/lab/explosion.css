@@ -1,0 +1,205 @@
+:root {
+  color-scheme: dark;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body.explosion-lab {
+  min-width: 760px;
+  min-height: 100vh;
+  margin: 0;
+  overflow: auto;
+  color: #dedbd2;
+  background: #080808;
+}
+
+.explosion-lab__header {
+  display: flex;
+  gap: 28px;
+  align-items: flex-end;
+  justify-content: space-between;
+  padding: 18px 22px;
+  border-bottom: 1px solid #3a2716;
+  background: #11100e;
+}
+
+.explosion-lab h1,
+.explosion-lab h2,
+.explosion-lab p {
+  margin: 0;
+}
+
+.explosion-lab h1 {
+  color: #e29a4c;
+  font-size: 18px;
+}
+
+.explosion-lab h2 {
+  color: #b88b60;
+  font-size: 11px;
+  font-weight: 400;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.explosion-lab__header p {
+  margin-top: 5px;
+  color: #8d8982;
+  font-size: 11px;
+}
+
+.explosion-lab__controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+  justify-content: flex-end;
+}
+
+.explosion-lab__controls label {
+  display: grid;
+  grid-template-columns: minmax(100px, 150px) 54px;
+  gap: 4px 8px;
+  color: #a7a199;
+  font-size: 10px;
+}
+
+.explosion-lab__controls label > :first-child {
+  grid-column: 1 / -1;
+}
+
+.explosion-lab__controls input[type="range"] {
+  width: 150px;
+  accent-color: #d17b32;
+}
+
+.explosion-lab__controls output {
+  align-self: center;
+  color: #f1eee6;
+  text-align: right;
+}
+
+.explosion-lab button,
+.explosion-lab select {
+  border: 1px solid #5c3a1d;
+  border-radius: 3px;
+  color: #eee9df;
+  background: #1a1713;
+  font: inherit;
+}
+
+.explosion-lab__controls button {
+  min-width: 72px;
+  min-height: 42px;
+  cursor: pointer;
+}
+
+.explosion-lab__controls select {
+  grid-column: 1 / -1;
+  min-width: 150px;
+  padding: 4px;
+}
+
+.explosion-lab__comparison {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+  padding: 14px 22px;
+}
+
+.explosion-lab__pane {
+  min-width: 0;
+  border: 1px solid #3a2716;
+  background: #000;
+}
+
+.explosion-lab__pane h2,
+.explosion-lab__strip-wrap h2 {
+  padding: 8px 10px;
+  border-bottom: 1px solid #2a1c11;
+  background: #12100e;
+}
+
+.explosion-lab__stage {
+  position: relative;
+  display: grid;
+  min-height: 410px;
+  overflow: hidden;
+  place-items: center;
+  background: #000;
+}
+
+.explosion-lab__stage--source {
+  background-image:
+    linear-gradient(45deg, #161616 25%, transparent 25%),
+    linear-gradient(-45deg, #161616 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, #161616 75%),
+    linear-gradient(-45deg, transparent 75%, #161616 75%);
+  background-position: 0 0, 0 8px, 8px -8px, -8px 0;
+  background-size: 16px 16px;
+}
+
+#explosion-source {
+  width: 336px;
+  height: 336px;
+  image-rendering: pixelated;
+}
+
+#explosion-glyph-host {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  background: #000;
+}
+
+#explosion-glyph-host .quake-glyph-overlay {
+  z-index: 0;
+}
+
+.explosion-lab__strip-wrap {
+  margin: 0 22px 14px;
+  border: 1px solid #3a2716;
+  background: #0d0c0a;
+}
+
+.explosion-lab__strip {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(90px, 1fr));
+  gap: 10px;
+  padding: 12px;
+}
+
+.explosion-lab__frame {
+  display: grid;
+  gap: 4px;
+  justify-items: center;
+  padding: 8px;
+  cursor: pointer;
+}
+
+.explosion-lab__frame[aria-pressed="true"] {
+  border-color: #f0a75b;
+  background: #35200e;
+}
+
+.explosion-lab__frame canvas {
+  width: 84px;
+  height: 84px;
+  image-rendering: pixelated;
+}
+
+.explosion-lab__status {
+  padding: 0 22px 18px;
+  color: #77726b;
+  font-size: 11px;
+}
+
+.explosion-lab__status[data-state="ready"] {
+  color: #83b887;
+}
+
+.explosion-lab__status[data-state="error"] {
+  color: #df6653;
+}

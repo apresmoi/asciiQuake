@@ -20,6 +20,21 @@ import { quakeCameraPerspectiveForViewport } from "../app/cameraViewFlow";
  */
 
 const DEG = Math.PI / 180;
+export const QUAKE_GLYPH_LIGHTSTYLE_HZ = 10;
+const QUAKE_GLYPH_LIGHTSTYLE_FRAME_MS = 1000 / QUAKE_GLYPH_LIGHTSTYLE_HZ;
+
+/** Mirrors Quake's `int(cl.time * 10)` lightstyle clock. */
+export function quakeGlyphLightstyleTick(nowMs: number, startedAtMs = 0): number {
+  if (!Number.isFinite(nowMs) || !Number.isFinite(startedAtMs)) return 0;
+  return Math.max(0, Math.floor((nowMs - startedAtMs) / QUAKE_GLYPH_LIGHTSTYLE_FRAME_MS));
+}
+
+export function quakeGlyphLightstyleIntensity(frames: readonly number[], tick: number): number {
+  if (!frames.length) return 1;
+  const index = ((Math.floor(tick) % frames.length) + frames.length) % frames.length;
+  const intensity = frames[index];
+  return Number.isFinite(intensity) ? Math.max(0, Math.min(1, intensity)) : 1;
+}
 
 export interface QuakeGlyphWorldOverlayOptions {
   /** Element the overlay is inserted into (the #quake-app container). */
@@ -108,7 +123,7 @@ export interface QuakeGlyphWorldOverlayOptions {
   readonly fovScale?: number;
   /** Flatten colour variation toward a common tone (0..1) to kill scroll crawl. */
   readonly flat?: number;
-  /** Colour brighten multiplier for the dark baked Quake colours. */
+  /** Colour brighten multiplier for flat colours and sampled texture ink. */
   readonly brighten?: number;
   /**
    * Hue-preserving tone-curve lift applied AFTER {@link brighten} (below 1
@@ -162,6 +177,12 @@ interface GlyphPolygon {
   color: string;
   /** Atlas texels already contain Quake's baked surface lighting. */
   unlit?: boolean;
+  /** Runtime multiplier applied after static/baked lighting. */
+  lightstyleIntensity?: number;
+  /** Display-space lift for texture ink; does not alter glyph selection. */
+  textureInkIntensity?: number;
+  /** Reduce several projected texture samples into each output cell. */
+  textureCellSampling?: boolean;
   texture?: string;
   uvs?: [number, number][];
   textureWrap?: { s: "repeat" | "clamp-to-edge" | "mirrored-repeat"; t: "repeat" | "clamp-to-edge" | "mirrored-repeat" };
@@ -171,7 +192,16 @@ interface GlyphPolygon {
 
 /** Per-frame model geometry for an entity (same compact shape as the world). */
 export interface QuakeGlyphEntityGeometry {
-  polygons: ReadonlyArray<{ v: number[][]; c: string }>;
+  /** Optional shared texture atlas for polygons carrying UV coordinates. */
+  t?: string;
+  polygons: ReadonlyArray<{
+    v: number[][];
+    c: string;
+    u?: number[][];
+    /** Animated lightstyle id and per-frame intensity multipliers (movers). */
+    s?: number;
+    a?: number[];
+  }>;
 }
 
 /** World-space placement of an entity mesh (degrees for rotation). */
@@ -216,6 +246,9 @@ export interface QuakeGlyphWorldGeometry {
     c: string;
     l?: number[];
     u?: number[][];
+    /** Animated lightstyle id and per-frame pre-lit intensity multipliers. */
+    s?: number;
+    a?: number[];
   }>;
 }
 
@@ -309,16 +342,17 @@ export interface QuakeGlyphWorldOverlay {
 // is identical). Larger perspective = wider FOV; larger zoom = closer.
 const QUAKE_GLYPH_OVERLAY_PERSPECTIVE = 1400;
 const QUAKE_GLYPH_OVERLAY_ZOOM = 50;
-// Quake's baked texture colours are very dark; lift them so the ASCII reads.
-// 2026-08 retune, measured per-SEGMENT (walls/entities/viewmodel) against
-// cssquake.wtf across 10 e1m1 poses: the previous 6.5 (with gamma 0.7) was
-// tuned to match the whole-frame MEAN at the spawn pose, which forced the
-// glyph INK to 2.0-2.6x the reference's surface luminance — the eye reads the
-// ink, so the world looked far brighter than the reference everywhere. 2.9
-// with gamma 1 and the `dense` ramp (whose higher ink coverage carries the
-// cell's energy) lands ink at ~1.4x reference surface tone and block mean at
-// ~0.8x — the perceptual middle for text-on-black. `?glyphBright=` overrides.
-const QUAKE_GLYPH_OVERLAY_BRIGHTEN = 2.9;
+// Gentle reprojection history: enough to damp palette/glyph boundary shimmer
+// without turning normal camera motion into a long convergence trail. Higher
+// blends increased changed atlas cells in the e1m8 motion sweep.
+const QUAKE_GLYPH_OVERLAY_TEMPORAL_BLEND = 0.05;
+// Display-space lift for Quake's dark baked colours. The 2026-08 calibration
+// accidentally used cssQuake with its 65%-black gameplay-menu veil open; an
+// unobstructed 2026-09 capture exposed the resulting darkness. The final 3.5
+// lift was tuned against that unobstructed view and reaches wall/floor ink too.
+// It does not change the glyph ramp, baked lightmap, or animated lightstyles.
+// `?glyphBright=` overrides.
+const QUAKE_GLYPH_OVERLAY_BRIGHTEN = 3.5;
 // Hue-preserving tone curve applied after the brighten multiply (see the
 // `gamma` option). 1 = no lift (2026-08 retune): the old 0.7 mid-lift was the
 // other half of the ink overdrive above — it raised shadow and mid ink far
@@ -486,7 +520,7 @@ export function createQuakeGlyphWorldOverlay(
   // DEBUG: outline each detail <pre> so you can SEE where it's placed vs where the
   // entity should be in the world. `?glyphEntityOutline=1`.
   const entityOutline = options.entityOutline ?? false;
-  const temporalBlend = Math.max(0, Math.min(0.9, options.temporalBlend ?? 0));
+  const temporalBlend = Math.max(0, Math.min(0.9, options.temporalBlend ?? QUAKE_GLYPH_OVERLAY_TEMPORAL_BLEND));
   // `let`, not `const`: setTuning() swaps these live and recolours the meshes.
   let brighten = options.brighten ?? QUAKE_GLYPH_OVERLAY_BRIGHTEN;
   let gamma = Math.min(1, Math.max(0.2, options.gamma ?? QUAKE_GLYPH_OVERLAY_GAMMA));
@@ -527,20 +561,17 @@ export function createQuakeGlyphWorldOverlay(
     }
     return lifted;
   };
-  // Ambient 0.8 / dir 0.25 (2026-08 retune): Quake's lighting is fully BAKED
-  // into the face colours — the cssquake.wtf reference applies no orientation
-  // shading — so a strong directional term double-darkens shadow-facing walls
-  // (measured worst at the e1m1 start-hall door: block mean 31 vs the
-  // reference's 51 under the old 0.5/0.6). A small dir term stays for glyph
-  // shape cues; ambient carries the rest.
-  const ambientLight = options.ambientLight ?? 0.8;
-  const directionalLight = options.directionalLight ?? 0.25;
+  // Quake's baked lightmaps remain authoritative; this smaller ambient and
+  // stronger directional term restore surface-shape contrast in the ASCII
+  // projection without replacing the baked light.
+  const ambientLight = options.ambientLight ?? 0.55;
+  const directionalLight = options.directionalLight ?? 0.5;
   const depthEpsilon = Math.max(0, Math.min(0.1, options.depthEpsilon ?? QUAKE_GLYPH_OVERLAY_DEPTH_EPSILON));
   // The motion "see-through" crawl is per-face lit-colour detail aliasing as the
   // floor scrolls. Blending each colour toward a common tone by `flatten` (0..1)
   // collapses adjacent faces toward the same colour → the crawl can't show. The
   // glyph char (lighting) still gives shape. Tunable via `?glyphFlat=`.
-  let flatten = Math.max(0, Math.min(1, options.flat ?? 0));
+  let flatten = Math.max(0, Math.min(1, options.flat ?? 0.5));
   // the CSS renderer first-person controls define the look target this far in front of
   // the eye, independent of zoom. Mirror that when a live target is not supplied
   // (fixed-view/debug paths). `let`: refreshViewportCamera() re-derives it when
@@ -619,8 +650,8 @@ export function createQuakeGlyphWorldOverlay(
     // Dense intensity ramp (≈70 levels vs the 10-char default) for smooth tonal
     // gradation — free for colored output (runs coalesce by colour, not glyph).
     glyphPalette,
-    // Quake BSP faces aren't all wound toward the viewer; render both sides so
-    // none vanish, matching the CSS renderer's double-sided CSS rendering.
+    // BSP face winding is not a reliable visibility signal after Quake's face
+    // preparation and coordinate conversion, so render both sides.
     doubleSided: true,
     // Supersampled AA: the detailed floor's sub-cell-sized polys otherwise crawl
     // and flip surfaces ("show-through") under motion. 2× cuts that ~70%.
@@ -706,6 +737,60 @@ export function createQuakeGlyphWorldOverlay(
   let worldPolys: GlyphPolygon[] | null = null;
   let worldLeaves: (number[] | null)[] | null = null;
   let lastVisibleLeaves: Set<number> | null | undefined;
+  const lightstyleStartedAt = performance.now();
+  type GlyphLightstyleEntry = {
+    polygon: GlyphPolygon;
+    style: number;
+    frames: readonly number[];
+  };
+  let worldLightstyleEntries: GlyphLightstyleEntry[] = [];
+  const entityLightstyleEntries = new Map<string, GlyphLightstyleEntry[]>();
+  let lastLightstyleTick = -1;
+  let lightstyleTimer = 0;
+
+  function hasLightstyleEntries(): boolean {
+    return worldLightstyleEntries.length > 0 || entityLightstyleEntries.size > 0;
+  }
+
+  function allLightstyleEntries(): GlyphLightstyleEntry[] {
+    return [...worldLightstyleEntries, ...entityLightstyleEntries.values()].flat();
+  }
+
+  function clearLightstyleClock(): void {
+    if (lightstyleTimer) window.clearTimeout(lightstyleTimer);
+    lightstyleTimer = 0;
+    worldLightstyleEntries = [];
+    entityLightstyleEntries.clear();
+    lastLightstyleTick = -1;
+  }
+
+  function applyLightstyleFrame(now = performance.now()): boolean {
+    if (!hasLightstyleEntries()) return false;
+    const tick = quakeGlyphLightstyleTick(now, lightstyleStartedAt);
+    if (tick === lastLightstyleTick) return false;
+    lastLightstyleTick = tick;
+    let changed = false;
+    for (const entries of [worldLightstyleEntries, ...entityLightstyleEntries.values()]) {
+      for (const entry of entries) {
+        const intensity = quakeGlyphLightstyleIntensity(entry.frames, tick);
+        if (entry.polygon.lightstyleIntensity === intensity) continue;
+        entry.polygon.lightstyleIntensity = intensity;
+        changed = true;
+      }
+    }
+    return changed;
+  }
+
+  function scheduleLightstyleClock(): void {
+    if (lightstyleTimer || !hasLightstyleEntries()) return;
+    const elapsed = Math.max(0, performance.now() - lightstyleStartedAt);
+    const untilNextFrame = QUAKE_GLYPH_LIGHTSTYLE_FRAME_MS - (elapsed % QUAKE_GLYPH_LIGHTSTYLE_FRAME_MS);
+    lightstyleTimer = window.setTimeout(() => {
+      lightstyleTimer = 0;
+      if (applyLightstyleFrame()) scheduleRender();
+      scheduleLightstyleClock();
+    }, Math.max(1, untilNextFrame + 1));
+  }
 
   // Raw (untoned) inputs, kept so setTuning() can recolour without the caller:
   // the world geometry as handed in, and each entity's last geometry+transform.
@@ -714,6 +799,7 @@ export function createQuakeGlyphWorldOverlay(
 
   function setGeometry(geometry: QuakeGlyphWorldGeometry | null): void {
     lastWorldGeometry = geometry;
+    clearLightstyleClock();
     const nextWorldHasTextures = Boolean(
       typeof geometry?.t === "string" && geometry.polygons.some((polygon) => Array.isArray(polygon.u)),
     );
@@ -737,19 +823,37 @@ export function createQuakeGlyphWorldOverlay(
       const texture = Array.isArray(polygon.u) ? geometry.t : undefined;
       const color = flattenHex(toneHex(brightenHex(polygon.c, brighten)), flatten);
       paletteColors.add(color);
-      return {
+      const glyphPolygon: GlyphPolygon = {
         vertices: polygon.v as Vec3[],
         color,
         ...(typeof texture === "string" && Array.isArray(polygon.u)
           ? {
               texture,
               unlit: true,
+              // Textures paint only the foreground strokes of each glyph.
+              // Apply the same world lift that flat geometry already receives
+              // to the sampled ink, while preserving texture-driven glyph
+              // density and Quake's baked/animated lighting.
+              textureInkIntensity: brighten,
+              // Sample the glyph's screen footprint instead of one unstable
+              // source point in high-frequency wall/floor textures.
+              textureCellSampling: true,
               uvs: polygon.u as [number, number][],
               textureWrap: { s: "clamp-to-edge", t: "clamp-to-edge" },
             }
           : {}),
       };
+      const frames = Array.isArray(polygon.a) && polygon.a.length > 1 &&
+          polygon.a.every((intensity) => Number.isFinite(intensity))
+        ? polygon.a.map((intensity) => Math.max(0, Math.min(1, intensity)))
+        : null;
+      if (frames && Number.isInteger(polygon.s) && polygon.s! > 0) {
+        worldLightstyleEntries.push({ polygon: glyphPolygon, style: polygon.s!, frames });
+      }
+      return glyphPolygon;
     });
+    applyLightstyleFrame();
+    scheduleLightstyleClock();
     schedulePinnedAtlasPalette();
     if (pvsVisibleLeavesAt) {
       worldPolys = polygons;
@@ -788,8 +892,13 @@ export function createQuakeGlyphWorldOverlay(
   // mesh placed in world space by its transform; the scene rasterizes them with
   // the world every frame. Keyed by a stable entity id.
   const entities = new Map<string, GlyphMeshHandle>();
+  const debugEntityPolygons = import.meta.env?.DEV ? new Map<string, GlyphPolygon[]>() : null;
 
-  function toGlyphPolygons(geometry: QuakeGlyphEntityGeometry, toneScale = 1): GlyphPolygon[] {
+  function toGlyphPolygons(
+    geometry: QuakeGlyphEntityGeometry,
+    toneScale = 1,
+  ): { polygons: GlyphPolygon[]; lightstyles: GlyphLightstyleEntry[] } {
+    const lightstyles: GlyphLightstyleEntry[] = [];
     const polygons = geometry.polygons.map((polygon) => {
       // Entities keep their own colour variation (no world flatten); just lift
       // the dark baked Quake palette like the world does so they read.
@@ -797,10 +906,32 @@ export function createQuakeGlyphWorldOverlay(
       // brighten multiply, so the tone cache still keys on the final hex.
       const color = toneHex(brightenHex(polygon.c, brighten * toneScale));
       paletteColors.add(color);
-      return { vertices: polygon.v as Vec3[], color };
+      const texture = Array.isArray(polygon.u) ? geometry.t : undefined;
+      const glyphPolygon: GlyphPolygon = {
+        vertices: polygon.v as Vec3[],
+        color,
+        ...(typeof texture === "string" && Array.isArray(polygon.u)
+          ? {
+              texture,
+              unlit: true,
+              textureInkIntensity: brighten * toneScale,
+              textureCellSampling: true,
+              uvs: polygon.u as [number, number][],
+              textureWrap: { s: "clamp-to-edge" as const, t: "clamp-to-edge" as const },
+            }
+          : {}),
+      };
+      const frames = Array.isArray(polygon.a) && polygon.a.length > 1 &&
+          polygon.a.every((intensity) => Number.isFinite(intensity))
+        ? polygon.a.map((intensity) => Math.max(0, Math.min(1, intensity)))
+        : null;
+      if (frames && Number.isInteger(polygon.s) && polygon.s! > 0) {
+        lightstyles.push({ polygon: glyphPolygon, style: polygon.s!, frames });
+      }
+      return glyphPolygon;
     });
     schedulePinnedAtlasPalette();
-    return polygons;
+    return { polygons, lightstyles };
   }
 
   // Per-mesh detail: render an entity at a higher glyph density than the world
@@ -880,10 +1011,13 @@ export function createQuakeGlyphWorldOverlay(
 
   function applyStagedEntities(): void {
     if (!staged.size) return;
+    let lightstylesChanged = false;
     for (const [id, op] of staged) {
       const existing = entities.get(id);
       if (op.kind === "remove") {
         if (existing) { existing.dispose(); entities.delete(id); }
+        debugEntityPolygons?.delete(id);
+        if (entityLightstyleEntries.delete(id)) lightstylesChanged = true;
         continue;
       }
       if (op.kind === "transform") {
@@ -891,10 +1025,23 @@ export function createQuakeGlyphWorldOverlay(
         continue;
       }
       if (existing) { existing.dispose(); entities.delete(id); }
+      debugEntityPolygons?.delete(id);
+      if (entityLightstyleEntries.delete(id)) lightstylesChanged = true;
       if (!op.geometry?.polygons?.length) continue;
-      entities.set(id, scene.add(toGlyphPolygons(op.geometry, op.transform.toneScale), toMeshTransform(id, op.transform)));
+      const prepared = toGlyphPolygons(op.geometry, op.transform.toneScale);
+      debugEntityPolygons?.set(id, prepared.polygons);
+      if (prepared.lightstyles.length) {
+        entityLightstyleEntries.set(id, prepared.lightstyles);
+        lightstylesChanged = true;
+      }
+      entities.set(id, scene.add(prepared.polygons, toMeshTransform(id, op.transform)));
     }
     staged.clear();
+    if (lightstylesChanged) {
+      lastLightstyleTick = -1;
+      applyLightstyleFrame();
+      scheduleLightstyleClock();
+    }
   }
 
   function setEntity(id: string, geometry: QuakeGlyphEntityGeometry | null, transform: QuakeGlyphEntityTransform): void {
@@ -992,6 +1139,7 @@ export function createQuakeGlyphWorldOverlay(
     // rather than run in addition to it. See the staging note above.
     applyStagedEntities();
     applyPvsCull();
+    applyLightstyleFrame();
     scene.rerender();
     if (readout) {
       const f = (n: number) => n.toFixed(2);
@@ -1171,11 +1319,13 @@ export function createQuakeGlyphWorldOverlay(
     window.removeEventListener("orientationchange", refreshViewportCamera);
     if (pendingFrame) { window.cancelAnimationFrame(pendingFrame); pendingFrame = 0; }
     if (paletteTimer) { window.clearTimeout(paletteTimer); paletteTimer = 0; }
+    clearLightstyleClock();
     // Drop staged ops rather than flushing them: the render that would have
     // applied them is cancelled above, and `scene.destroy()` follows.
     staged.clear();
     for (const handle of entities.values()) handle.dispose();
     entities.clear();
+    debugEntityPolygons?.clear();
     meshHandle?.dispose();
     meshHandle = null;
     scene.destroy();
@@ -1192,12 +1342,45 @@ export function createQuakeGlyphWorldOverlay(
   if (import.meta.env?.DEV) {
     (overlay as unknown as { __entityCount?: () => number }).__entityCount = () => entities.size;
     (overlay as unknown as { __entityIds?: () => string[] }).__entityIds = () => [...entities.keys()];
+    (overlay as unknown as { __entityTextureStats?: (id: string) => unknown }).__entityTextureStats = (id) => {
+      const polygons = debugEntityPolygons?.get(id) ?? [];
+      const textured = polygons.filter((polygon) => typeof polygon.texture === "string" && Array.isArray(polygon.uvs));
+      return {
+        polygonCount: polygons.length,
+        texturedPolygonCount: textured.length,
+        textures: [...new Set(textured.map((polygon) => polygon.texture))],
+        unlit: [...new Set(textured.map((polygon) => polygon.unlit))],
+      };
+    };
     (overlay as unknown as { __pvsStats?: () => unknown }).__pvsStats = () => ({
       total: worldPolys?.length ?? 0,
       hidden: worldPolys?.filter((p) => p.hidden).length ?? 0,
       visibleLeaves: lastVisibleLeaves === null ? null : lastVisibleLeaves?.size ?? "n/a",
       leafAt: pvsVisibleLeavesAt ? "see set" : "no-pvs",
     });
+    (overlay as unknown as { __lightstyleStats?: () => unknown }).__lightstyleStats = () => {
+      const entries = allLightstyleEntries();
+      return {
+        hz: QUAKE_GLYPH_LIGHTSTYLE_HZ,
+        tick: lastLightstyleTick,
+        polygonCount: entries.length,
+        visiblePolygonCount: entries.filter((entry) => !entry.polygon.hidden).length,
+        styleIds: [...new Set(entries.map((entry) => entry.style))].sort((a, b) => a - b),
+        signature: entries.map((entry) => entry.polygon.lightstyleIntensity ?? 1).join(","),
+        visibleSignature: entries
+          .filter((entry) => !entry.polygon.hidden)
+          .map((entry) => entry.polygon.lightstyleIntensity ?? 1)
+          .join(","),
+      };
+    };
+    (overlay as unknown as { __textureInkStats?: () => unknown }).__textureInkStats = () => {
+      const textured = worldPolys?.filter((polygon) => polygon.texture) ?? [];
+      return {
+        polygonCount: textured.length,
+        intensities: [...new Set(textured.map((polygon) => polygon.textureInkIntensity))],
+        cellSampling: [...new Set(textured.map((polygon) => polygon.textureCellSampling))],
+      };
+    };
     (window as unknown as { __quakeGlyphOverlay?: QuakeGlyphWorldOverlay }).__quakeGlyphOverlay = overlay;
     // Parity calibration probe: project a world point through the glyph camera to
     // screen px (mirrors renderFrame's camera setup). Compared to the CSS renderer's
@@ -1397,8 +1580,8 @@ export function createQuakeGlyphWeaponOverlay(
     return lifted;
   };
 
-  const ambientLight = options.ambientLight ?? 0.8;
-  const directionalLight = options.directionalLight ?? 0.25;
+  const ambientLight = options.ambientLight ?? 0.55;
+  const directionalLight = options.directionalLight ?? 0.5;
 
   const camera = createGlyphPerspectiveCamera({
     rotX: QUAKE_GLYPH_WEAPON_CAM_ROT_X,
@@ -1465,7 +1648,21 @@ export function createQuakeGlyphWeaponOverlay(
     const polygons = geometry.polygons.map((polygon) => {
       const color = toneHex(brightenHex(polygon.c, brighten * toneScale));
       paletteColors.add(color);
-      return { vertices: polygon.v as Vec3[], color };
+      const texture = Array.isArray(polygon.u) ? geometry.t : undefined;
+      return {
+        vertices: polygon.v as Vec3[],
+        color,
+        ...(typeof texture === "string" && Array.isArray(polygon.u)
+          ? {
+              texture,
+              unlit: true,
+              textureInkIntensity: brighten * toneScale,
+              textureCellSampling: true,
+              uvs: polygon.u as [number, number][],
+              textureWrap: { s: "clamp-to-edge" as const, t: "clamp-to-edge" as const },
+            }
+          : {}),
+      };
     });
     schedulePinnedAtlasPalette();
     return polygons;

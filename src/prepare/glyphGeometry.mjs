@@ -10,8 +10,14 @@ const QUAKE_GLYPH_GEOMETRY_VERSION = 3;
 const QUAKE_GLYPH_GEOMETRY_PRECISION = 1000; // 3 decimal places
 const QUAKE_GLYPH_UV_PRECISION = 1_000_000; // sub-texel precision in a 2048px atlas
 const QUAKE_GLYPH_ATLAS_MAX_SIDE = 2048;
-const QUAKE_GLYPH_ATLAS_TILE_MAX_SIDE = 24;
+const QUAKE_GLYPH_ATLAS_TILE_MAX_SIDE = 64;
+const QUAKE_GLYPH_ATLAS_RAW_TILE_MAX_SIDE = 24;
+const QUAKE_GLYPH_ATLAS_SOURCE_PIXELS_PER_TEXEL = 4;
 const QUAKE_GLYPH_ATLAS_PADDING = 1;
+const QUAKE_GLYPH_TEXTURE_INTEGRAL_CACHE_BYTES = 32 * 1024 * 1024;
+
+const quakeGlyphTextureIntegralCache = new Map();
+let quakeGlyphTextureIntegralCacheBytes = 0;
 
 function roundCoordinate(value) {
   return Math.round(value * QUAKE_GLYPH_GEOMETRY_PRECISION) / QUAKE_GLYPH_GEOMETRY_PRECISION;
@@ -52,6 +58,8 @@ function glyphPolygon(polygon, faceLeaves) {
   };
   const leaves = polygonLeaves(polygon, faceLeaves);
   if (leaves) out.l = leaves;
+  const lightstyle = quakeGlyphLightstyleAnimation(polygon);
+  if (lightstyle) Object.assign(out, lightstyle);
   return out;
 }
 
@@ -63,7 +71,8 @@ function glyphPolygon(polygon, faceLeaves) {
  * @param {Array<{ vertices: number[][], color?: string, modelIndex?: number }>} polygons
  * @param {Map<number, number[]>} [faceLeaves] face index → BSP leaf indexes, for PVS culling.
  * @param {{ includeMovers?: boolean }} [options] If true, keep polygons regardless of modelIndex.
- * @returns {{ version: number, polygonCount: number, polygons: Array<{ v: number[][], c: string, l?: number[] }> }}
+ * @returns {{ version: number, polygonCount: number, polygons: Array<{
+ *   v: number[][], c: string, l?: number[], s?: number, a?: number[] }> }}
  */
 export function buildQuakeGlyphGeometry(polygons, faceLeaves, options = {}) {
   const includeMovers = Boolean(options?.includeMovers);
@@ -120,13 +129,26 @@ export function buildQuakeGlyphWorldTextureAtlas(polygons, textureSamplers, face
       plans.push({ base });
       continue;
     }
+    const sourceWidth = bounds.width * sampler.width;
+    const sourceHeight = bounds.height * sampler.height;
+    const lightmapped = polygon.data?.["lm-bake"] === true;
+    const tileMaxSide = lightmapped
+      ? maxTileSide
+      : Math.min(maxTileSide, QUAKE_GLYPH_ATLAS_RAW_TILE_MAX_SIDE);
     plans.push({
       base,
       polygon,
       sampler,
       bounds,
-      desiredWidth: Math.max(2, Math.min(maxTileSide, Math.ceil(bounds.width * sampler.width))),
-      desiredHeight: Math.max(2, Math.min(maxTileSide, Math.ceil(bounds.height * sampler.height))),
+      // Baked face images share Quake's source-pixel scale. Reduce both axes by
+      // the same ratio so adjacent polygons retain texture phase and continuity.
+      // Raw/repeating materials keep the compact legacy cap.
+      desiredWidth: Math.max(2, Math.min(tileMaxSide, Math.ceil(
+        sourceWidth / (lightmapped ? QUAKE_GLYPH_ATLAS_SOURCE_PIXELS_PER_TEXEL : 1),
+      ))),
+      desiredHeight: Math.max(2, Math.min(tileMaxSide, Math.ceil(
+        sourceHeight / (lightmapped ? QUAKE_GLYPH_ATLAS_SOURCE_PIXELS_PER_TEXEL : 1),
+      ))),
     });
   }
 
@@ -159,6 +181,21 @@ export function buildQuakeGlyphWorldTextureAtlas(polygons, textureSamplers, face
     geometry: { version: QUAKE_GLYPH_GEOMETRY_VERSION, polygonCount: out.length, polygons: out },
     atlas: { width: packed.width, height: packed.height, rgba },
     texturedPolygonCount: texturedPlans.length,
+  };
+}
+
+function quakeGlyphLightstyleAnimation(polygon) {
+  const style = Number(polygon?.data?.["ls-anim"]);
+  const pattern = polygon?.data?.["ls-pattern"];
+  if (!Number.isInteger(style) || style <= 0 || typeof pattern !== "string") return undefined;
+  const opacities = pattern.split(",").map((value) => Number(value));
+  if (opacities.length < 2 || opacities.some((value) => !Number.isFinite(value))) return undefined;
+  return {
+    s: style,
+    // cssQuake represents an animated lightstyle as a black overlay. GlyphCSS
+    // renders the same result more cheaply by scaling the already-lit atlas
+    // texel directly: compositing black at opacity O is intensity (1 - O).
+    a: opacities.map((opacity) => roundUv(1 - Math.max(0, Math.min(1, opacity)))),
   };
 }
 
@@ -238,11 +275,18 @@ function packQuakeGlyphAtlasShelves(plans, atlasWidth, padding) {
 function rasterizeQuakeGlyphAtlasTile(rgba, atlasWidth, plan, padding) {
   for (let tileY = -padding; tileY < plan.height + padding; tileY++) {
     const innerY = Math.max(0, Math.min(plan.height - 1, tileY));
-    const sourceV = plan.bounds.maxV - ((innerY + 0.5) / plan.height) * plan.bounds.height;
+    const sourceVMax = plan.bounds.maxV - (innerY / plan.height) * plan.bounds.height;
+    const sourceVMin = plan.bounds.maxV - ((innerY + 1) / plan.height) * plan.bounds.height;
     for (let tileX = -padding; tileX < plan.width + padding; tileX++) {
       const innerX = Math.max(0, Math.min(plan.width - 1, tileX));
-      const sourceU = plan.bounds.minU + ((innerX + 0.5) / plan.width) * plan.bounds.width;
-      const sampled = sampleTextureRgba(plan.sampler, [sourceU, sourceV], plan.polygon.textureWrap);
+      const sourceUMin = plan.bounds.minU + (innerX / plan.width) * plan.bounds.width;
+      const sourceUMax = plan.bounds.minU + ((innerX + 1) / plan.width) * plan.bounds.width;
+      const sampled = sampleTextureFootprintRgba(
+        plan.sampler,
+        [sourceUMin, sourceVMin],
+        [sourceUMax, sourceVMax],
+        plan.polygon.textureWrap,
+      );
       if (!sampled) continue;
       const target = ((plan.y + padding + tileY) * atlasWidth + plan.x + padding + tileX) * 4;
       rgba[target] = sampled[0];
@@ -255,7 +299,14 @@ function rasterizeQuakeGlyphAtlasTile(rgba, atlasWidth, plan, padding) {
 
 function remapQuakeGlyphAtlasUv(uv, plan, atlasWidth, atlasHeight, padding) {
   const x = plan.x + padding + ((uv[0] - plan.bounds.minU) / plan.bounds.width) * plan.width;
-  const imageY = plan.y + padding + ((plan.bounds.maxV - uv[1]) / plan.bounds.height) * plan.height;
+  // Face-lightmap bakes are authored in CSS/image coordinates (V=0 at the
+  // top), while GlyphCSS samples standard OBJ UVs (V=0 at the bottom). Flip
+  // only those baked faces at the renderer bridge; ordinary Quake texture UVs
+  // already use GlyphCSS's convention.
+  const v = plan.polygon.data?.["lm-bake"] === true
+    ? plan.bounds.minV + plan.bounds.maxV - uv[1]
+    : uv[1];
+  const imageY = plan.y + padding + ((plan.bounds.maxV - v) / plan.bounds.height) * plan.height;
   return [roundUv(x / atlasWidth), roundUv(1 - imageY / atlasHeight)];
 }
 
@@ -418,6 +469,188 @@ function sampleTextureRgba(sampler, uv, textureWrap = {}) {
   return [data[offset] ?? 0, data[offset + 1] ?? 0, data[offset + 2] ?? 0, data[offset + 3] ?? 255];
 }
 
+function sampleTextureFootprintRgba(sampler, uvMin, uvMax, textureWrap = {}) {
+  const width = Math.trunc(sampler?.width ?? 0);
+  const height = Math.trunc(sampler?.height ?? 0);
+  const data = sampler?.data;
+  if (width <= 0 || height <= 0 || !data || data.length < width * height * 4) return null;
+
+  const sourceWidth = Math.abs(uvMax[0] - uvMin[0]) * width;
+  const sourceHeight = Math.abs(uvMax[1] - uvMin[1]) * height;
+  if (sourceWidth <= 1 + 1e-9 && sourceHeight <= 1 + 1e-9) {
+    return sampleTextureRgba(sampler, [
+      (uvMin[0] + uvMax[0]) * 0.5,
+      (uvMin[1] + uvMax[1]) * 0.5,
+    ], textureWrap);
+  }
+
+  const centerU = (uvMin[0] + uvMax[0]) * 0.5;
+  const centerV = (uvMin[1] + uvMax[1]) * 0.5;
+  const xSegments = sourceWidth > 1 + 1e-9
+    ? wrappedTextureAxisSegments(uvMin[0] * width, uvMax[0] * width, width, textureWrap?.s ?? "repeat")
+    : [texturePointAxisSegment(centerU, width, textureWrap?.s ?? "repeat", false)];
+  const ySegments = sourceHeight > 1 + 1e-9
+    ? wrappedTextureAxisSegments((1 - uvMax[1]) * height, (1 - uvMin[1]) * height, height, textureWrap?.t ?? "repeat")
+    : [texturePointAxisSegment(centerV, height, textureWrap?.t ?? "repeat", true)];
+  const integral = quakeGlyphTextureIntegral(sampler);
+  const sums = [0, 0, 0, 0];
+  let area = 0;
+
+  for (const xs of xSegments) {
+    for (const ys of ySegments) {
+      const weight = xs.weight * ys.weight;
+      const segmentArea = (xs.end - xs.start) * (ys.end - ys.start) * weight;
+      if (segmentArea <= 0) continue;
+      area += segmentArea;
+      for (let channel = 0; channel < 4; channel++) {
+        sums[channel] += textureIntegralRect(
+          integral,
+          xs.start,
+          ys.start,
+          xs.end,
+          ys.end,
+          channel,
+        ) * weight;
+      }
+    }
+  }
+  if (area <= 0) return sampleTextureRgba(sampler, [centerU, centerV], textureWrap);
+  return sums.map((sum) => Math.max(0, Math.min(255, Math.round(sum / area))));
+}
+
+function texturePointAxisSegment(value, size, mode, invert) {
+  const wrapped = wrapTextureCoordinate(value, mode);
+  const coordinate = (invert ? 1 - wrapped : wrapped) * size;
+  const index = Math.max(0, Math.min(size - 1, Math.floor(coordinate)));
+  return { start: index, end: index + 1, weight: 1 };
+}
+
+function wrappedTextureAxisSegments(startValue, endValue, size, mode) {
+  let start = Math.min(startValue, endValue);
+  let end = Math.max(startValue, endValue);
+  if (!(end > start)) return [];
+  if (mode === "clamp-to-edge") {
+    const segments = [];
+    if (start < 0) segments.push({ start: 0, end: 1, weight: Math.min(end, 0) - start });
+    const insideStart = Math.max(0, start);
+    const insideEnd = Math.min(size, end);
+    if (insideEnd > insideStart) segments.push({ start: insideStart, end: insideEnd, weight: 1 });
+    if (end > size) segments.push({ start: size - 1, end: size, weight: end - Math.max(start, size) });
+    return mergeTextureAxisSegments(segments);
+  }
+
+  const mirrored = mode === "mirrored-repeat";
+  const period = mirrored ? size * 2 : size;
+  const segments = [];
+  let cursor = ((start % period) + period) % period;
+  let remaining = end - start;
+  const firstLength = Math.min(remaining, period - cursor);
+  appendTexturePeriodSegment(segments, cursor, cursor + firstLength, size, mirrored, 1);
+  remaining -= firstLength;
+  const cycles = Math.floor(remaining / period);
+  if (cycles > 0) {
+    segments.push({ start: 0, end: size, weight: cycles * (mirrored ? 2 : 1) });
+    remaining -= cycles * period;
+  }
+  if (remaining > 1e-9) appendTexturePeriodSegment(segments, 0, remaining, size, mirrored, 1);
+  return mergeTextureAxisSegments(segments);
+}
+
+function appendTexturePeriodSegment(segments, start, end, size, mirrored, weight) {
+  if (!(end > start)) return;
+  if (!mirrored) {
+    segments.push({ start, end, weight });
+    return;
+  }
+  if (start < size) {
+    const forwardEnd = Math.min(end, size);
+    if (forwardEnd > start) segments.push({ start, end: forwardEnd, weight });
+  }
+  if (end > size) {
+    const reverseStart = Math.max(start, size);
+    segments.push({ start: 2 * size - end, end: 2 * size - reverseStart, weight });
+  }
+}
+
+function mergeTextureAxisSegments(segments) {
+  const merged = new Map();
+  for (const segment of segments) {
+    if (!(segment.end > segment.start) || !(segment.weight > 0)) continue;
+    const key = `${segment.start}:${segment.end}`;
+    const previous = merged.get(key);
+    if (previous) previous.weight += segment.weight;
+    else merged.set(key, { ...segment });
+  }
+  return [...merged.values()];
+}
+
+function quakeGlyphTextureIntegral(sampler) {
+  const cached = quakeGlyphTextureIntegralCache.get(sampler);
+  if (cached) {
+    quakeGlyphTextureIntegralCache.delete(sampler);
+    quakeGlyphTextureIntegralCache.set(sampler, cached);
+    return cached;
+  }
+  const width = Math.trunc(sampler.width);
+  const height = Math.trunc(sampler.height);
+  const stride = width + 1;
+  const sums = new Uint32Array(stride * (height + 1) * 4);
+  for (let y = 1; y <= height; y++) {
+    const row = [0, 0, 0, 0];
+    for (let x = 1; x <= width; x++) {
+      const source = ((y - 1) * width + x - 1) * 4;
+      const target = (y * stride + x) * 4;
+      const above = ((y - 1) * stride + x) * 4;
+      for (let channel = 0; channel < 4; channel++) {
+        row[channel] += sampler.data[source + channel] ?? (channel === 3 ? 255 : 0);
+        sums[target + channel] = sums[above + channel] + row[channel];
+      }
+    }
+  }
+  const integral = { width, height, stride, sums };
+  quakeGlyphTextureIntegralCache.set(sampler, integral);
+  quakeGlyphTextureIntegralCacheBytes += sums.byteLength;
+  while (quakeGlyphTextureIntegralCacheBytes > QUAKE_GLYPH_TEXTURE_INTEGRAL_CACHE_BYTES && quakeGlyphTextureIntegralCache.size > 1) {
+    const oldestSampler = quakeGlyphTextureIntegralCache.keys().next().value;
+    const oldest = quakeGlyphTextureIntegralCache.get(oldestSampler);
+    quakeGlyphTextureIntegralCache.delete(oldestSampler);
+    quakeGlyphTextureIntegralCacheBytes -= oldest.sums.byteLength;
+  }
+  return integral;
+}
+
+function textureIntegralRect(integral, x0, y0, x1, y1, channel) {
+  return textureIntegralPrefix(integral, x1, y1, channel)
+    - textureIntegralPrefix(integral, x0, y1, channel)
+    - textureIntegralPrefix(integral, x1, y0, channel)
+    + textureIntegralPrefix(integral, x0, y0, channel);
+}
+
+function textureIntegralPrefix(integral, xValue, yValue, channel) {
+  const x = Math.max(0, Math.min(integral.width, xValue));
+  const y = Math.max(0, Math.min(integral.height, yValue));
+  const wholeX = Math.floor(x);
+  const wholeY = Math.floor(y);
+  const fractionX = x - wholeX;
+  const fractionY = y - wholeY;
+  const at = (px, py) => integral.sums[(py * integral.stride + px) * 4 + channel];
+  let sum = at(wholeX, wholeY);
+  if (fractionX > 0 && wholeX < integral.width) {
+    sum += (at(wholeX + 1, wholeY) - at(wholeX, wholeY)) * fractionX;
+  }
+  if (fractionY > 0 && wholeY < integral.height) {
+    sum += (at(wholeX, wholeY + 1) - at(wholeX, wholeY)) * fractionY;
+  }
+  if (fractionX > 0 && fractionY > 0 && wholeX < integral.width && wholeY < integral.height) {
+    const pixel = at(wholeX + 1, wholeY + 1)
+      - at(wholeX, wholeY + 1)
+      - at(wholeX + 1, wholeY)
+      + at(wholeX, wholeY);
+    sum += pixel * fractionX * fractionY;
+  }
+  return sum;
+}
+
 function wrapTextureCoordinate(value, mode) {
   if (mode === "clamp-to-edge") return Math.max(0, Math.min(1 - Number.EPSILON, value));
   if (mode === "mirrored-repeat") {
@@ -483,7 +716,8 @@ export function buildQuakeGlyphFaceLeaves(visibility) {
  * live open/close offset.
  *
  * @param {Array<{ vertices: number[][], color?: string, modelIndex?: number, entityIndex?: number }>} polygons
- * @returns {{ version: number, movers: Array<{ entityIndex: number, modelIndex: number, polygons: Array<{ v: number[][], c: string }> }> }}
+ * @returns {{ version: number, movers: Array<{ entityIndex: number, modelIndex: number,
+ *   polygons: Array<{ v: number[][], c: string, s?: number, a?: number[] }> }> }}
  */
 export function buildQuakeGlyphMovers(polygons) {
   const byEntity = new Map();

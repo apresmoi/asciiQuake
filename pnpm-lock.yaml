@@ -6,7 +6,7 @@ settings:
 
 patchedDependencies:
   glyphcss@0.1.6:
-    hash: 1240ad4b19c00beb6b1843ace8a157dd3945e7963ab1c9c77e3b0a0550851aaf
+    hash: 436711861ccd1f11a99a882fdc008a9e4343bd490e122fe09d0700f94ca52ed8
     path: patches/glyphcss@0.1.6.patch
 
 importers:
@@ -15,7 +15,7 @@ importers:
     dependencies:
       glyphcss:
         specifier: ^0.1.6
-        version: 0.1.6(patch_hash=1240ad4b19c00beb6b1843ace8a157dd3945e7963ab1c9c77e3b0a0550851aaf)
+        version: 0.1.6(patch_hash=436711861ccd1f11a99a882fdc008a9e4343bd490e122fe09d0700f94ca52ed8)
       partysocket:
         specifier: 1.1.19
         version: 1.1.19
@@ -2024,7 +2024,7 @@ snapshots:
 
   glob-to-regexp@0.4.1: {}
 
-  glyphcss@0.1.6(patch_hash=1240ad4b19c00beb6b1843ace8a157dd3945e7963ab1c9c77e3b0a0550851aaf):
+  glyphcss@0.1.6(patch_hash=436711861ccd1f11a99a882fdc008a9e4343bd490e122fe09d0700f94ca52ed8):
     dependencies:
       '@glyphcss/core': 0.1.6
 

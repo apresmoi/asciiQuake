@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Explosion lab — asciiQuake</title>
+  </head>
+  <body class="explosion-lab">
+    <header class="explosion-lab__header">
+      <div>
+        <h1>Explosion lab</h1>
+        <p>Original Quake sprite beside the live asciiQuake entity renderer.</p>
+      </div>
+      <div class="explosion-lab__controls" aria-label="Explosion controls">
+        <button id="explosion-play" type="button">Play</button>
+        <label>
+          Frame
+          <input id="explosion-frame" type="range" min="0" max="5" step="1" value="0" />
+          <output id="explosion-frame-value">0 / 5</output>
+        </label>
+        <label>
+          Frame duration
+          <input id="explosion-duration" type="range" min="40" max="300" step="10" value="80" />
+          <output id="explosion-duration-value">80 ms</output>
+        </label>
+        <label>
+          Ink brightness
+          <input id="explosion-brightness" type="range" min="1" max="10" step="0.1" value="3.9" />
+          <output id="explosion-brightness-value">3.9</output>
+        </label>
+        <label>
+          Cell size
+          <input id="explosion-cell" type="range" min="6" max="24" step="1" value="12" />
+          <output id="explosion-cell-value">12 px</output>
+        </label>
+        <label>
+          Entity detail
+          <input id="explosion-density" type="range" min="1" max="4" step="1" value="1" />
+          <output id="explosion-density-value">1x</output>
+        </label>
+        <label>
+          Display scale
+          <input id="explosion-scale" type="range" min="0.5" max="2" step="0.05" value="2" />
+          <output id="explosion-scale-value">2.00x</output>
+        </label>
+        <label>
+          ASCII ramp
+          <select id="explosion-palette">
+            <option value="dense">Dense (game default)</option>
+            <option value="detail">Detail</option>
+            <option value="ascii">Simple</option>
+          </select>
+        </label>
+      </div>
+    </header>
+
+    <main class="explosion-lab__comparison">
+      <section class="explosion-lab__pane">
+        <h2>Original sprite frame</h2>
+        <div class="explosion-lab__stage explosion-lab__stage--source">
+          <canvas id="explosion-source" width="56" height="56"></canvas>
+        </div>
+      </section>
+      <section class="explosion-lab__pane">
+        <h2>Gameplay GlyphCSS path</h2>
+        <div class="explosion-lab__stage">
+          <div id="explosion-glyph-host"></div>
+        </div>
+      </section>
+    </main>
+
+    <section class="explosion-lab__strip-wrap" aria-label="Original explosion frames">
+      <h2>All six source frames</h2>
+      <div id="explosion-strip" class="explosion-lab__strip"></div>
+    </section>
+
+    <footer id="explosion-status" class="explosion-lab__status">Loading prepared Quake sprite…</footer>
+    <script type="module" src="/src/lab/explosion.ts"></script>
+  </body>
+</html>

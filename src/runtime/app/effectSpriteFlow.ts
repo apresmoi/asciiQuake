@@ -4,6 +4,11 @@ import { QUAKE_COLLISION_UNIT_SCALE } from "../constants";
 import type { QuakeGlyphEntityGeometry, QuakeGlyphEntityTransform } from "../render/glyphWorldOverlay";
 
 const QUAKE_EFFECT_SPRITE_CLASS = "quake-effect-sprite";
+const QUAKE_EFFECT_SPRITE_GLYPH_PRELOAD_ID = "effect-texture-preload:explosion";
+const QUAKE_EFFECT_SPRITE_FRAME_DURATION_MS = 80;
+const QUAKE_EFFECT_SPRITE_SCALE = 2;
+const QUAKE_EFFECT_SPRITE_DENSITY = 1;
+const QUAKE_EFFECT_SPRITE_TONE_SCALE = 3.9 / 3.5;
 const QUAKE_EFFECT_SPRITE_DEFAULT_MAX = 4;
 const QUAKE_EFFECT_SPRITE_MIN_DEPTH = 0.02;
 const QUAKE_EFFECT_SPRITE_MIN_SCALE = 0.2;
@@ -42,16 +47,15 @@ export interface QuakeEffectSpriteFlowOptions {
   viewRotation?: () => { rotX: number; rotY: number } | null;
 }
 
-interface QuakeEffectSpriteManifest {
+export interface QuakeEffectSpriteManifest {
   explosionSprite: string;
   sprites: Record<string, QuakePreparedEffectSprite>;
 }
 
-interface QuakePreparedEffectSprite {
+export interface QuakePreparedEffectSprite {
   frameCount: number;
   frameDurationMs: number;
   frames: QuakePreparedEffectSpriteFrame[];
-  glyphFrames?: QuakeGlyphEntityGeometry[];
   header?: {
     maxHeight?: number;
     maxWidth?: number;
@@ -64,9 +68,11 @@ interface QuakePreparedEffectSprite {
   };
 }
 
-interface QuakePreparedEffectSpriteFrame {
+export interface QuakePreparedEffectSpriteFrame {
   height: number;
   index: number;
+  originX: number;
+  originY: number;
   width: number;
   x: number;
   y: number;
@@ -195,6 +201,7 @@ export function createQuakeEffectSpriteFlow(options: QuakeEffectSpriteFlowOption
   function dispose(): void {
     disposed = true;
     clear();
+    if (glyphEntitySink) glyphEntitySink.removeEntity(QUAKE_EFFECT_SPRITE_GLYPH_PRELOAD_ID);
     for (const handle of handles) handle.element?.remove();
   }
 
@@ -207,22 +214,9 @@ export function createQuakeEffectSpriteFlow(options: QuakeEffectSpriteFlowOption
   }
 
   async function loadExplosionSprite(url: string): Promise<QuakePreparedEffectSprite | null> {
-    const response = await fetch(url);
-    if (!response.ok) return null;
-    const manifest = normalizeEffectSpriteManifest(await response.json());
-    if (!manifest) return null;
-    const sprite = manifest.sprites[manifest.explosionSprite];
-    if (!sprite) return null;
-    const textureUrl = resolveEffectSpriteUrl(sprite.texture.url, url);
-    const prepared: QuakePreparedEffectSprite = {
-      ...sprite,
-      texture: {
-        ...sprite.texture,
-        url: textureUrl,
-      },
-    };
-    if (glyphEntitySink && (prepared.glyphFrames?.length ?? 0) < prepared.frameCount) return null;
-    if (!glyphEntitySink) await decodeSpriteTexture(textureUrl);
+    const prepared = await loadQuakeExplosionSprite(url);
+    if (!prepared) return null;
+    if (!glyphEntitySink) await decodeSpriteTexture(prepared.texture.url);
     return prepared;
   }
 
@@ -235,6 +229,20 @@ export function createQuakeEffectSpriteFlow(options: QuakeEffectSpriteFlowOption
   }
 
   function applyPreparedSpriteTexture(sprite: QuakePreparedEffectSprite): void {
+    if (glyphEntitySink) {
+      const frame = sprite.frames[0];
+      if (frame) {
+        // Keep one zero-scale textured mesh registered so GlyphCSS decodes and
+        // retains the sampler before gameplay can spawn the visible quad. Without
+        // this, its first async render uses the white fallback for one frame.
+        glyphEntitySink.setEntity(
+          QUAKE_EFFECT_SPRITE_GLYPH_PRELOAD_ID,
+          glyphEffectSpriteFrameGeometry(sprite, frame),
+          { position: [0, 0, 0], scale: 0 },
+        );
+      }
+      return;
+    }
     for (const handle of handles) {
       if (!handle.element) continue;
       handle.element.style.backgroundImage = cssUrl(sprite.texture.url);
@@ -247,11 +255,7 @@ export function createQuakeEffectSpriteFlow(options: QuakeEffectSpriteFlowOption
     if (!sprite) return;
     const frame = sprite.frames[handle.frameIndex] ?? sprite.frames[0];
     if (glyphEntitySink) {
-      const geometry = sprite.glyphFrames?.[handle.frameIndex] ?? null;
-      if (!geometry) {
-        removeHandlePresentation(handle);
-        return;
-      }
+      const geometry = glyphEffectSpriteFrameGeometry(sprite, frame);
       const transform = glyphEffectSpriteTransform(handle.origin);
       if (handle.presentedFrameIndex !== handle.frameIndex) {
         glyphEntitySink.setEntity(handle.glyphId, geometry, transform);
@@ -321,7 +325,7 @@ export function createQuakeEffectSpriteFlow(options: QuakeEffectSpriteFlowOption
     const y = -dotVec3(relative, axes.up);
     const worldWidth = Math.max(1, sprite.header?.maxWidth ?? frame.width) * QUAKE_COLLISION_UNIT_SCALE;
     const scale = clampNumber(
-      (perspective * worldWidth) / (depth * Math.max(1, frame.width)),
+      QUAKE_EFFECT_SPRITE_SCALE * (perspective * worldWidth) / (depth * Math.max(1, frame.width)),
       QUAKE_EFFECT_SPRITE_MIN_SCALE,
       QUAKE_EFFECT_SPRITE_MAX_SCALE,
     );
@@ -400,6 +404,9 @@ export function createQuakeEffectSpriteFlow(options: QuakeEffectSpriteFlowOption
     return {
       position: origin ? [...origin] as Vec3 : [0, 0, 0],
       rotation: rotation ? glyphBillboardRotation(rotation.rotX, rotation.rotY) : [0, 0, 0],
+      scale: QUAKE_EFFECT_SPRITE_SCALE,
+      density: QUAKE_EFFECT_SPRITE_DENSITY,
+      toneScale: QUAKE_EFFECT_SPRITE_TONE_SCALE,
     };
   }
 
@@ -407,6 +414,26 @@ export function createQuakeEffectSpriteFlow(options: QuakeEffectSpriteFlowOption
     if (glyphEntitySink && handle.presentedFrameIndex >= 0) glyphEntitySink.removeEntity(handle.glyphId);
     handle.presentedFrameIndex = -1;
   }
+}
+
+/** Load and validate the prepared explosion used by both gameplay and labs. */
+export async function loadQuakeExplosionSprite(
+  manifestUrl: string,
+): Promise<QuakePreparedEffectSprite | null> {
+  const response = await fetch(manifestUrl);
+  if (!response.ok) return null;
+  const manifest = normalizeEffectSpriteManifest(await response.json());
+  if (!manifest) return null;
+  const sprite = manifest.sprites[manifest.explosionSprite];
+  if (!sprite) return null;
+  return {
+    ...sprite,
+    frameDurationMs: QUAKE_EFFECT_SPRITE_FRAME_DURATION_MS,
+    texture: {
+      ...sprite.texture,
+      url: resolveEffectSpriteUrl(sprite.texture.url, manifestUrl),
+    },
+  };
 }
 
 function normalizeEffectSpriteManifest(value: unknown): QuakeEffectSpriteManifest | null {
@@ -438,12 +465,8 @@ function normalizeEffectSprite(value: unknown): QuakePreparedEffectSprite | null
     frameCount,
     frameDurationMs: typeof value.frameDurationMs === "number" && value.frameDurationMs > 0
       ? value.frameDurationMs
-      : 100,
+      : QUAKE_EFFECT_SPRITE_FRAME_DURATION_MS,
     frames,
-    glyphFrames: Array.isArray(value.glyphFrames)
-      ? value.glyphFrames.map(normalizeGlyphGeometry)
-        .filter((frame): frame is QuakeGlyphEntityGeometry => frame !== null)
-      : undefined,
     header: isRecord(value.header)
       ? {
         ...(typeof value.header.maxHeight === "number" ? { maxHeight: value.header.maxHeight } : {}),
@@ -457,22 +480,6 @@ function normalizeEffectSprite(value: unknown): QuakePreparedEffectSprite | null
       width: textureWidth,
     },
   };
-}
-
-function normalizeGlyphGeometry(value: unknown): QuakeGlyphEntityGeometry | null {
-  if (!isRecord(value) || !Array.isArray(value.polygons)) return null;
-  const polygons = value.polygons.map((polygon) => {
-    if (!isRecord(polygon) || typeof polygon.c !== "string" || !Array.isArray(polygon.v)) return null;
-    const vertices = polygon.v.map((vertex) =>
-      Array.isArray(vertex) && vertex.length >= 3 && vertex.slice(0, 3).every((coordinate) =>
-        typeof coordinate === "number" && Number.isFinite(coordinate))
-        ? vertex.slice(0, 3) as number[]
-        : null);
-    if (vertices.some((vertex) => vertex === null) || vertices.length < 3) return null;
-    return { c: polygon.c, v: vertices as number[][] };
-  }).filter((polygon): polygon is { c: string; v: number[][] } => polygon !== null);
-  if (!polygons.length) return null;
-  return { polygons };
 }
 
 function glyphBillboardRotation(rotX: number, rotY: number): [number, number, number] {
@@ -496,7 +503,48 @@ function normalizeEffectSpriteFrame(value: unknown): QuakePreparedEffectSpriteFr
   const width = typeof value.width === "number" ? value.width : 0;
   const height = typeof value.height === "number" ? value.height : 0;
   if (index < 0 || width <= 0 || height <= 0) return null;
-  return { height, index, width, x, y };
+  const originX = typeof value.originX === "number"
+    ? value.originX
+    : typeof value.xoff === "number" ? value.xoff : -width / 2;
+  const originY = typeof value.originY === "number"
+    ? value.originY
+    : typeof value.yoff === "number" ? -value.yoff : height / 2;
+  return { height, index, originX, originY, width, x, y };
+}
+
+export function glyphEffectSpriteFrameGeometry(
+  sprite: QuakePreparedEffectSprite,
+  frame: QuakePreparedEffectSpriteFrame,
+): QuakeGlyphEntityGeometry {
+  const left = frame.originX * QUAKE_COLLISION_UNIT_SCALE;
+  const right = (frame.originX + frame.width) * QUAKE_COLLISION_UNIT_SCALE;
+  const top = frame.originY * QUAKE_COLLISION_UNIT_SCALE;
+  const bottom = (frame.originY - frame.height) * QUAKE_COLLISION_UNIT_SCALE;
+  const u0 = frame.x / sprite.texture.width;
+  const u1 = (frame.x + frame.width) / sprite.texture.width;
+  const vTop = 1 - frame.y / sprite.texture.height;
+  const vBottom = 1 - (frame.y + frame.height) / sprite.texture.height;
+  return {
+    t: sprite.texture.url,
+    polygons: [{
+      v: [
+        [left, 0, bottom],
+        [right, 0, bottom],
+        [right, 0, top],
+        [left, 0, top],
+      ],
+      // GlyphCSS multiplies sampled texels by the polygon colour, so this must
+      // stay white to preserve the authored sprite RGB. The zero-scale sampler
+      // preloader prevents this opaque fallback from reaching a visible frame.
+      c: "#ffffff",
+      u: [
+        [u0, vBottom],
+        [u1, vBottom],
+        [u1, vTop],
+        [u0, vTop],
+      ],
+    }],
+  };
 }
 
 function resolveEffectSpriteUrl(url: string, manifestUrl: string): string {
