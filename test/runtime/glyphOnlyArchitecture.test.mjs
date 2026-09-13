@@ -38,7 +38,9 @@ test("runtime and preparation remain GlyphCSS-only", async () => {
 test("the page shell groups game, interface, and social surfaces", async () => {
   const html = await readFile(path.join(projectRoot, "index.html"), "utf8");
 
-  assert.match(html, /<main id="quake-game">[\s\S]*id="quake-scene"[\s\S]*id="quake-weapon"[\s\S]*id="quake-impact-particles"[\s\S]*<\/main>/);
+  assert.match(html, /<main id="quake-game"[^>]*>[\s\S]*id="quake-scene"[\s\S]*id="quake-weapon"[\s\S]*id="quake-impact-particles"[\s\S]*<\/main>/);
+  assert.match(html, /<main id="quake-game" aria-labelledby="page-title">[\s\S]*<h1 id="page-title"[^>]*>Play Quake in ASCII in Your Browser<\/h1>/);
+  assert.equal((html.match(/<h1\b/g) ?? []).length, 1);
   assert.match(html, /<section id="quake-interface"[\s\S]*id="quake-hud"[\s\S]*<\/section>/);
   assert.match(html, /<nav id="quake-social"[\s\S]*class="btn-github"[\s\S]*class="quake-id-software-link"[\s\S]*class="quake-css-logo"[\s\S]*<\/nav>/);
   assert.doesNotMatch(html, /id="quake-multiplayer-(?:name|color|map|fraglimit|maxplayers)"/);
