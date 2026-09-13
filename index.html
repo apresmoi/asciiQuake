@@ -50,20 +50,20 @@
         document.head.appendChild(tag);
       })();
     </script>
-    <title>asciiQuake - Powered by GlyphCSS</title>
+    <title>Play Quake in ASCII in Your Browser | asciiQuake</title>
     <meta
       name="description"
-      content="Play Quake rendered as a live ASCII character grid through GlyphCSS, with no WebGL or canvas renderer."
+      content="Play Quake in your browser as a live ASCII character grid. asciiQuake uses GlyphCSS and inspectable HTML and CSS instead of a WebGL or canvas renderer."
     />
     <meta name="robots" content="index, follow" />
     <link rel="canonical" href="https://asciiquake.wtf/" />
     <meta property="og:site_name" content="asciiQuake" />
     <meta property="og:type" content="website" />
     <meta property="og:url" content="https://asciiquake.wtf/" />
-    <meta property="og:title" content="asciiQuake - Powered by GlyphCSS" />
+    <meta property="og:title" content="Play Quake in ASCII in Your Browser | asciiQuake" />
     <meta
       property="og:description"
-      content="Play Quake rendered as a live ASCII character grid through GlyphCSS, with no WebGL or canvas renderer."
+      content="Play Quake in your browser as a live ASCII character grid, rendered through GlyphCSS with inspectable HTML and CSS."
     />
     <meta property="og:image" content="https://asciiquake.wtf/assets/cssquake-social-20260701.png" />
     <meta property="og:image:type" content="image/png" />
@@ -76,10 +76,10 @@
     <meta property="og:image:height" content="630" />
     <meta property="og:image:alt" content="asciiQuake gameplay running in the browser with inspectable HTML and CSS geometry." />
     <meta name="twitter:card" content="summary_large_image" />
-    <meta name="twitter:title" content="asciiQuake - Powered by GlyphCSS" />
+    <meta name="twitter:title" content="Play Quake in ASCII in Your Browser | asciiQuake" />
     <meta
       name="twitter:description"
-      content="Play Quake rendered as a live ASCII character grid through GlyphCSS, with no WebGL or canvas renderer."
+      content="Play Quake in your browser as a live ASCII character grid, rendered through GlyphCSS with inspectable HTML and CSS."
     />
     <meta name="twitter:image" content="https://asciiquake.wtf/assets/cssquake-social-20260701.png" />
     <script type="application/ld+json">
@@ -88,7 +88,7 @@
         "@type": ["VideoGame", "WebApplication"],
         "name": "asciiQuake",
         "url": "https://asciiquake.wtf/",
-        "description": "Play Quake rendered as a live ASCII character grid through GlyphCSS, with no WebGL or canvas renderer.",
+        "description": "Play Quake in your browser as a live ASCII character grid, rendered through GlyphCSS with inspectable HTML and CSS.",
         "applicationCategory": "GameApplication",
         "gamePlatform": "Web browser",
         "playMode": ["SinglePlayer", "MultiPlayer"],
@@ -119,6 +119,18 @@
         overflow: hidden;
         background: #050505;
         isolation: isolate;
+      }
+
+      .visually-hidden {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        padding: 0;
+        margin: -1px;
+        overflow: hidden;
+        clip: rect(0, 0, 0, 0);
+        white-space: nowrap;
+        border: 0;
       }
 
       #quake-game,
@@ -192,7 +204,8 @@
     </style>
   </head>
   <body id="quake-app" class="quake-loading quake-menu-open quake-main-menu-pending">
-    <main id="quake-game">
+    <main id="quake-game" aria-labelledby="page-title">
+      <h1 id="page-title" class="visually-hidden">Play Quake in ASCII in Your Browser</h1>
       <!-- GlyphCSS scene mounts; each retained scene owns one output <pre>. -->
       <div id="quake-scene"></div>
       <div id="quake-weapon"></div>
